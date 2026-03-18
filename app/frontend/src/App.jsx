@@ -1,31 +1,39 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import './index.css';
 
+import Sidebar from './components/Sidebar';
+import IntelligenceFeed from './components/IntelligenceFeed';
+import SetupOrchestrator from './components/SetupOrchestrator';
+import { initialSetupState, scanForDevices, scanForWifi, sendProvision } from './components/setupService';
+
 function App() {
-  // Monitor States
-  const [esp32Status, setEsp32Status] = useState('offline');
+  // --- WebSocket Monitor States ---
+  const [esp32Status, setEsp32Status] = useState('offline'); // offline | online | working
   const [lastPing, setLastPing] = useState(null);
   const [logs, setLogs] = useState([]);
   const [wsStatus, setWsStatus] = useState('disconnected');
   
-  // Setup States
-  const [appMode, setAppMode] = useState('monitor'); // Default to dashboard now
-  const [bleDevices, setBleDevices] = useState([]);
-  const [isScanning, setIsScanning] = useState(false);
-  const [selectedDevice, setSelectedDevice] = useState(null);
-  const [ssid, setSsid] = useState('');
-  const [password, setPassword] = useState('');
-  const [isProvisioning, setIsProvisioning] = useState(false);
-  const [wifiNetworks, setWifiNetworks] = useState([]);
-  const [isScanningWifi, setIsScanningWifi] = useState(false);
-  const [setupStep, setSetupStep] = useState('device'); // 'device', 'wifi', 'password'
-  const logEndRef = useRef(null);
+  // --- Orchestrator & Setup States ---
+  const [setupState, setSetupState] = useState(initialSetupState);
 
-  useEffect(() => {
-    // Scroll to bottom whenever logs change
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  // Helper to cleanly update nested setup state
+  const updateSetup = (key, value) => {
+    setSetupState(prev => ({ ...prev, [key]: value }));
+  };
 
+  const addLog = (sender, text) => {
+    setLogs(prevLogs => [
+      ...prevLogs,
+      {
+        id: Date.now() + Math.random(),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        sender,
+        text
+      }
+    ]);
+  };
+
+  // --- WebSocket Initialization ---
   useEffect(() => {
     let ws;
     let reconnectTimer;
@@ -35,7 +43,7 @@ function App() {
 
       ws.onopen = () => {
         setWsStatus('connected');
-        addLog('system', 'Connected to Brain Monitor Dashboard');
+        addLog('system', 'Prism Core connected successfully. Link established.');
       };
 
       ws.onmessage = (event) => {
@@ -44,13 +52,13 @@ function App() {
           
           if (message.type === 'esp32_connected') {
             setEsp32Status('online');
-            setLastPing(new Date().toLocaleTimeString());
-            setAppMode('monitor'); // Jump to monitor if it pings us!
+            setLastPing(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            updateSetup('appMode', 'dashboard'); // Auto-switch to dashboard when it pings
           } else if (message.type === 'processing_started') {
             setEsp32Status('working');
-            addLog('esp32', 'Captured Audio/Image! Sent to Gemini for processing...');
+            addLog('esp32', 'Sensory capture complete. Transmitting to Gemini...');
           } else if (message.type === 'ai_response') {
-            setEsp32Status('online'); // goes back to online when done
+            setEsp32Status('online');
             addLog('ai', message.data);
           } else if (message.type === 'error') {
             setEsp32Status('online');
@@ -64,262 +72,97 @@ function App() {
       ws.onclose = () => {
         setWsStatus('disconnected');
         setEsp32Status('offline');
-        addLog('error', 'Lost connection to Brain Server. Reconnecting in 5s...');
+        addLog('error', 'Lost connection to Prism Core. Reconnecting in 5s...');
         reconnectTimer = setTimeout(connectWebSocket, 5000);
       };
       
-      ws.onerror = () => {
-        ws.close();
-      };
+      ws.onerror = () => ws.close();
     };
 
     connectWebSocket();
-
     return () => {
       clearTimeout(reconnectTimer);
       if (ws) ws.close();
     };
   }, []);
 
-  const addLog = (sender, text) => {
-    setLogs(prevLogs => [
-      ...prevLogs,
-      {
-        id: Date.now() + Math.random(),
-        time: new Date().toLocaleTimeString(),
-        sender,
-        text
-      }
-    ]);
-  };
-
+  // --- Setup Flow Actions ---
   const handleScan = async () => {
-    setIsScanning(true);
+    updateSetup('isScanning', true);
     try {
-      const res = await fetch('http://localhost:8000/setup/scan');
-      const data = await res.json();
-      setBleDevices(data.devices || []);
+      const devices = await scanForDevices();
+      updateSetup('bleDevices', devices);
     } catch (e) {
       console.error("Scan error", e);
     } finally {
-      setIsScanning(false);
+      updateSetup('isScanning', false);
     }
   };
 
   const handleWifiScan = async () => {
-    setIsScanningWifi(true);
+    updateSetup('isScanningWifi', true);
     try {
-      const res = await fetch('http://localhost:8000/setup/wifi-networks');
-      const data = await res.json();
-      setWifiNetworks(data.networks || []);
+      const networks = await scanForWifi();
+      updateSetup('wifiNetworks', networks);
     } catch (e) {
       console.error("Wi-Fi Scan error", e);
     } finally {
-      setIsScanningWifi(false);
+      updateSetup('isScanningWifi', false);
     }
   };
 
   const handleProvision = async (e) => {
     e.preventDefault();
-    if (!selectedDevice || !ssid) return;
-    
-    setIsProvisioning(true);
+    updateSetup('isProvisioning', true);
     try {
-      const res = await fetch('http://localhost:8000/setup/provision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ssid,
-          password,
-          device_address: selectedDevice.address
-        })
-      });
-      const data = await res.json();
+      const data = await sendProvision(setupState.ssid, setupState.password, setupState.selectedDevice.address);
       if(data.status === 'success') {
-         // Optionally wait for the ping to trigger appMode='monitor' automatically
-         addLog('system', 'Credentials sent successfully via BLE. Waiting for ESP32 to connect to Wi-Fi...');
+         addLog('system', `Credentials transmitted to ${setupState.selectedDevice.name}. Awaiting connection heartbeat...`);
       }
     } catch (e) {
       console.error("Provision error", e);
     } finally {
-      setIsProvisioning(false);
+      updateSetup('isProvisioning', false);
     }
   };
 
-  if (appMode === 'setup') {
-    return (
-      <div className="setup-container">
-        <div className="setup-card">
-          <h1>🤖 ESP32 Wireless Setup</h1>
-          <p className="setup-subtitle">Connect your Desktop Robot to Wi-Fi via Bluetooth.</p>
+  // Group setters and actions for SetupOrchestrator
+  const setupSetters = {
+    setAppMode: (val) => updateSetup('appMode', val),
+    setSetupStep: (val) => updateSetup('setupStep', val),
+    setSelectedDevice: (val) => updateSetup('selectedDevice', val),
+    setSsid: (val) => updateSetup('ssid', val),
+    setPassword: (val) => updateSetup('password', val),
+  };
 
-          {setupStep === 'device' && (
-            <div className="scan-section">
-              <button onClick={handleScan} disabled={isScanning} className="action-btn">
-                {isScanning ? 'Scanning...' : 'Scan for Robot'}
-              </button>
-              <div className="device-list">
-                {bleDevices.map(d => (
-                  <div 
-                    key={d.address} 
-                    className={`device-item ${selectedDevice?.address === d.address ? 'selected' : ''}`}
-                    onClick={() => {
-                      setSelectedDevice(d);
-                      setSetupStep('wifi');
-                      handleWifiScan(); // Automatically scan when a robot is picked
-                    }}
-                  >
-                    <span className="device-name">{d.name}</span>
-                    <span className="device-mac">{d.address}</span>
-                  </div>
-                ))}
-                {bleDevices.length === 0 && !isScanning && <div className="no-devices">No devices found.</div>}
-              </div>
-            </div>
-          )}
-
-          {setupStep === 'wifi' && (
-            <div className="wifi-selection-section" style={{ marginTop: '20px' }}>
-              <h3 style={{ marginBottom: '15px', color: '#888' }}>Select Wi-Fi Network</h3>
-              {isScanningWifi ? (
-                <div className="scanning-indicator" style={{ padding: '20px', textAlign: 'center', color: '#646cff' }}>
-                  Scanning Nearby Networks...
-                </div>
-              ) : (
-                <div className="device-list" style={{ maxHeight: '250px', overflowY: 'auto' }}>
-                  {wifiNetworks.map((net, i) => (
-                    <div 
-                      key={i} 
-                      className="device-item"
-                      onClick={() => {
-                        setSsid(net);
-                        setPassword(''); // Clear old password
-                        setSetupStep('password');
-                      }}
-                    >
-                      <span className="device-name">📶 {net}</span>
-                    </div>
-                  ))}
-                  {wifiNetworks.length === 0 && <div className="no-devices">No networks found.</div>}
-                  <div className="device-item" onClick={() => { setSsid(''); setPassword(''); setSetupStep('password'); }}>
-                    <span className="device-name">➕ Other / Hidden Network</span>
-                  </div>
-                </div>
-              )}
-              <button className="text-btn" onClick={() => setSetupStep('device')} style={{ marginTop: '15px' }}>
-                Back to Robot Selection
-              </button>
-            </div>
-          )}
-
-          {setupStep === 'password' && (
-            <form className="provision-section" onSubmit={handleProvision} style={{ marginTop: '20px' }}>
-              <h3 style={{ marginBottom: '15px', color: '#fff' }}>Connecting to {ssid ? `"${ssid}"` : 'Network'}</h3>
-              
-              {!ssid && (
-                <div className="input-group">
-                  <label>Network Name (SSID)</label>
-                  <input type="text" value={ssid} onChange={e => setSsid(e.target.value)} required placeholder="Enter exact network name" />
-                </div>
-              )}
-
-              <div className="input-group">
-                <label>Wi-Fi Password</label>
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoFocus placeholder="Leave blank if open network" />
-              </div>
-              
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button type="button" onClick={() => setSetupStep('wifi')} className="action-btn" style={{ flex: 1, backgroundColor: '#444' }}>
-                  Back
-                </button>
-                <button type="submit" disabled={!ssid || isProvisioning} className="action-btn primary" style={{ flex: 2 }}>
-                  {isProvisioning ? 'Sending...' : 'Send to Robot'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          <button className="text-btn" onClick={() => setAppMode('monitor')} style={{ marginTop: '30px' }}>Back to Dashboard</button>
-        </div>
-      </div>
-    );
-  }
+  const setupActions = {
+    handleScan,
+    handleWifiScan,
+    handleProvision
+  };
 
   return (
-    <div className="dashboard-container">
-      <header className="dashboard-header">
-        <div className="title-area">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-            <h1>🧠 Brain Interface Monitor</h1>
-            <button 
-              onClick={() => {
-                setAppMode('setup');
-                setSetupStep('device');
-              }}
-              style={{
-                background: 'transparent',
-                border: '1px solid #444',
-                color: '#fff',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
-            >
-              ⚙️ Settings
-            </button>
-          </div>
-          <span className={`ws-badge ${wsStatus}`}>
-            {wsStatus === 'connected' ? 'Server Connected' : 'Server Disconnected'}
-          </span>
-        </div>
-        
-        <div className={`esp32-status-card ${esp32Status}`}>
-          <div className="status-icon">
-            {esp32Status === 'offline' && '🔴'}
-            {esp32Status === 'online' && '🟢'}
-            {esp32Status === 'working' && '⚙️'}
-          </div>
-          <div className="status-details">
-            <span className="status-label">ESP32 ROBOT</span>
-            <span className="status-value">
-              {esp32Status === 'offline' && 'Disconnected'}
-              {esp32Status === 'online' && 'Online & Ready'}
-              {esp32Status === 'working' && 'Processing...'}
-            </span>
-            {lastPing && esp32Status !== 'offline' && (
-              <span className="last-ping">Last seen: {lastPing}</span>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="log-container">
-        {logs.length === 0 ? (
-          <div className="empty-state">
-            <div className="pulse-ring"></div>
-            <p>Waiting for ESP32 activity...</p>
-          </div>
+    <div className="app-container">
+      <Sidebar 
+        esp32Status={esp32Status}
+        lastPing={lastPing}
+        appMode={setupState.appMode}
+        setAppMode={setupSetters.setAppMode}
+        setSetupStep={setupSetters.setSetupStep}
+      />
+      
+      <main className="main-content">
+        {setupState.appMode === 'dashboard' ? (
+          <IntelligenceFeed 
+            logs={logs}
+            wsStatus={wsStatus}
+          />
         ) : (
-          <div className="log-scroll-area">
-            {logs.map((log) => (
-              <div key={log.id} className={`log-entry ${log.sender}`}>
-                <div className="log-meta">
-                  <span className="log-time">{log.time}</span>
-                  <span className="log-origin">
-                    {log.sender === 'system' && 'SYSTEM'}
-                    {log.sender === 'esp32' && 'ESP32'}
-                    {log.sender === 'ai' && 'GEMINI AI'}
-                    {log.sender === 'error' && 'ERROR'}
-                  </span>
-                </div>
-                <div className="log-text">{log.text}</div>
-              </div>
-            ))}
-            <div ref={logEndRef} />
-          </div>
+          <SetupOrchestrator 
+            state={setupState}
+            setters={setupSetters}
+            actions={setupActions}
+          />
         )}
       </main>
     </div>

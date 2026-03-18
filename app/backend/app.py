@@ -18,11 +18,40 @@ import subprocess
 load_dotenv()
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_NAME = "gemini-3.1-flash-lite-preview"
+
+# Settings Configuration
+SETTINGS_FILE = "bot_settings.json"
+DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+DEFAULT_SYSTEM_INSTRUCTION = "You are Pixel, an AI assistant inside a small robot. If you get audio, the user spoke to you. If you get text, the user typed to you. Any pictures are just live realtime photos, only discuss them if they relate to the user's prompt."
 
 if not API_KEY:
     print("ERROR: API Key not found in .env file!")
     exit()
+
+def get_all_settings():
+    if not os.path.exists(SETTINGS_FILE):
+        return {}
+    try:
+        with open(SETTINGS_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading settings: {e}")
+        return {}
+
+def save_all_settings(settings):
+    try:
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(settings, f, indent=4)
+    except Exception as e:
+        print(f"Error saving settings: {e}")
+
+def get_bot_settings(device_id: str):
+    settings = get_all_settings()
+    bot_conf = settings.get(device_id, {})
+    return {
+        "model": bot_conf.get("model", DEFAULT_MODEL),
+        "system_instruction": bot_conf.get("system_instruction", DEFAULT_SYSTEM_INSTRUCTION)
+    }
 
 client = genai.Client(api_key=API_KEY)
 app = FastAPI(title="ESP32 Gemini Brain Monitor")
@@ -72,6 +101,10 @@ class WifiCredentials(BaseModel):
     ssid: str
     password: str
     device_address: str
+
+class BotSettingsSchema(BaseModel):
+    model: str
+    system_instruction: str
 
 # Use a standard BLE UUID for our custom generic characteristic
 WIFI_CREDS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -133,12 +166,32 @@ async def setup_wifi_networks():
         return {"networks": []}
 
 # ==========================================
+#          API ENDPOINTS (SETTINGS)
+# ==========================================
+@app.get("/api/settings/{device_id}")
+async def get_settings(device_id: str):
+    """Gets the current settings for a specific bot."""
+    return get_bot_settings(device_id)
+
+@app.post("/api/settings/{device_id}")
+async def update_settings(device_id: str, new_settings: BotSettingsSchema):
+    """Updates the settings for a specific bot."""
+    settings = get_all_settings()
+    settings[device_id] = {
+        "model": new_settings.model,
+        "system_instruction": new_settings.system_instruction
+    }
+    save_all_settings(settings)
+    return {"status": "success", "settings": settings[device_id]}
+
+# ==========================================
 #          API ENDPOINTS (ESP32)
 # ==========================================
 @app.post("/process")
 async def process_multimodal(
     audio: UploadFile = File(...), 
-    image: UploadFile = File(...)
+    image: UploadFile = File(...),
+    device_id: str = Form(default="default_bot")
 ):
     """
     The ESP32 will send a POST request with WAV and JPG.
@@ -160,19 +213,25 @@ async def process_multimodal(
         
         print("Sending to Gemini...", end=" ", flush=True)
         
+        # Look up settings for this specific device
+        bot_settings = get_bot_settings(device_id)
+        model_to_use = bot_settings["model"]
+        sys_instruction = bot_settings["system_instruction"]
+        
         response = client.models.generate_content(
-            model=MODEL_NAME,
+            model=model_to_use,
             contents=[
                 "Listen to the audio and look at the image. Answer the user's question.",
                 types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
                 pil_image
             ],
             config=types.GenerateContentConfig(
+                system_instruction=sys_instruction,
                 thinking_config=types.ThinkingConfig(thinking_level="low")
             )
         )
         
-        print(f"\n>>> GEMINI SAYS: {response.text}")
+        print(f"\n>>> GEMINI ({model_to_use}) SAYS: {response.text}")
         
         # Broadcast the Gemini response back to the React UI
         await manager.broadcast({
@@ -205,7 +264,7 @@ async def ping():
 #          MAIN RUNNER
 # ==========================================
 if __name__ == "__main__":
-    print(f"--- AUDIO/VISUAL BRAIN SERVER STARTED ({MODEL_NAME}) ---")
+    print(f"--- AUDIO/VISUAL BRAIN SERVER STARTED ---")
     print("Listening on http://0.0.0.0:8000")
     print("Waiting for ESP32 to POST data to /process ...")
     uvicorn.run(app, host="0.0.0.0", port=8000)
