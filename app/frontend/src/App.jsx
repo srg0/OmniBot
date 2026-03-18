@@ -57,6 +57,8 @@ function App() {
           } else if (message.type === 'processing_started') {
             setEsp32Status('working');
             addLog('esp32', 'Sensory capture complete. Transmitting to Gemini...');
+          } else if (message.type === 'video_captured') {
+            addLog('video', message.data);
           } else if (message.type === 'ai_response') {
             setEsp32Status('online');
             addLog('ai', message.data);

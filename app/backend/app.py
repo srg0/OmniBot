@@ -1,6 +1,10 @@
 import io
 import os
 import uvicorn
+import tempfile
+import base64
+import cv2
+import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -22,7 +26,7 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 # Settings Configuration
 SETTINGS_FILE = "bot_settings.json"
 DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
-DEFAULT_SYSTEM_INSTRUCTION = "You are Pixel, a friendly and intelligent small desktop robot.\n\nContext:\n- If I provide audio, I am speaking directly to you through your microphone.\n- If I provide text, I am typing to you from the Prism Hub dashboard.\n- If I provide an image, it is a real-time live capture from your onboard camera.\n\nRules:\n- Keep your answers concise and conversational, as if we are speaking face-to-face.\n- Only discuss or analyze the live photos if they are relevant to my current prompt or question.\n- Do not greet me in every message.\n- You are helpful, slightly curious, and highly efficient."
+DEFAULT_SYSTEM_INSTRUCTION = "You are Pixel, a friendly and intelligent small desktop robot.\n\nContext:\n- If I provide audio, I am speaking directly to you through your microphone.\n- If I provide text, I am typing to you from the Prism Hub dashboard.\n- If I provide a video, it is a real-time recording from your onboard camera.\n\nRules:\n- Keep your answers concise and conversational, as if we are speaking face-to-face.\n- Only discuss or analyze the video content if it is relevant to my current prompt or question.\n- Do not greet me in every message.\n- You are helpful, slightly curious, and highly efficient."
 
 if not API_KEY:
     print("ERROR: API Key not found in .env file!")
@@ -52,6 +56,35 @@ def get_bot_settings(device_id: str):
         "model": bot_conf.get("model", DEFAULT_MODEL),
         "system_instruction": bot_conf.get("system_instruction", DEFAULT_SYSTEM_INSTRUCTION)
     }
+
+def assemble_video(jpeg_frames: list[bytes], fps: int = 10) -> bytes:
+    """Takes a list of JPEG byte arrays and assembles them into an MP4 video in memory."""
+    if not jpeg_frames:
+        return b""
+    
+    # Decode first frame to get dimensions
+    first = cv2.imdecode(np.frombuffer(jpeg_frames[0], np.uint8), cv2.IMREAD_COLOR)
+    h, w = first.shape[:2]
+    
+    tmp_path = os.path.join(tempfile.gettempdir(), "pixel_clip.webm")
+    fourcc = cv2.VideoWriter_fourcc(*'vp09')
+    writer = cv2.VideoWriter(tmp_path, fourcc, fps, (w, h))
+    
+    for jpg_bytes in jpeg_frames:
+        frame = cv2.imdecode(np.frombuffer(jpg_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if frame is not None:
+            # Resize if dimensions differ from first frame
+            if frame.shape[:2] != (h, w):
+                frame = cv2.resize(frame, (w, h))
+            writer.write(frame)
+    
+    writer.release()
+    
+    with open(tmp_path, 'rb') as f:
+        video_bytes = f.read()
+    os.remove(tmp_path)
+    
+    return video_bytes
 
 client = genai.Client(api_key=API_KEY)
 app = FastAPI(title="ESP32 Gemini Brain Monitor")
@@ -190,12 +223,13 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
 @app.post("/process")
 async def process_multimodal(
     audio: UploadFile = File(...), 
-    image: UploadFile = File(...),
+    images: list[UploadFile] = File(...),
     device_id: str = Form(default="default_bot")
 ):
     """
-    The ESP32 will send a POST request with WAV and JPG.
-    We broadcast these events to the React UI.
+    The ESP32 sends a POST request with WAV audio and multiple JPEG frames.
+    We assemble the frames into an MP4 video, send audio + video to Gemini,
+    and broadcast the video + AI response to the React UI.
     """
     print(f"\n--- RECEIVED DATA FROM ESP32 ---")
     
@@ -207,9 +241,29 @@ async def process_multimodal(
     
     try:
         audio_bytes = await audio.read()
-        image_bytes = await image.read()
         
-        pil_image = Image.open(io.BytesIO(image_bytes))
+        # Read all JPEG frames
+        jpeg_frames = []
+        for img_file in images:
+            frame_bytes = await img_file.read()
+            jpeg_frames.append(frame_bytes)
+        
+        print(f"Received {len(jpeg_frames)} video frames.")
+        
+        # Assemble frames into MP4 video
+        print("Assembling video...", end=" ", flush=True)
+        video_bytes = assemble_video(jpeg_frames, fps=10)
+        print(f"Done! ({len(video_bytes)} bytes)")
+        
+        # Create base64 data URL for the frontend
+        video_b64 = base64.b64encode(video_bytes).decode('utf-8')
+        video_data_url = f"data:video/webm;base64,{video_b64}"
+        
+        # Broadcast the video to the React UI
+        await manager.broadcast({
+            "type": "video_captured",
+            "data": video_data_url
+        })
         
         print("Sending to Gemini...", end=" ", flush=True)
         
@@ -221,9 +275,9 @@ async def process_multimodal(
         response = client.models.generate_content(
             model=model_to_use,
             contents=[
-                "Listen to the audio and look at the image. Answer the user's question.",
+                "Listen to the audio and watch the video. Answer the user's question.",
                 types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
-                pil_image
+                types.Part.from_bytes(data=video_bytes, mime_type="video/webm"),
             ],
             config=types.GenerateContentConfig(
                 system_instruction=sys_instruction,

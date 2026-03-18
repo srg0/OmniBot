@@ -32,12 +32,27 @@ const IntelligenceFeed = ({ logs, wsStatus }) => {
                   <span className="message-sender">
                     {log.sender === 'system' && 'Prism Core'}
                     {log.sender === 'esp32' && 'Pixel Bot'}
+                    {log.sender === 'video' && 'Pixel Bot'}
                     {log.sender === 'ai' && 'Gemini AI'}
                     {log.sender === 'error' && 'System Error'}
                   </span>
                   <span className="message-time">{log.time}</span>
                 </div>
-                <div className="message-text">{log.text}</div>
+                <div className="message-text">
+                  {log.sender === 'video' ? (
+                    <video
+                      className="message-video"
+                      src={log.text}
+                      controls
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                    />
+                  ) : (
+                    log.text
+                  )}
+                </div>
               </div>
             ))}
             <div ref={logEndRef} />

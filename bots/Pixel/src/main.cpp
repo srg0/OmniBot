@@ -62,11 +62,19 @@ Arduino_GFX *gfx = new Arduino_GC9A01(bus, TFT_RST, 0, true);
 Preferences preferences;
 
 #define SAMPLE_RATE 16000
-#define MAX_RECORD_SECONDS 10 
+#define MAX_RECORD_SECONDS 15 
 #define FLASH_RECORD_SIZE (SAMPLE_RATE * MAX_RECORD_SECONDS * 2) 
 
 uint8_t *rec_buffer = NULL; 
 size_t rec_len = 0;
+
+// Video Frame Capture
+#define MAX_VIDEO_FRAMES 150  // 15 seconds at 10 FPS
+#define FRAME_INTERVAL_MS 100 // 100ms = 10 FPS
+uint8_t* video_frames[MAX_VIDEO_FRAMES];
+size_t   video_frame_lens[MAX_VIDEO_FRAMES];
+int      video_frame_count = 0;
+unsigned long lastFrameTime = 0;
 
 // State Machine
 enum RobotState { STATE_IDLE, STATE_RECORDING, STATE_READY, STATE_SETUP };
@@ -123,6 +131,38 @@ void createWavHeader(uint8_t *header, int wavSize) {
     header[36] = 'd'; header[37] = 'a'; header[38] = 't'; header[39] = 'a';
     header[40] = (byte)(wavSize & 0xFF); header[41] = (byte)((wavSize >> 8) & 0xFF);
     header[42] = (byte)((wavSize >> 16) & 0xFF); header[43] = (byte)((wavSize >> 24) & 0xFF);
+}
+
+// ==========================================
+//   VIDEO FRAME CAPTURE
+// ==========================================
+void captureVideoFrame() {
+    if (video_frame_count >= MAX_VIDEO_FRAMES) return;
+    if (millis() - lastFrameTime < FRAME_INTERVAL_MS) return;
+    lastFrameTime = millis();
+
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) return;
+
+    // Copy the JPEG bytes into PSRAM so the camera buffer can be reused
+    uint8_t *copy = (uint8_t *)ps_malloc(fb->len);
+    if (copy) {
+        memcpy(copy, fb->buf, fb->len);
+        video_frames[video_frame_count] = copy;
+        video_frame_lens[video_frame_count] = fb->len;
+        video_frame_count++;
+    }
+    esp_camera_fb_return(fb);
+}
+
+void freeVideoFrames() {
+    for (int i = 0; i < video_frame_count; i++) {
+        if (video_frames[i]) {
+            free(video_frames[i]);
+            video_frames[i] = NULL;
+        }
+    }
+    video_frame_count = 0;
 }
 
 // ==========================================
@@ -326,12 +366,11 @@ void pingBackend() {
 
 void sendDataToFastAPI() {
     Serial.println("\n--- INITIATING UPLOAD TO BRAIN ---");
-    
-    // 1. Take the Picture
-    Serial.println("Capturing Image...");
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (!fb) {
-        Serial.println("Camera capture failed!");
+    Serial.printf("Uploading %d video frames + audio...\n", video_frame_count);
+
+    if (video_frame_count == 0) {
+        Serial.println("No video frames captured!");
+        freeVideoFrames();
         return;
     }
 
@@ -340,23 +379,30 @@ void sendDataToFastAPI() {
     if (client.connect(backend_ip, backend_port)) {
         Serial.println("Connected to FastAPI!");
 
-        // 3. Build Multipart Form Data Headers
+        // 3. Build Multipart Form Data
         String boundary = "----ESP32Boundary123456";
         String contentType = "multipart/form-data; boundary=" + boundary;
 
+        // Audio part header
         String audioHeader = "--" + boundary + "\r\n";
         audioHeader += "Content-Disposition: form-data; name=\"audio\"; filename=\"audio.wav\"\r\n";
         audioHeader += "Content-Type: audio/wav\r\n\r\n";
 
-        String imageHeader = "\r\n--" + boundary + "\r\n";
-        imageHeader += "Content-Disposition: form-data; name=\"image\"; filename=\"image.jpg\"\r\n";
-        imageHeader += "Content-Type: image/jpeg\r\n\r\n";
+        // Build image part headers (one per frame, all named "images")
+        // We need to pre-calculate the total content length
+        size_t wav_total_len = rec_len + 44;
+        size_t contentLength = audioHeader.length() + wav_total_len;
+
+        // Calculate size of all image parts
+        for (int i = 0; i < video_frame_count; i++) {
+            String imgHeader = "\r\n--" + boundary + "\r\n";
+            imgHeader += "Content-Disposition: form-data; name=\"images\"; filename=\"frame" + String(i) + ".jpg\"\r\n";
+            imgHeader += "Content-Type: image/jpeg\r\n\r\n";
+            contentLength += imgHeader.length() + video_frame_lens[i];
+        }
 
         String footer = "\r\n--" + boundary + "--\r\n";
-
-        // Calculate total payload size
-        size_t wav_total_len = rec_len + 44;
-        size_t contentLength = audioHeader.length() + wav_total_len + imageHeader.length() + fb->len + footer.length();
+        contentLength += footer.length();
 
         // 4. Send HTTP POST Headers
         client.print("POST /process HTTP/1.1\r\n");
@@ -365,7 +411,7 @@ void sendDataToFastAPI() {
         client.print("Content-Length: "); client.print(contentLength); client.print("\r\n");
         client.print("\r\n"); // End of headers
 
-        // 5. Send Audio Chunked (Saves Memory)
+        // 5. Send Audio Chunked
         Serial.println("Uploading Audio...");
         client.print(audioHeader);
         uint8_t *wav_ptr = rec_buffer;
@@ -377,16 +423,22 @@ void sendDataToFastAPI() {
             remaining -= chunk;
         }
 
-        // 6. Send Image Chunked
-        Serial.println("Uploading Image...");
-        client.print(imageHeader);
-        uint8_t *img_ptr = fb->buf;
-        remaining = fb->len;
-        while(remaining > 0) {
-            size_t chunk = (remaining > 1024) ? 1024 : remaining;
-            client.write(img_ptr, chunk);
-            img_ptr += chunk;
-            remaining -= chunk;
+        // 6. Send All Video Frames Chunked
+        for (int i = 0; i < video_frame_count; i++) {
+            String imgHeader = "\r\n--" + boundary + "\r\n";
+            imgHeader += "Content-Disposition: form-data; name=\"images\"; filename=\"frame" + String(i) + ".jpg\"\r\n";
+            imgHeader += "Content-Type: image/jpeg\r\n\r\n";
+            client.print(imgHeader);
+
+            uint8_t *img_ptr = video_frames[i];
+            remaining = video_frame_lens[i];
+            while(remaining > 0) {
+                size_t chunk = (remaining > 1024) ? 1024 : remaining;
+                client.write(img_ptr, chunk);
+                img_ptr += chunk;
+                remaining -= chunk;
+            }
+            Serial.printf("  Frame %d/%d uploaded (%d bytes)\n", i + 1, video_frame_count, video_frame_lens[i]);
         }
 
         // 7. Send Footer
@@ -411,7 +463,8 @@ void sendDataToFastAPI() {
         Serial.println("Failed to connect to backend!");
     }
 
-    esp_camera_fb_return(fb); // Free image memory
+    // Free all video frame memory
+    freeVideoFrames();
 }
 
 // ==========================================
@@ -473,9 +526,11 @@ void loop() {
         delay(150); 
         if (digitalRead(TOUCH_INT) == LOW) {
             if (currentState == STATE_IDLE) {
-                // START RECORDING
+                // START RECORDING — reset audio + video buffers
                 currentState = STATE_RECORDING;
-                rec_len = 0; 
+                rec_len = 0;
+                freeVideoFrames();
+                lastFrameTime = 0;
                 gfx->fillScreen(BLACK);
             } 
             else if (currentState == STATE_RECORDING) {
@@ -491,7 +546,8 @@ void loop() {
     }
 
     if (currentState == STATE_RECORDING) {
-        processAudio(); 
+        processAudio();
+        captureVideoFrame(); // Capture a frame every 100ms while recording
     } 
     else if (currentState == STATE_READY) {
         // Send data to python script
