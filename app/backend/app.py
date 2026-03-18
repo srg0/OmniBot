@@ -5,6 +5,7 @@ import tempfile
 import base64
 import cv2
 import numpy as np
+import imageio
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -58,33 +59,49 @@ def get_bot_settings(device_id: str):
     }
 
 def assemble_video(jpeg_frames: list[bytes], fps: int = 10) -> bytes:
-    """Takes a list of JPEG byte arrays and assembles them into an MP4 video in memory."""
+    """Takes a list of JPEG byte arrays and assembles them into an MP4 (H.264) video in memory."""
     if not jpeg_frames:
         return b""
+        
+    tmp_path = os.path.join(tempfile.gettempdir(), "pixel_clip.mp4")
     
-    # Decode first frame to get dimensions
-    first = cv2.imdecode(np.frombuffer(jpeg_frames[0], np.uint8), cv2.IMREAD_COLOR)
-    h, w = first.shape[:2]
-    
-    tmp_path = os.path.join(tempfile.gettempdir(), "pixel_clip.webm")
-    fourcc = cv2.VideoWriter_fourcc(*'vp09')
-    writer = cv2.VideoWriter(tmp_path, fourcc, fps, (w, h))
-    
-    for jpg_bytes in jpeg_frames:
-        frame = cv2.imdecode(np.frombuffer(jpg_bytes, np.uint8), cv2.IMREAD_COLOR)
-        if frame is not None:
-            # Resize if dimensions differ from first frame
-            if frame.shape[:2] != (h, w):
-                frame = cv2.resize(frame, (w, h))
-            writer.write(frame)
-    
-    writer.release()
+    # Write frames using imageio's ffmpeg plugin with libx264 codec 
+    # This guarantees cross-browser HTML5 <video> compatibility
+    with imageio.get_writer(tmp_path, fps=fps, codec='libx264', format='FFMPEG') as writer:
+        for jpg_bytes in jpeg_frames:
+            frame = cv2.imdecode(np.frombuffer(jpg_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if frame is not None:
+                # cv2 imdecode returns BGR, imageio expects RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                writer.append_data(frame_rgb)
     
     with open(tmp_path, 'rb') as f:
         video_bytes = f.read()
     os.remove(tmp_path)
     
     return video_bytes
+
+def create_wav_header(data_size: int, sample_rate: int = 16000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
+    """Creates a 44-byte standard RIFF WAV header for raw PCM audio."""
+    byte_rate = sample_rate * num_channels * (bits_per_sample // 8)
+    block_align = num_channels * (bits_per_sample // 8)
+    chunk_size = data_size + 36
+
+    header = bytearray()
+    header.extend(b'RIFF')
+    header.extend(chunk_size.to_bytes(4, byteorder='little'))
+    header.extend(b'WAVE')
+    header.extend(b'fmt ')
+    header.extend((16).to_bytes(4, byteorder='little')) # Subchunk1Size (16 for PCM)
+    header.extend((1).to_bytes(2, byteorder='little'))  # AudioFormat (1 for PCM)
+    header.extend(num_channels.to_bytes(2, byteorder='little'))
+    header.extend(sample_rate.to_bytes(4, byteorder='little'))
+    header.extend(byte_rate.to_bytes(4, byteorder='little'))
+    header.extend(block_align.to_bytes(2, byteorder='little'))
+    header.extend(bits_per_sample.to_bytes(2, byteorder='little'))
+    header.extend(b'data')
+    header.extend(data_size.to_bytes(4, byteorder='little'))
+    return bytes(header)
 
 client = genai.Client(api_key=API_KEY)
 app = FastAPI(title="ESP32 Gemini Brain Monitor")
@@ -218,92 +235,122 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
     return {"status": "success", "settings": settings[device_id]}
 
 # ==========================================
-#          API ENDPOINTS (ESP32)
+#          ESP32 WEBSOCKET STREAMING
 # ==========================================
-@app.post("/process")
-async def process_multimodal(
-    audio: UploadFile = File(...), 
-    images: list[UploadFile] = File(...),
-    device_id: str = Form(default="default_bot")
-):
-    """
-    The ESP32 sends a POST request with WAV audio and multiple JPEG frames.
-    We assemble the frames into an MP4 video, send audio + video to Gemini,
-    and broadcast the video + AI response to the React UI.
-    """
-    print(f"\n--- RECEIVED DATA FROM ESP32 ---")
+# Store active streaming sessions by ESP32 WebSocket connection
+active_streams = {}
+
+@app.websocket("/ws/stream")
+async def esp32_stream_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print("ESP32 connected to streaming endpoint!")
     
-    # Broadcast to UI that processing started
-    await manager.broadcast({
-        "type": "processing_started",
-        "data": "Data received from ESP32. Processing via Gemini..."
-    })
+    # Initialize session buffers
+    active_streams[websocket] = {
+        "audio_buffer": bytearray(),
+        "video_frames": [],
+        "device_id": "default_bot" # We'll just use default for now
+    }
     
     try:
-        audio_bytes = await audio.read()
-        
-        # Read all JPEG frames
-        jpeg_frames = []
-        for img_file in images:
-            frame_bytes = await img_file.read()
-            jpeg_frames.append(frame_bytes)
-        
-        print(f"Received {len(jpeg_frames)} video frames.")
-        
-        # Assemble frames into MP4 video
-        print("Assembling video...", end=" ", flush=True)
-        video_bytes = assemble_video(jpeg_frames, fps=10)
-        print(f"Done! ({len(video_bytes)} bytes)")
-        
-        # Create base64 data URL for the frontend
-        video_b64 = base64.b64encode(video_bytes).decode('utf-8')
-        video_data_url = f"data:video/webm;base64,{video_b64}"
-        
-        # Broadcast the video to the React UI
-        await manager.broadcast({
-            "type": "video_captured",
-            "data": video_data_url
-        })
-        
-        print("Sending to Gemini...", end=" ", flush=True)
-        
-        # Look up settings for this specific device
-        bot_settings = get_bot_settings(device_id)
-        model_to_use = bot_settings["model"]
-        sys_instruction = bot_settings["system_instruction"]
-        
-        response = client.models.generate_content(
-            model=model_to_use,
-            contents=[
-                "Listen to the audio and watch the video. Answer the user's question.",
-                types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
-                types.Part.from_bytes(data=video_bytes, mime_type="video/webm"),
-            ],
-            config=types.GenerateContentConfig(
-                system_instruction=sys_instruction,
-                thinking_config=types.ThinkingConfig(thinking_level="low")
-            )
-        )
-        
-        print(f"\n>>> GEMINI ({model_to_use}) SAYS: {response.text}")
-        
-        # Broadcast the Gemini response back to the React UI
-        await manager.broadcast({
-            "type": "ai_response",
-            "data": response.text
-        })
-        
-        # Return to ESP32
-        return {"status": "success", "reply": response.text}
-        
+        while True:
+            # Receive binary packet from ESP32
+            data = await websocket.receive_bytes()
+            if not data:
+                continue
+                
+            packet_type = data[0]
+            payload = data[1:]
+            
+            session = active_streams[websocket]
+            
+            if packet_type == 0x01:
+                # Audio chunk
+                session["audio_buffer"].extend(payload)
+                
+            elif packet_type == 0x02:
+                # Video frame (JPEG)
+                session["video_frames"].append(payload)
+                
+            elif packet_type == 0x03:
+                # Stop Recording & Process Command
+                print(f"\n--- STOP RECORDING RECEIVED ---")
+                print(f"Collected {len(session['audio_buffer'])} bytes of audio and {len(session['video_frames'])} video frames.")
+                
+                # Broadcast to UI that processing started
+                await manager.broadcast({
+                    "type": "processing_started",
+                    "data": "Stream finished. Processing via Gemini..."
+                })
+                
+                try:
+                    # 1. Create Audio Bytes with WAV Header
+                    raw_audio = bytes(session["audio_buffer"])
+                    wav_header = create_wav_header(len(raw_audio), sample_rate=16000)
+                    audio_bytes = wav_header + raw_audio
+                    
+                    # 2. Assemble Video Bytes
+                    print("Assembling video...", end=" ", flush=True)
+                    video_bytes = assemble_video(session["video_frames"], fps=10)
+                    print(f"Done! ({len(video_bytes)} bytes)")
+                    
+                    # 3. Broadcast Video to React UI
+                    video_b64 = base64.b64encode(video_bytes).decode('utf-8')
+                    video_data_url = f"data:video/mp4;base64,{video_b64}"
+                    await manager.broadcast({
+                        "type": "video_captured",
+                        "data": video_data_url
+                    })
+                    
+                    # 4. Call Gemini
+                    print("Sending to Gemini...", end=" ", flush=True)
+                    bot_settings = get_bot_settings(session["device_id"])
+                    
+                    response = client.models.generate_content(
+                        model=bot_settings["model"],
+                        contents=[
+                            "Listen to the audio and watch the video. Answer the user's question.",
+                            types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+                            types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"),
+                        ],
+                        config=types.GenerateContentConfig(
+                            system_instruction=bot_settings["system_instruction"],
+                            thinking_config=types.ThinkingConfig(thinking_level="low")
+                        )
+                    )
+                    
+                    print(f"\n>>> GEMINI SAYS: {response.text}")
+                    
+                    # 5. Broadcast to UI
+                    await manager.broadcast({
+                        "type": "ai_response",
+                        "data": response.text
+                    })
+                    
+                    # 6. Send Response back to ESP32 via same WebSocket
+                    await websocket.send_text(json.dumps({
+                        "status": "success",
+                        "reply": response.text
+                    }))
+                    
+                except Exception as e:
+                    print(f"\nAPI Error: {e}")
+                    error_msg = str(e)
+                    await manager.broadcast({"type": "error", "data": error_msg})
+                    await websocket.send_text(json.dumps({"status": "error", "message": error_msg}))
+                
+                # Clear buffers for next interaction
+                session["audio_buffer"].clear()
+                session["video_frames"].clear()
+                
+    except WebSocketDisconnect:
+        print("ESP32 disconnected from streaming endpoint.")
+        if websocket in active_streams:
+            del active_streams[websocket]
     except Exception as e:
-        print(f"\nAPI Error: {e}")
-        error_msg = str(e)
-        await manager.broadcast({
-            "type": "error",
-            "data": error_msg
-        })
-        raise HTTPException(status_code=500, detail=error_msg)
+        print(f"Stream error: {e}")
+        if websocket in active_streams:
+            del active_streams[websocket]
 
 @app.get("/ping")
 async def ping():

@@ -9,6 +9,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <ArduinoJson.h>
+#include <WebSocketsClient.h>
 
 // ==========================================
 //        USER CONFIGURATION
@@ -66,14 +67,14 @@ Preferences preferences;
 #define FLASH_RECORD_SIZE (SAMPLE_RATE * MAX_RECORD_SECONDS * 2) 
 
 uint8_t *rec_buffer = NULL; 
-size_t rec_len = 0;
+size_t rec_len = 0; // Keeping for logic, but we no longer need full FLASH_RECORD_SIZE
+
+// WebSocket Client
+WebSocketsClient webSocket;
+bool isWsConnected = false;
 
 // Video Frame Capture
-#define MAX_VIDEO_FRAMES 150  // 15 seconds at 10 FPS
 #define FRAME_INTERVAL_MS 100 // 100ms = 10 FPS
-uint8_t* video_frames[MAX_VIDEO_FRAMES];
-size_t   video_frame_lens[MAX_VIDEO_FRAMES];
-int      video_frame_count = 0;
 unsigned long lastFrameTime = 0;
 
 // State Machine
@@ -137,32 +138,26 @@ void createWavHeader(uint8_t *header, int wavSize) {
 //   VIDEO FRAME CAPTURE
 // ==========================================
 void captureVideoFrame() {
-    if (video_frame_count >= MAX_VIDEO_FRAMES) return;
+    if (!isWsConnected) return; // Keep trying but only send if WS is up
     if (millis() - lastFrameTime < FRAME_INTERVAL_MS) return;
     lastFrameTime = millis();
 
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) return;
 
-    // Copy the JPEG bytes into PSRAM so the camera buffer can be reused
-    uint8_t *copy = (uint8_t *)ps_malloc(fb->len);
-    if (copy) {
-        memcpy(copy, fb->buf, fb->len);
-        video_frames[video_frame_count] = copy;
-        video_frame_lens[video_frame_count] = fb->len;
-        video_frame_count++;
+    // Send the JPEG Frame natively over WS
+    // Prefix with 0x02 to indicate Video Frame
+    uint8_t header = 0x02;
+    uint8_t* packet = (uint8_t*)malloc(fb->len + 1);
+    
+    if (packet) {
+      packet[0] = header;
+      memcpy(packet + 1, fb->buf, fb->len);
+      webSocket.sendBIN(packet, fb->len + 1);
+      free(packet);
     }
+    
     esp_camera_fb_return(fb);
-}
-
-void freeVideoFrames() {
-    for (int i = 0; i < video_frame_count; i++) {
-        if (video_frames[i]) {
-            free(video_frames[i]);
-            video_frames[i] = NULL;
-        }
-    }
-    video_frame_count = 0;
 }
 
 // ==========================================
@@ -171,13 +166,22 @@ void freeVideoFrames() {
 void processAudio() {
     size_t bytesRead = 0;
     
-    if (rec_len < FLASH_RECORD_SIZE) {
-        i2s_read(I2S_NUM_0, rec_buffer + 44 + rec_len, 512, &bytesRead, 0);
-        if (bytesRead == 0) return; 
+    // Read short chunk from microphone
+    // Use the start of rec_buffer just as a small temporary chunk holder
+    i2s_read(I2S_NUM_0, rec_buffer + 44, 512, &bytesRead, 0);
+    if (bytesRead == 0) return;
+    
+    // Send Audio Chunk immediately
+    if (isWsConnected) {
+        uint8_t header = 0x01;
+        uint8_t packet[513];
+        packet[0] = header;
+        memcpy(packet + 1, rec_buffer + 44, bytesRead);
+        webSocket.sendBIN(packet, bytesRead + 1);
+    }
 
-        rec_len += bytesRead;
-        int16_t* samples = (int16_t*)(rec_buffer + 44 + rec_len - bytesRead);
-        for(int i=0; i < bytesRead/2; i++) samples[i] <<= 2; 
+    int16_t* samples = (int16_t*)(rec_buffer + 44);
+    for(int i=0; i < bytesRead/2; i++) samples[i] <<= 2; 
 
         long sum = 0;
         for(int i=0; i < bytesRead/2; i++) sum += abs(samples[i]);
@@ -210,7 +214,6 @@ void processAudio() {
                 last_bar_heights[i] = curr;
             }
         }
-    }
 }
 
 void processThinking() {
@@ -349,6 +352,33 @@ void setupWiFi() {
     Serial.println("\nWiFi Connected! IP Address: ");
     Serial.println(WiFi.localIP());
     currentState = STATE_IDLE; // Enter Brain mode
+    
+    // Connect to WebSocket Server
+    webSocket.begin(backend_ip, backend_port, "/ws/stream");
+    webSocket.onEvent([](WStype_t type, uint8_t * payload, size_t length) {
+        switch(type) {
+            case WStype_DISCONNECTED:
+                Serial.println("[WS] Disconnected!");
+                isWsConnected = false;
+                break;
+            case WStype_CONNECTED:
+                Serial.println("[WS] Connected to URL: " + String((char *)payload));
+                isWsConnected = true;
+                break;
+            case WStype_TEXT:
+                Serial.println("[WS] Received Text: " + String((char *)payload));
+                break;
+            case WStype_BIN:
+            case WStype_ERROR:			
+            case WStype_FRAGMENT_TEXT_START:
+            case WStype_FRAGMENT_BIN_START:
+            case WStype_FRAGMENT:
+            case WStype_FRAGMENT_FIN:
+                break;
+        }
+    });
+
+    webSocket.setReconnectInterval(5000); // try to reconnect every 5s if disconnected
 }
 
 
@@ -356,115 +386,19 @@ void setupWiFi() {
 //         FASTAPI HTTP CLIENT
 // ==========================================
 void pingBackend() {
-    WiFiClient client;
-    if (client.connect(backend_ip, backend_port)) {
-        client.print("GET /ping HTTP/1.1\r\n");
-        client.print("Host: "); client.print(backend_ip); client.print("\r\n\r\n");
-        client.stop();
-    }
+    // Replaced by WebSocket automatic keepalive
 }
 
-void sendDataToFastAPI() {
-    Serial.println("\n--- INITIATING UPLOAD TO BRAIN ---");
-    Serial.printf("Uploading %d video frames + audio...\n", video_frame_count);
+void triggerGeminiProcessing() {
+    Serial.println("\n--- TRIGGERING GEMINI PROCESS ---");
 
-    if (video_frame_count == 0) {
-        Serial.println("No video frames captured!");
-        freeVideoFrames();
-        return;
-    }
-
-    // 2. Connect to Server
-    WiFiClient client;
-    if (client.connect(backend_ip, backend_port)) {
-        Serial.println("Connected to FastAPI!");
-
-        // 3. Build Multipart Form Data
-        String boundary = "----ESP32Boundary123456";
-        String contentType = "multipart/form-data; boundary=" + boundary;
-
-        // Audio part header
-        String audioHeader = "--" + boundary + "\r\n";
-        audioHeader += "Content-Disposition: form-data; name=\"audio\"; filename=\"audio.wav\"\r\n";
-        audioHeader += "Content-Type: audio/wav\r\n\r\n";
-
-        // Build image part headers (one per frame, all named "images")
-        // We need to pre-calculate the total content length
-        size_t wav_total_len = rec_len + 44;
-        size_t contentLength = audioHeader.length() + wav_total_len;
-
-        // Calculate size of all image parts
-        for (int i = 0; i < video_frame_count; i++) {
-            String imgHeader = "\r\n--" + boundary + "\r\n";
-            imgHeader += "Content-Disposition: form-data; name=\"images\"; filename=\"frame" + String(i) + ".jpg\"\r\n";
-            imgHeader += "Content-Type: image/jpeg\r\n\r\n";
-            contentLength += imgHeader.length() + video_frame_lens[i];
-        }
-
-        String footer = "\r\n--" + boundary + "--\r\n";
-        contentLength += footer.length();
-
-        // 4. Send HTTP POST Headers
-        client.print("POST /process HTTP/1.1\r\n");
-        client.print("Host: "); client.print(backend_ip); client.print("\r\n");
-        client.print("Content-Type: "); client.print(contentType); client.print("\r\n");
-        client.print("Content-Length: "); client.print(contentLength); client.print("\r\n");
-        client.print("\r\n"); // End of headers
-
-        // 5. Send Audio Chunked
-        Serial.println("Uploading Audio...");
-        client.print(audioHeader);
-        uint8_t *wav_ptr = rec_buffer;
-        size_t remaining = wav_total_len;
-        while(remaining > 0) {
-            size_t chunk = (remaining > 1024) ? 1024 : remaining;
-            client.write(wav_ptr, chunk);
-            wav_ptr += chunk;
-            remaining -= chunk;
-        }
-
-        // 6. Send All Video Frames Chunked
-        for (int i = 0; i < video_frame_count; i++) {
-            String imgHeader = "\r\n--" + boundary + "\r\n";
-            imgHeader += "Content-Disposition: form-data; name=\"images\"; filename=\"frame" + String(i) + ".jpg\"\r\n";
-            imgHeader += "Content-Type: image/jpeg\r\n\r\n";
-            client.print(imgHeader);
-
-            uint8_t *img_ptr = video_frames[i];
-            remaining = video_frame_lens[i];
-            while(remaining > 0) {
-                size_t chunk = (remaining > 1024) ? 1024 : remaining;
-                client.write(img_ptr, chunk);
-                img_ptr += chunk;
-                remaining -= chunk;
-            }
-            Serial.printf("  Frame %d/%d uploaded (%d bytes)\n", i + 1, video_frame_count, video_frame_lens[i]);
-        }
-
-        // 7. Send Footer
-        client.print(footer);
-
-        // 8. Wait for Server Response while running "Thinking" animation
-        Serial.println("Waiting for Gemini response...");
-        while (client.connected() && !client.available()) {
-            processThinking(); // Keep robot alive!
-        }
-
-        // 9. Read the Response
-        Serial.println("\n=== RESPONSE FROM SERVER ===");
-        while (client.available()) {
-            String line = client.readStringUntil('\n');
-            Serial.println(line);
-        }
-        Serial.println("============================");
-        
-        client.stop();
+    if (isWsConnected) {
+        uint8_t header = 0x03; // Stop packet
+        webSocket.sendBIN(&header, 1);
+        Serial.println("Stop packet sent. Waiting for response...");
     } else {
-        Serial.println("Failed to connect to backend!");
+        Serial.println("WebSocket disconnected. Cannot trigger process.");
     }
-
-    // Free all video frame memory
-    freeVideoFrames();
 }
 
 // ==========================================
@@ -516,27 +450,25 @@ void loop() {
 
     fps_count++;
     if (millis() - last_fps_time >= 1000) {
-        // Send a ping to our Backend Dashboard
-        pingBackend();
         fps_count = 0;
         last_fps_time = millis();
     }
+    
+    // Always service WebSockets if past setup phase
+    webSocket.loop();
 
     if (digitalRead(TOUCH_INT) == LOW) {
         delay(150); 
         if (digitalRead(TOUCH_INT) == LOW) {
             if (currentState == STATE_IDLE) {
-                // START RECORDING — reset audio + video buffers
+                // START RECORDING
                 currentState = STATE_RECORDING;
-                rec_len = 0;
-                freeVideoFrames();
                 lastFrameTime = 0;
                 gfx->fillScreen(BLACK);
             } 
             else if (currentState == STATE_RECORDING) {
                 // STOP RECORDING & TRIGGER SEND
                 currentState = STATE_READY;
-                createWavHeader(rec_buffer, rec_len);
                 gfx->fillScreen(BLACK);
                 gfx->drawRoundRect(40, 85, 70, 90, 35, 0x3333); 
                 gfx->drawRoundRect(130, 85, 70, 90, 35, 0x3333); 
@@ -550,8 +482,9 @@ void loop() {
         captureVideoFrame(); // Capture a frame every 100ms while recording
     } 
     else if (currentState == STATE_READY) {
-        // Send data to python script
-        sendDataToFastAPI(); 
+        // Stop command sent via WS
+        triggerGeminiProcessing(); 
+        processThinking(); // Run single tick to clear display, WS callback handles text
         
         // When finished, go back to normal eyes automatically
         currentState = STATE_IDLE;

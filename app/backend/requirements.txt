@@ -7,3 +7,5 @@ google-genai
 bleak
 python-multipart
 opencv-python-headless
+imageio
+imageio-ffmpeg
