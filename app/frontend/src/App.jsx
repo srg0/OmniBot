@@ -22,16 +22,28 @@ function App() {
     setSetupState(prev => ({ ...prev, [key]: value }));
   };
 
-  const addLog = (sender, text) => {
+  const addLog = (sender, text, extra = {}) => {
     setLogs(prevLogs => [
       ...prevLogs,
       {
         id: Date.now() + Math.random(),
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         sender,
-        text
+        text,
+        ...extra
       }
     ]);
+  };
+
+  const appendAiStreamDelta = (stream_id, delta) => {
+    setLogs(prevLogs =>
+      prevLogs.map(log => {
+        if (log.sender === 'ai' && log.streamId === stream_id) {
+          return { ...log, text: (log.text || '') + delta };
+        }
+        return log;
+      })
+    );
   };
 
   // --- WebSocket Initialization ---
@@ -44,7 +56,7 @@ function App() {
 
       ws.onopen = () => {
         setWsStatus('connected');
-        addLog('system', 'Prism Core connected successfully. Link established.');
+        addLog('system', 'OmniBot Core connected successfully. Link established.');
       };
 
       ws.onmessage = (event) => {
@@ -59,14 +71,20 @@ function App() {
             addLog('esp32', 'Sensory capture complete. Transmitting to Gemini...');
           } else if (message.type === 'video_captured') {
             addLog('video', message.data);
-          } else if (message.type === 'ai_response') {
+          } else if (message.type === 'audio_captured') {
+            addLog('audio', message.data);
+          } else if (message.type === 'ai_response_stream_start') {
+            setEsp32Status('working');
+            addLog('ai', '', { streamId: message.stream_id });
+          } else if (message.type === 'ai_response_stream_delta') {
+            appendAiStreamDelta(message.stream_id, message.data);
+          } else if (message.type === 'ai_response_stream_end') {
             setEsp32Status('online');
-            addLog('ai', message.data);
           } else if (message.type === 'error') {
             setEsp32Status('online');
             addLog('error', message.data);
           }
-        } catch (e) {
+        } catch {
           console.error("Failed to parse message:", event.data);
         }
       };
@@ -74,7 +92,7 @@ function App() {
       ws.onclose = () => {
         setWsStatus('disconnected');
         setEsp32Status('offline');
-        addLog('error', 'Lost connection to Prism Core. Reconnecting in 5s...');
+        addLog('error', 'Lost connection to OmniBot Core. Reconnecting in 5s...');
         reconnectTimer = setTimeout(connectWebSocket, 5000);
       };
       

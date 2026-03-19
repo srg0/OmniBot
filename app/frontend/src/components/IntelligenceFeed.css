@@ -190,3 +190,18 @@
   margin-top: 0.5rem;
   box-shadow: 0 2px 12px rgba(0,0,0,0.1);
 }
+
+.message-bubble.audio {
+  align-self: flex-end;
+  background: rgba(210, 153, 34, 0.05);
+  border-right: 4px solid var(--warning);
+}
+.message-bubble.audio .message-sender { color: var(--warning); }
+
+.message-audio {
+  width: 100%;
+  max-width: 400px;
+  border-radius: 8px;
+  margin-top: 0.5rem;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+}

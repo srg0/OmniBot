@@ -6,6 +6,7 @@ import base64
 import cv2
 import numpy as np
 import imageio
+import asyncio # Added for non-blocking operations
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -16,6 +17,7 @@ import json
 from pydantic import BaseModel
 from bleak import BleakScanner, BleakClient
 import subprocess
+import uuid
 
 # ==========================================
 #          LOAD SECRETS & SETUP
@@ -27,7 +29,7 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 # Settings Configuration
 SETTINGS_FILE = "bot_settings.json"
 DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
-DEFAULT_SYSTEM_INSTRUCTION = "You are Pixel, a friendly and intelligent small desktop robot.\n\nContext:\n- If I provide audio, I am speaking directly to you through your microphone.\n- If I provide text, I am typing to you from the Prism Hub dashboard.\n- If I provide a video, it is a real-time recording from your onboard camera.\n\nRules:\n- Keep your answers concise and conversational, as if we are speaking face-to-face.\n- Only discuss or analyze the video content if it is relevant to my current prompt or question.\n- Do not greet me in every message.\n- You are helpful, slightly curious, and highly efficient."
+DEFAULT_SYSTEM_INSTRUCTION = "You are Pixel, a friendly and intelligent small desktop robot.\n\nContext:\n- If I provide audio, I am speaking directly to you through your microphone.\n- If I provide text, I am typing to you from the OmniBot Hub dashboard.\n- If I provide a video, it is a real-time recording from your onboard camera.\n\nRules:\n- Keep your answers concise and conversational, as if we are speaking face-to-face.\n- Only discuss or analyze the video content if it is relevant to my current prompt or question.\n- Do not greet me in every message.\n- You are helpful, slightly curious, and highly efficient."
 
 if not API_KEY:
     print("ERROR: API Key not found in .env file!")
@@ -289,9 +291,9 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                     wav_header = create_wav_header(len(raw_audio), sample_rate=16000)
                     audio_bytes = wav_header + raw_audio
                     
-                    # 2. Assemble Video Bytes
-                    print("Assembling video...", end=" ", flush=True)
-                    video_bytes = assemble_video(session["video_frames"], fps=10)
+                    # 2. Assemble Video Bytes (OFFLOADED TO BACKGROUND THREAD)
+                    print("Assembling video in background...", end=" ", flush=True)
+                    video_bytes = await asyncio.to_thread(assemble_video, session["video_frames"], 10)
                     print(f"Done! ({len(video_bytes)} bytes)")
                     
                     # 3. Broadcast Video to React UI
@@ -302,11 +304,27 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                         "data": video_data_url
                     })
                     
-                    # 4. Call Gemini
+                    # Broadcast Audio to React UI
+                    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+                    audio_data_url = f"data:audio/wav;base64,{audio_b64}"
+                    await manager.broadcast({
+                        "type": "audio_captured",
+                        "data": audio_data_url
+                    })
+                    
+                    # 4. Call Gemini (USING THE ASYNC CLIENT)
                     print("Sending to Gemini...", end=" ", flush=True)
                     bot_settings = get_bot_settings(session["device_id"])
-                    
-                    response = client.models.generate_content(
+
+                    # Stream response to UI incrementally
+                    stream_id = str(uuid.uuid4())
+                    full_text = ""
+                    await manager.broadcast({
+                        "type": "ai_response_stream_start",
+                        "stream_id": stream_id
+                    })
+
+                    stream = await client.aio.models.generate_content_stream(
                         model=bot_settings["model"],
                         contents=[
                             "Listen to the audio and watch the video. Answer the user's question.",
@@ -318,19 +336,39 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                             thinking_config=types.ThinkingConfig(thinking_level="low")
                         )
                     )
-                    
-                    print(f"\n>>> GEMINI SAYS: {response.text}")
-                    
-                    # 5. Broadcast to UI
+
+                    async for chunk in stream:
+                        chunk_text = (chunk.text or "")
+                        if not chunk_text:
+                            continue
+
+                        # Some SDKs yield cumulative text; others yield deltas.
+                        # We try to derive a delta safely.
+                        if chunk_text.startswith(full_text):
+                            delta = chunk_text[len(full_text):]
+                        else:
+                            delta = chunk_text
+
+                        if delta:
+                            full_text += delta
+                            await manager.broadcast({
+                                "type": "ai_response_stream_delta",
+                                "stream_id": stream_id,
+                                "data": delta
+                            })
+
+                    print(f"\n>>> GEMINI SAYS: {full_text}")
+
                     await manager.broadcast({
-                        "type": "ai_response",
-                        "data": response.text
+                        "type": "ai_response_stream_end",
+                        "stream_id": stream_id,
+                        "data": full_text
                     })
-                    
-                    # 6. Send Response back to ESP32 via same WebSocket
+
+                    # Send Response back to ESP32 via same WebSocket
                     await websocket.send_text(json.dumps({
                         "status": "success",
-                        "reply": response.text
+                        "reply": full_text
                     }))
                     
                 except Exception as e:
@@ -367,5 +405,5 @@ async def ping():
 if __name__ == "__main__":
     print(f"--- AUDIO/VISUAL BRAIN SERVER STARTED ---")
     print("Listening on http://0.0.0.0:8000")
-    print("Waiting for ESP32 to POST data to /process ...")
+    print("Waiting for ESP32 to connect to /ws/stream ...")
     uvicorn.run(app, host="0.0.0.0", port=8000)

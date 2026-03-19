@@ -17,7 +17,7 @@ const SetupOrchestrator = ({
       <div className="setup-card">
         <div className="setup-header">
           <h1>Add New Bot</h1>
-          <p className="setup-subtitle">Connect your hardware to the Prism Hub.</p>
+          <p className="setup-subtitle">Connect your hardware to the OmniBot Hub.</p>
         </div>
 
         <div className="setup-body">

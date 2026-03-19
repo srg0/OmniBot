@@ -11,7 +11,7 @@ const Sidebar = ({
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <h1>Prism</h1>
+        <h1>OmniBot</h1>
       </div>
 
       <div className="sidebar-section">

@@ -30,9 +30,10 @@ const IntelligenceFeed = ({ logs, wsStatus }) => {
               <div key={log.id} className={`message-bubble ${log.sender}`}>
                 <div className="message-meta">
                   <span className="message-sender">
-                    {log.sender === 'system' && 'Prism Core'}
+                    {log.sender === 'system' && 'OmniBot Core'}
                     {log.sender === 'esp32' && 'Pixel Bot'}
-                    {log.sender === 'video' && 'Pixel Bot'}
+                    {log.sender === 'video' && 'Pixel Bot (Video)'}
+                    {log.sender === 'audio' && 'Pixel Bot (Audio)'}
                     {log.sender === 'ai' && 'Gemini AI'}
                     {log.sender === 'error' && 'System Error'}
                   </span>
@@ -48,6 +49,12 @@ const IntelligenceFeed = ({ logs, wsStatus }) => {
                       loop
                       muted
                       playsInline
+                    />
+                  ) : log.sender === 'audio' ? (
+                    <audio
+                      className="message-audio"
+                      src={log.text}
+                      controls
                     />
                   ) : (
                     log.text
