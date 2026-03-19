@@ -21,6 +21,12 @@
   z-index: 10;
 }
 
+.feed-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .feed-header h2 {
   font-size: 1.25rem;
   font-weight: 700;
@@ -59,6 +65,35 @@
 
 .ws-badge.disconnected { color: var(--error); }
 .ws-badge.disconnected .status-dot { background: var(--error); }
+
+.vision-toggle {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.vision-toggle.on {
+  background: rgba(63, 185, 80, 0.12);
+  color: var(--success);
+  border-color: rgba(63, 185, 80, 0.35);
+}
+
+.vision-toggle.off {
+  background: rgba(248, 81, 73, 0.08);
+  color: var(--error);
+  border-color: rgba(248, 81, 73, 0.25);
+}
+
+.vision-toggle:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
 
 .feed-content {
   flex: 1;
@@ -163,6 +198,13 @@
 }
 .message-bubble.ai .message-sender { color: var(--accent); }
 
+.message-bubble.user {
+  align-self: flex-end;
+  background: rgba(88, 166, 255, 0.1);
+  border-right: 4px solid var(--accent);
+}
+.message-bubble.user .message-sender { color: var(--accent); }
+
 .message-bubble.error {
   align-self: center;
   background: rgba(248, 81, 73, 0.05);
@@ -204,4 +246,43 @@
   border-radius: 8px;
   margin-top: 0.5rem;
   box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+}
+
+.text-command-bar {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.text-command-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.95rem;
+  background: white;
+  color: var(--text-main);
+}
+
+.text-command-input:focus {
+  outline: 2px solid rgba(88, 166, 255, 0.25);
+  border-color: var(--accent);
+}
+
+.text-command-send {
+  border: none;
+  border-radius: 10px;
+  padding: 0.7rem 1rem;
+  min-width: 90px;
+  font-weight: 600;
+  color: white;
+  background: var(--brand-grad);
+  cursor: pointer;
+}
+
+.text-command-send:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }

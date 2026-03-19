@@ -13,6 +13,10 @@ function App() {
   const [lastPing, setLastPing] = useState(null);
   const [logs, setLogs] = useState([]);
   const [wsStatus, setWsStatus] = useState('disconnected');
+  const [textMessage, setTextMessage] = useState('');
+  const [isSendingText, setIsSendingText] = useState(false);
+  const [visionEnabled, setVisionEnabled] = useState(true);
+  const [isUpdatingVision, setIsUpdatingVision] = useState(false);
   
   // --- Orchestrator & Setup States ---
   const [setupState, setSetupState] = useState(initialSetupState);
@@ -68,7 +72,6 @@ function App() {
             setLastPing(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
           } else if (message.type === 'processing_started') {
             setEsp32Status('working');
-            addLog('esp32', 'Sensory capture complete. Transmitting to Gemini...');
           } else if (message.type === 'video_captured') {
             addLog('video', message.data);
           } else if (message.type === 'audio_captured') {
@@ -104,6 +107,21 @@ function App() {
       clearTimeout(reconnectTimer);
       if (ws) ws.close();
     };
+  }, []);
+
+  useEffect(() => {
+    const loadVisionSetting = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/runtime/default_bot/vision');
+        if (!res.ok) return;
+        const data = await res.json();
+        setVisionEnabled(Boolean(data.enabled));
+      } catch {
+        // Keep default true if API is unavailable
+      }
+    };
+
+    loadVisionSetting();
   }, []);
 
   // --- Setup Flow Actions ---
@@ -146,6 +164,67 @@ function App() {
     }
   };
 
+  const handleSendTextCommand = async (e) => {
+    e.preventDefault();
+    const message = textMessage.trim();
+    if (!message || isSendingText) {
+      return;
+    }
+
+    addLog('user', message);
+    setTextMessage('');
+    setIsSendingText(true);
+
+    try {
+      const res = await fetch('http://localhost:8000/api/text-command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          device_id: 'default_bot'
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to send text command');
+      }
+    } catch (error) {
+      addLog('error', error.message || 'Failed to send text command');
+    } finally {
+      setIsSendingText(false);
+    }
+  };
+
+  const handleToggleVision = async () => {
+    if (isUpdatingVision) {
+      return;
+    }
+
+    const nextEnabled = !visionEnabled;
+    setIsUpdatingVision(true);
+
+    try {
+      const res = await fetch('http://localhost:8000/api/runtime/default_bot/vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: nextEnabled })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to update vision setting');
+      }
+
+      setVisionEnabled(nextEnabled);
+      addLog('system', `Vision to model ${nextEnabled ? 'enabled' : 'disabled'}.`);
+    } catch (error) {
+      addLog('error', error.message || 'Failed to update vision setting');
+    } finally {
+      setIsUpdatingVision(false);
+    }
+  };
+
   // Group setters and actions for SetupOrchestrator
   const setupSetters = {
     setAppMode: (val) => updateSetup('appMode', val),
@@ -176,6 +255,13 @@ function App() {
           <IntelligenceFeed 
             logs={logs}
             wsStatus={wsStatus}
+            textMessage={textMessage}
+            setTextMessage={setTextMessage}
+            isSendingText={isSendingText}
+            onSendTextCommand={handleSendTextCommand}
+            visionEnabled={visionEnabled}
+            isUpdatingVision={isUpdatingVision}
+            onToggleVision={handleToggleVision}
           />
         )}
         

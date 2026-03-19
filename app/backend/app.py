@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from bleak import BleakScanner, BleakClient
 import subprocess
 import uuid
+from functools import partial
 
 # ==========================================
 #          LOAD SECRETS & SETUP
@@ -158,6 +159,13 @@ class BotSettingsSchema(BaseModel):
     model: str
     system_instruction: str
 
+class TextCommandRequest(BaseModel):
+    message: str
+    device_id: str = "default_bot"
+
+class VisionToggleRequest(BaseModel):
+    enabled: bool
+
 # Use a standard BLE UUID for our custom generic characteristic
 WIFI_CREDS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef0"
 
@@ -241,6 +249,97 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
 # ==========================================
 # Store active streaming sessions by ESP32 WebSocket connection
 active_streams = {}
+chat_sessions = {}
+chat_session_locks = {}
+vision_enabled_by_device = {}
+
+def is_vision_enabled(device_id: str) -> bool:
+    return vision_enabled_by_device.get(device_id, True)
+
+def get_or_create_chat(device_id: str):
+    """Creates or reuses a multi-turn chat session per bot device."""
+    bot_settings = get_bot_settings(device_id)
+    model = bot_settings["model"]
+    system_instruction = bot_settings["system_instruction"]
+    current = chat_sessions.get(device_id)
+
+    if (
+        current
+        and current.get("model") == model
+        and current.get("system_instruction") == system_instruction
+    ):
+        return current["chat"]
+
+    chat = client.chats.create(
+        model=model,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            thinking_config=types.ThinkingConfig(thinking_level="low")
+        )
+    )
+
+    chat_sessions[device_id] = {
+        "chat": chat,
+        "model": model,
+        "system_instruction": system_instruction
+    }
+    return chat
+
+async def stream_chat_turn_response(device_id: str, message_content):
+    """Streams one turn (text or multimodal) over a persistent chat session."""
+    stream_id = str(uuid.uuid4())
+    full_text = ""
+    loop = asyncio.get_running_loop()
+
+    await manager.broadcast({
+        "type": "ai_response_stream_start",
+        "stream_id": stream_id
+    })
+
+    lock = chat_session_locks.setdefault(device_id, asyncio.Lock())
+    async with lock:
+        chat = get_or_create_chat(device_id)
+        response_stream = chat.send_message_stream(message_content)
+
+        while True:
+            chunk = await loop.run_in_executor(
+                None,
+                partial(next, response_stream, None)
+            )
+            if chunk is None:
+                break
+
+            chunk_text = (chunk.text or "")
+            if not chunk_text:
+                continue
+
+            if chunk_text.startswith(full_text):
+                delta = chunk_text[len(full_text):]
+            else:
+                delta = chunk_text
+
+            if delta:
+                full_text += delta
+                await manager.broadcast({
+                    "type": "ai_response_stream_delta",
+                    "stream_id": stream_id,
+                    "data": delta
+                })
+
+    await manager.broadcast({
+        "type": "ai_response_stream_end",
+        "stream_id": stream_id,
+        "data": full_text
+    })
+
+    return full_text
+
+def get_active_esp32_socket(device_id: str):
+    """Returns an active ESP32 WebSocket for the requested bot, if available."""
+    for ws, session in active_streams.items():
+        if session.get("device_id") == device_id:
+            return ws
+    return next(iter(active_streams), None)
 
 @app.websocket("/ws/stream")
 async def esp32_stream_endpoint(websocket: WebSocket):
@@ -286,84 +385,52 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                 })
                 
                 try:
+                    use_vision = is_vision_enabled(session["device_id"])
+
                     # 1. Create Audio Bytes with WAV Header
                     raw_audio = bytes(session["audio_buffer"])
                     wav_header = create_wav_header(len(raw_audio), sample_rate=16000)
                     audio_bytes = wav_header + raw_audio
-                    
-                    # 2. Assemble Video Bytes (OFFLOADED TO BACKGROUND THREAD)
-                    print("Assembling video in background...", end=" ", flush=True)
-                    video_bytes = await asyncio.to_thread(assemble_video, session["video_frames"], 10)
-                    print(f"Done! ({len(video_bytes)} bytes)")
-                    
-                    # 3. Broadcast Video to React UI
-                    video_b64 = base64.b64encode(video_bytes).decode('utf-8')
-                    video_data_url = f"data:video/mp4;base64,{video_b64}"
-                    await manager.broadcast({
-                        "type": "video_captured",
-                        "data": video_data_url
-                    })
-                    
-                    # Broadcast Audio to React UI
+
+                    # 2. Broadcast Audio to React UI
                     audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
                     audio_data_url = f"data:audio/wav;base64,{audio_b64}"
                     await manager.broadcast({
                         "type": "audio_captured",
                         "data": audio_data_url
                     })
-                    
-                    # 4. Call Gemini (USING THE ASYNC CLIENT)
-                    print("Sending to Gemini...", end=" ", flush=True)
-                    bot_settings = get_bot_settings(session["device_id"])
 
-                    # Stream response to UI incrementally
-                    stream_id = str(uuid.uuid4())
-                    full_text = ""
-                    await manager.broadcast({
-                        "type": "ai_response_stream_start",
-                        "stream_id": stream_id
-                    })
+                    # 3. Optionally assemble video and send to UI/model
+                    video_bytes = b""
+                    if use_vision:
+                        print("Assembling video in background...", end=" ", flush=True)
+                        video_bytes = await asyncio.to_thread(assemble_video, session["video_frames"], 10)
+                        print(f"Done! ({len(video_bytes)} bytes)")
 
-                    stream = await client.aio.models.generate_content_stream(
-                        model=bot_settings["model"],
-                        contents=[
-                            "Listen to the audio and watch the video. Answer the user's question.",
-                            types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
-                            types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"),
-                        ],
-                        config=types.GenerateContentConfig(
-                            system_instruction=bot_settings["system_instruction"],
-                            thinking_config=types.ThinkingConfig(thinking_level="low")
-                        )
-                    )
-
-                    async for chunk in stream:
-                        chunk_text = (chunk.text or "")
-                        if not chunk_text:
-                            continue
-
-                        # Some SDKs yield cumulative text; others yield deltas.
-                        # We try to derive a delta safely.
-                        if chunk_text.startswith(full_text):
-                            delta = chunk_text[len(full_text):]
-                        else:
-                            delta = chunk_text
-
-                        if delta:
-                            full_text += delta
+                        if video_bytes:
+                            video_b64 = base64.b64encode(video_bytes).decode('utf-8')
+                            video_data_url = f"data:video/mp4;base64,{video_b64}"
                             await manager.broadcast({
-                                "type": "ai_response_stream_delta",
-                                "stream_id": stream_id,
-                                "data": delta
+                                "type": "video_captured",
+                                "data": video_data_url
                             })
 
-                    print(f"\n>>> GEMINI SAYS: {full_text}")
+                    # 4. Call Gemini on the shared multi-turn chat session
+                    print("Sending to Gemini...", end=" ", flush=True)
+                    turn_content = [
+                        "Listen to the audio and answer the user's question.",
+                        types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+                    ]
+                    if use_vision and video_bytes:
+                        turn_content[0] = "Listen to the audio and watch the video. Answer the user's question."
+                        turn_content.append(types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"))
 
-                    await manager.broadcast({
-                        "type": "ai_response_stream_end",
-                        "stream_id": stream_id,
-                        "data": full_text
-                    })
+                    full_text = await stream_chat_turn_response(
+                        session["device_id"],
+                        turn_content
+                    )
+
+                    print(f"\n>>> GEMINI SAYS: {full_text}")
 
                     # Send Response back to ESP32 via same WebSocket
                     await websocket.send_text(json.dumps({
@@ -389,6 +456,53 @@ async def esp32_stream_endpoint(websocket: WebSocket):
         print(f"Stream error: {e}")
         if websocket in active_streams:
             del active_streams[websocket]
+
+@app.post("/api/text-command")
+async def text_command(req: TextCommandRequest):
+    """Receives a typed command from dashboard, streams AI reply, and forwards to ESP32."""
+    message = (req.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    await manager.broadcast({
+        "type": "processing_started",
+        "data": "Text command received. Processing via Gemini..."
+    })
+
+    try:
+        full_text = await stream_chat_turn_response(req.device_id, message)
+        print(f"\n>>> GEMINI (TEXT) SAYS: {full_text}")
+
+        esp32_ws = get_active_esp32_socket(req.device_id)
+        if esp32_ws:
+            await esp32_ws.send_text(json.dumps({
+                "status": "success",
+                "reply": full_text
+            }))
+
+        return {"status": "success", "reply": full_text}
+    except Exception as e:
+        error_msg = str(e)
+        print(f"\nText command API Error: {error_msg}")
+        await manager.broadcast({"type": "error", "data": error_msg})
+        raise HTTPException(status_code=500, detail=error_msg)
+
+@app.post("/api/text-command/reset/{device_id}")
+async def reset_text_chat(device_id: str):
+    """Clears the in-memory multi-turn chat session for a bot."""
+    chat_sessions.pop(device_id, None)
+    return {"status": "success", "message": f"Chat session reset for {device_id}"}
+
+@app.get("/api/runtime/{device_id}/vision")
+async def get_vision_setting(device_id: str):
+    """Gets whether video frames are included in model requests."""
+    return {"device_id": device_id, "enabled": is_vision_enabled(device_id)}
+
+@app.post("/api/runtime/{device_id}/vision")
+async def set_vision_setting(device_id: str, payload: VisionToggleRequest):
+    """Sets whether video frames are included in model requests."""
+    vision_enabled_by_device[device_id] = payload.enabled
+    return {"status": "success", "device_id": device_id, "enabled": payload.enabled}
 
 @app.get("/ping")
 async def ping():
