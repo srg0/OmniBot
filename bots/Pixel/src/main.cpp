@@ -12,6 +12,7 @@
 #include <ArduinoJson.h>
 #include <WebSocketsClient.h>
 #include <Wire.h> 
+#include <RTClib.h>
 
 // ==========================================
 //        USER CONFIGURATION
@@ -34,7 +35,7 @@ const int backend_port = 8000;
 #define TFT_RST    -1  
 #define TFT_BL     D6
 
-// Seeed Round Display Touch Pins
+// Seeed Round Display Touch & RTC Pins
 #define TOUCH_INT  D7 
 #define TOUCH_SDA  D4
 #define TOUCH_SCL  D5
@@ -67,6 +68,7 @@ const int backend_port = 8000;
 Arduino_DataBus *bus = new Arduino_ESP32SPI(TFT_DC, TFT_CS, TFT_SCK, TFT_MOSI, TFT_MISO);
 Arduino_GFX *gfx = new Arduino_GC9A01(bus, TFT_RST, 0, true);
 Preferences preferences;
+RTC_PCF8563 rtc;
 
 #define SAMPLE_RATE 16000
 #define MAX_RECORD_SECONDS 15 
@@ -93,12 +95,13 @@ volatile RobotState currentState = STATE_SETUP;
 int startX = -1, startY = -1;
 int endX = -1, endY = -1;
 unsigned long touchStartTime = 0;
-unsigned long lastActiveTouchTime = 0; // NEW: Tracks the last time a pulse was received
+unsigned long lastActiveTouchTime = 0;
 bool isTouching = false;
 
-// Debounce Globals
+// Timers & Debounce Globals
 unsigned long lastTapTime = 0; 
 const int tapCooldown = 500; 
+unsigned long lastRtcPrintTime = 0;
 
 bool needsRestart = false;
 volatile bool triggerUpload = false;
@@ -369,9 +372,20 @@ void setup() {
     gfx->begin(80000000); 
     updateScreen("BOOTING...", WHITE);
     
-    // Initialize native I2C for the CHSC6X Touch Controller
+    // Initialize native I2C for the CHSC6X Touch Controller & RTC
     Wire.begin(TOUCH_SDA, TOUCH_SCL);
     pinMode(TOUCH_INT, INPUT_PULLUP);
+
+    // Initialize RTC
+    if (!rtc.begin()) {
+        Serial.println("[ERROR] Couldn't find RTC!");
+    } else {
+        if (rtc.lostPower()) {
+            Serial.println("[RTC] Power lost or first boot, setting time to compile time!");
+            rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+        }
+        Serial.println("[RTC] Initialized successfully.");
+    }
 
     rec_buffer = (uint8_t *)ps_malloc(FLASH_RECORD_SIZE + 44);
     if (rec_buffer == NULL) {
@@ -405,6 +419,16 @@ void setup() {
 //                ARDUINO LOOP
 // ==========================================
 void loop() {
+    // --- RTC SERIAL TICKER ---
+    if (millis() - lastRtcPrintTime > 1000) {
+        lastRtcPrintTime = millis();
+        DateTime now = rtc.now();
+        
+        Serial.printf("[RTC] %04d/%02d/%02d %02d:%02d:%02d\n", 
+                      now.year(), now.month(), now.day(), 
+                      now.hour(), now.minute(), now.second());
+    }
+
     if (currentState != STATE_SETUP) {
         webSocket.loop();
     }
