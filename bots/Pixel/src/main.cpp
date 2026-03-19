@@ -13,6 +13,8 @@
 #include <WebSocketsClient.h>
 #include <Wire.h> 
 #include <RTClib.h>
+#include <stdio.h>
+#include <math.h>
 
 // ==========================================
 //        USER CONFIGURATION
@@ -102,6 +104,10 @@ bool isTouching = false;
 unsigned long lastTapTime = 0; 
 const int tapCooldown = 500; 
 unsigned long lastRtcPrintTime = 0;
+bool timeScreenActive = false;
+unsigned long lastTimeScreenUpdate = 0;
+
+unsigned long lastRecordingEyesUpdate = 0;
 
 bool needsRestart = false;
 volatile bool triggerUpload = false;
@@ -119,6 +125,86 @@ void updateScreen(String text, uint16_t color) {
     
     gfx->setCursor(cursorX, 110);
     gfx->print(text);
+}
+
+static void fillOval(int16_t xc, int16_t yc, int16_t rx, int16_t ry, uint16_t color) {
+    if (rx <= 0 || ry <= 0) return;
+
+    int32_t rx2 = (int32_t)rx * (int32_t)rx;
+    int32_t ry2 = (int32_t)ry * (int32_t)ry;
+
+    // Scanline ellipse fill.
+    for (int16_t dy = -ry; dy <= ry; dy++) {
+        int32_t dy2 = (int32_t)dy * (int32_t)dy;
+        int32_t t = ry2 - dy2;
+        if (t < 0) continue;
+
+        // x = rx * sqrt(1 - dy^2 / ry^2) = sqrt(rx^2 * (1 - dy^2/ry^2))
+        int32_t x = (int32_t)(sqrtf((float)(rx2 * t) / (float)ry2) + 0.5f);
+        if (x < 0) continue;
+
+        gfx->drawFastHLine(xc - (int16_t)x, yc + dy, (int16_t)(2 * x + 1), color);
+    }
+}
+
+void showIdleEyes() {
+    gfx->fillScreen(BLACK);
+
+    // Robot eyes (large, filled cyan).
+    // Tuned to match the reference screenshot proportions.
+    const int16_t yc = 112;
+    const int16_t rx = 46;
+    const int16_t ry = 66;
+
+    // Position eyes with a modest gap in the middle.
+    const int16_t cxL = 68;
+    const int16_t cxR = 172;
+
+    // Inner filled cyan eyes.
+    fillOval(cxL, yc, rx, ry, CYAN);
+    fillOval(cxR, yc, rx, ry, CYAN);
+}
+
+void showRecordingEyesSquint(int16_t ry) {
+    gfx->fillScreen(BLACK);
+
+    // Same geometry as idle eyes, but yellow and squinting (ry shrinks).
+    const int16_t yc = 112;
+    const int16_t rx = 46;
+    const int16_t cxL = 68;
+    const int16_t cxR = 172;
+
+    fillOval(cxL, yc, rx, ry, YELLOW);
+    fillOval(cxR, yc, rx, ry, YELLOW);
+}
+
+void updateRecordingEyesAnimation() {
+    // Simple periodic squint: open -> squint -> open.
+    const int16_t idleRy = 66;
+    const int16_t minRy = 10;
+
+    const unsigned long frameMs = 80; // animation smoothness
+    const int periodFrames = 10;      // total cycle length ~frameMs*periodFrames
+    const int half = periodFrames / 2;
+
+    int frame = (int)((millis() / frameMs) % periodFrames);
+
+    int16_t ry;
+    if (frame <= half) {
+        ry = (int16_t)(minRy + (idleRy - minRy) * (float)frame / (float)half + 0.5f);
+    } else {
+        int f2 = periodFrames - frame;
+        ry = (int16_t)(minRy + (idleRy - minRy) * (float)f2 / (float)half + 0.5f);
+    }
+
+    showRecordingEyesSquint(ry);
+}
+
+void updateTimeScreen() {
+    DateTime now = rtc.now();
+    char buf[9]; // "HH:MM:SS" + null
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+    updateScreen(String(buf), WHITE);
 }
 
 // ==========================================
@@ -262,7 +348,7 @@ void setupWiFi() {
     
     WiFi.setSleep(false);
     currentState = STATE_IDLE; 
-    updateScreen("READY", BLUE);
+    showIdleEyes();
     
     webSocket.begin(backend_ip, backend_port, "/ws/stream");
     webSocket.onEvent([](WStype_t type, uint8_t * payload, size_t length) {
@@ -355,7 +441,7 @@ void uploadDataTask(void * pvParameters) {
 
             triggerUpload = false;
             currentState = STATE_IDLE;
-            updateScreen("READY", BLUE);
+            showIdleEyes();
         }
         
         vTaskDelay(pdMS_TO_TICKS(10)); 
@@ -429,6 +515,14 @@ void loop() {
                       now.hour(), now.minute(), now.second());
     }
 
+    // --- Time Screen UI Refresh ---
+    if (timeScreenActive && currentState == STATE_IDLE) {
+        if (millis() - lastTimeScreenUpdate > 1000) {
+            lastTimeScreenUpdate = millis();
+            updateTimeScreen();
+        }
+    }
+
     if (currentState != STATE_SETUP) {
         webSocket.loop();
     }
@@ -499,14 +593,17 @@ void loop() {
                 if (currentState == STATE_IDLE) {
                     Serial.println("\n*** TAP DETECTED: STARTING RECORD ***\n");
                     currentState = STATE_RECORDING;
+                    timeScreenActive = false;
+                    lastRecordingEyesUpdate = 0; // force immediate redraw
                     lastFrameTime = 0;
                     recordedAudioLen = 0;
                     video_frame_count = 0;
-                    updateScreen("RECORDING", RED); 
+                    updateRecordingEyesAnimation();
                 } 
                 else if (currentState == STATE_RECORDING) {
                     Serial.println("\n*** TAP DETECTED: STOPPING RECORD ***\n");
                     currentState = STATE_UPLOADING; 
+                    timeScreenActive = false;
                     updateScreen("SENDING", YELLOW);
                     triggerUpload = true; 
                 }
@@ -517,14 +614,32 @@ void loop() {
             if (absX > absY) {
                 if (deltaX > 0) {
                     Serial.println("SWIPE RIGHT");
+                    if (timeScreenActive && currentState == STATE_IDLE) {
+                        timeScreenActive = false;
+                        showIdleEyes();
+                    }
                 } else {
                     Serial.println("SWIPE LEFT");
+                    // Swipe left -> show time screen (RTC)
+                    if (currentState == STATE_IDLE) {
+                        timeScreenActive = true;
+                        lastTimeScreenUpdate = 0;
+                        updateTimeScreen();
+                    }
                 }
             } else {
                 if (deltaY > 0) {
                     Serial.println("SWIPE DOWN");
+                    if (timeScreenActive && currentState == STATE_IDLE) {
+                        timeScreenActive = false;
+                        showIdleEyes();
+                    }
                 } else {
                     Serial.println("SWIPE UP");
+                    if (timeScreenActive && currentState == STATE_IDLE) {
+                        timeScreenActive = false;
+                        showIdleEyes();
+                    }
                 }
             }
         }
@@ -544,6 +659,10 @@ void loop() {
     }
 
     if (currentState == STATE_RECORDING) {
+        if (millis() - lastRecordingEyesUpdate > 80) {
+            lastRecordingEyesUpdate = millis();
+            updateRecordingEyesAnimation();
+        }
         processAudio();
         captureVideoFrame(); 
     } 
