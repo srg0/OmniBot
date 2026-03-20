@@ -391,6 +391,18 @@ def _schedule_weather_to_esp32(device_id: str, condition: str, temperature: floa
 def is_vision_enabled(device_id: str) -> bool:
     return vision_enabled_by_device.get(device_id, True)
 
+
+async def _send_runtime_vision_to_esp32(device_id: str, enabled: bool) -> None:
+    """Pushes vision/capture setting to Pixel so firmware can skip camera work when off."""
+    ws = get_active_esp32_socket(device_id)
+    if not ws:
+        return
+    try:
+        await ws.send_text(json.dumps({"type": "runtime_vision", "enabled": bool(enabled)}))
+    except Exception as e:
+        print(f"Failed to send runtime_vision to ESP32: {e}")
+
+
 def get_or_create_chat(device_id: str):
     """Creates or reuses a multi-turn chat session per bot device."""
     bot_settings = get_bot_settings(device_id)
@@ -498,12 +510,25 @@ async def esp32_stream_endpoint(websocket: WebSocket):
     print("ESP32 connected to streaming endpoint!")
     
     # Initialize session buffers
+    stream_device_id = "default_bot"
     active_streams[websocket] = {
         "audio_buffer": bytearray(),
         "video_frames": [],
-        "device_id": "default_bot" # We'll just use default for now
+        "device_id": stream_device_id,
     }
-    
+
+    try:
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "runtime_vision",
+                    "enabled": is_vision_enabled(stream_device_id),
+                }
+            )
+        )
+    except Exception as e:
+        print(f"Could not sync runtime_vision to ESP32 on connect: {e}")
+
     try:
         while True:
             # Receive binary packet from ESP32
@@ -653,6 +678,7 @@ async def get_vision_setting(device_id: str):
 async def set_vision_setting(device_id: str, payload: VisionToggleRequest):
     """Sets whether video frames are included in model requests."""
     vision_enabled_by_device[device_id] = payload.enabled
+    await _send_runtime_vision_to_esp32(device_id, payload.enabled)
     return {"status": "success", "device_id": device_id, "enabled": payload.enabled}
 
 @app.get("/ping")

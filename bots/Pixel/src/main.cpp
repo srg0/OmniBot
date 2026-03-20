@@ -119,6 +119,9 @@ bool needsRestart = false;
 volatile bool triggerUpload = false;
 volatile bool geminiFirstTokenReceived = false;
 
+// When false, skip JPEG capture during record (matches app "Vision" / server use_vision).
+bool deviceVisionCaptureEnabled = true;
+
 // Weather overlay (from backend show_weather tool)
 #define WEATHER_KIND_SUNNY 0
 #define WEATHER_KIND_CLOUDY 1
@@ -1068,8 +1071,22 @@ void setupMicrophone() {
     i2s_set_pin(I2S_NUM_0, &pin_config);
 }
 
+static void loadRuntimeVisionFromPrefs() {
+    preferences.begin("pixel_prefs", true);
+    deviceVisionCaptureEnabled = preferences.getBool("vision_cap", true);
+    preferences.end();
+}
+
+static void setDeviceVisionCaptureEnabled(bool en) {
+    deviceVisionCaptureEnabled = en;
+    preferences.begin("pixel_prefs", false);
+    preferences.putBool("vision_cap", en);
+    preferences.end();
+}
+
 void captureVideoFrame() {
-    if (!isWsConnected) return; 
+    if (!isWsConnected) return;
+    if (!deviceVisionCaptureEnabled) return;
     if (millis() - lastFrameTime < FRAME_INTERVAL_MS) return;
     lastFrameTime = millis();
 
@@ -1219,7 +1236,9 @@ void setupWiFi() {
     WiFi.setSleep(false);
     currentState = STATE_IDLE; 
     showIdleEyes();
-    
+
+    loadRuntimeVisionFromPrefs();
+
     webSocket.begin(backend_ip, backend_port, "/ws/stream");
     webSocket.onEvent([](WStype_t type, uint8_t * payload, size_t length) {
         switch(type) {
@@ -1239,6 +1258,18 @@ void setupWiFi() {
 
                         if (strcmp(msgType, "gemini_first_token") == 0) {
                             geminiFirstTokenReceived = true;
+                        } else if (strcmp(msgType, "runtime_vision") == 0) {
+                            bool en = doc["enabled"] | true;
+                            setDeviceVisionCaptureEnabled(en);
+                            if (!en && currentState == STATE_RECORDING) {
+                                for (int i = 0; i < video_frame_count; i++) {
+                                    if (video_frames[i]) {
+                                        free(video_frames[i]);
+                                        video_frames[i] = NULL;
+                                    }
+                                }
+                                video_frame_count = 0;
+                            }
                         } else if (strcmp(msgType, "show_weather") == 0) {
                             float tRaw = doc["temperature"] | 0.0f;
                             weatherTempDisplay = (int)(tRaw >= 0.0f ? (tRaw + 0.5f) : (tRaw - 0.5f));
