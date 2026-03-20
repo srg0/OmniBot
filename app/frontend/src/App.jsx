@@ -86,6 +86,29 @@ function App() {
           } else if (message.type === 'error') {
             setEsp32Status('online');
             addLog('error', message.data);
+          } else if (message.type === 'vision_changed') {
+            setVisionEnabled(Boolean(message.enabled));
+          } else if (message.type === 'tool_call') {
+            const args = message.arguments || {};
+            const argsStr = Object.entries(args).map(([k, v]) => `${k}: ${v}`).join(', ');
+            const fnName = String(message.function_name ?? '').toLowerCase();
+            if (fnName.includes('show_weather')) {
+              const condition = String(args.condition ?? args.sky_condition ?? args.cond ?? '');
+              const temperatureRaw = args.temperature ?? args.temp ?? 0;
+              const temperature = Number(temperatureRaw);
+              addLog(
+                'tool',
+                `${message.function_name}(${argsStr})`,
+                {
+                  toolType: 'show_weather',
+                  weatherCondition: condition,
+                  weatherTemperature: Number.isFinite(temperature) ? temperature : 0,
+                  durationMs: 5000
+                }
+              );
+            } else {
+              addLog('tool', `${message.function_name}(${argsStr})`);
+            }
           }
         } catch {
           console.error("Failed to parse message:", event.data);

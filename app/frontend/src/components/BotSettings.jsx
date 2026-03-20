@@ -2,13 +2,23 @@ import React, { useState, useEffect } from 'react';
 import './BotSettings.css';
 import { getBotSettings, updateBotSettings } from './setupService';
 
+const TIMEZONE_OPTIONS = [
+  { value: 'EST5EDT,M3.2.0/2,M11.1.0/2', label: 'US Eastern (EST/EDT)' },
+  { value: 'CST6CDT,M3.2.0/2,M11.1.0/2', label: 'US Central (CST/CDT)' },
+  { value: 'MST7MDT,M3.2.0/2,M11.1.0/2', label: 'US Mountain (MST/MDT)' },
+  { value: 'PST8PDT,M3.2.0/2,M11.1.0/2', label: 'US Pacific (PST/PDT)' },
+  { value: 'UTC0', label: 'UTC' }
+];
+
 const BotSettings = ({ setAppMode }) => {
-  const [deviceId, setDeviceId] = useState('Pixel_Default'); // In a real app we'd pass the actual connected bot's MAC address
+  const [deviceId, setDeviceId] = useState('default_bot');
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
   const [systemInstruction, setSystemInstruction] = useState('');
+  const [timezoneRule, setTimezoneRule] = useState('EST5EDT,M3.2.0/2,M11.1.0/2');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null); // 'success' | 'error' | null
+  const hasTimezoneOption = TIMEZONE_OPTIONS.some((tz) => tz.value === timezoneRule);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -16,6 +26,7 @@ const BotSettings = ({ setAppMode }) => {
         const data = await getBotSettings(deviceId);
         setModel(data.model);
         setSystemInstruction(data.system_instruction);
+        setTimezoneRule(data.timezone_rule || 'EST5EDT,M3.2.0/2,M11.1.0/2');
       } catch (err) {
         console.error("Failed to fetch settings", err);
       } finally {
@@ -32,7 +43,8 @@ const BotSettings = ({ setAppMode }) => {
     try {
       await updateBotSettings(deviceId, {
         model,
-        system_instruction: systemInstruction
+        system_instruction: systemInstruction,
+        timezone_rule: timezoneRule
       });
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000); // Clear success message after 3s
@@ -66,6 +78,28 @@ const BotSettings = ({ setAppMode }) => {
 
       <form className="settings-form" onSubmit={handleSave}>
         
+        <div className="form-group">
+          <label htmlFor="timezoneSelect">Timezone (Clock Sync)</label>
+          <div className="select-wrapper">
+            <select
+              id="timezoneSelect"
+              value={timezoneRule}
+              onChange={(e) => setTimezoneRule(e.target.value)}
+              className="holo-select"
+            >
+              {!hasTimezoneOption && (
+                <option value={timezoneRule}>Custom ({timezoneRule})</option>
+              )}
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <option key={tz.value} value={tz.value}>
+                  {tz.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="help-text">Used by Pixel for NTP sync and RTC display time.</p>
+        </div>
+
         <div className="form-group">
           <label htmlFor="modelSelect">Generative Model Core</label>
           <div className="select-wrapper">

@@ -32,6 +32,7 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 # Settings Configuration
 SETTINGS_FILE = "bot_settings.json"
 DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+DEFAULT_TIMEZONE_RULE = "EST5EDT,M3.2.0/2,M11.1.0/2"
 DEFAULT_SYSTEM_INSTRUCTION = (
     "You are Pixel, a friendly and intelligent small desktop robot.\n\n"
     "Context:\n"
@@ -108,7 +109,8 @@ def get_bot_settings(device_id: str):
     bot_conf = settings.get(device_id, {})
     return {
         "model": bot_conf.get("model", DEFAULT_MODEL),
-        "system_instruction": bot_conf.get("system_instruction", DEFAULT_SYSTEM_INSTRUCTION)
+        "system_instruction": bot_conf.get("system_instruction", DEFAULT_SYSTEM_INSTRUCTION),
+        "timezone_rule": bot_conf.get("timezone_rule", DEFAULT_TIMEZONE_RULE),
     }
 
 def assemble_video(jpeg_frames: list[bytes], fps: int = 10) -> bytes:
@@ -246,6 +248,7 @@ class WifiCredentials(BaseModel):
 class BotSettingsSchema(BaseModel):
     model: str
     system_instruction: str
+    timezone_rule: str = DEFAULT_TIMEZONE_RULE
 
 class TextCommandRequest(BaseModel):
     message: str
@@ -253,6 +256,11 @@ class TextCommandRequest(BaseModel):
 
 class VisionToggleRequest(BaseModel):
     enabled: bool
+
+
+class TimezoneRuleRequest(BaseModel):
+    timezone_rule: str
+
 
 # Use a standard BLE UUID for our custom generic characteristic
 WIFI_CREDS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef0"
@@ -327,9 +335,12 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
     settings = get_all_settings()
     settings[device_id] = {
         "model": new_settings.model,
-        "system_instruction": new_settings.system_instruction
+        "system_instruction": new_settings.system_instruction,
+        "timezone_rule": new_settings.timezone_rule or DEFAULT_TIMEZONE_RULE,
     }
     save_all_settings(settings)
+    timezone_rule_by_device[device_id] = settings[device_id]["timezone_rule"]
+    await _send_runtime_timezone_to_esp32(device_id, settings[device_id]["timezone_rule"])
     return {"status": "success", "settings": settings[device_id]}
 
 # ==========================================
@@ -340,6 +351,7 @@ active_streams = {}
 chat_sessions = {}
 chat_session_locks = {}
 vision_enabled_by_device = {}
+timezone_rule_by_device = {}
 
 
 def _make_show_weather_tool(device_id: str):
@@ -356,6 +368,13 @@ def _make_show_weather_tool(device_id: str):
         if c not in allowed:
             c = "cloudy"
         _schedule_weather_to_esp32(device_id, c, float(temperature))
+        _broadcast_tool_call_to_frontend(
+            "show_weather",
+            {
+                "condition": c,
+                "temperature": float(temperature),
+            },
+        )
         return {"ok": True, "display": "weather queued on robot"}
 
     return show_weather
@@ -387,6 +406,27 @@ def _schedule_weather_to_esp32(device_id: str, condition: str, temperature: floa
         loop,
     )
 
+def _broadcast_tool_call_to_frontend(function_name: str, arguments: dict) -> None:
+    """Broadcast tool-call telemetry to the dashboard websocket monitor.
+
+    This runs from Gemini tool execution threads, so we use the shared
+    `_main_async_loop` to schedule the async broadcast.
+    """
+    loop = _main_async_loop
+    if loop is None:
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(
+            manager.broadcast({
+                "type": "tool_call",
+                "function_name": function_name,
+                "arguments": arguments,
+            }),
+            loop,
+        )
+    except Exception as e:
+        print(f"Failed to broadcast tool_call to frontend: {e}")
+
 
 def is_vision_enabled(device_id: str) -> bool:
     return vision_enabled_by_device.get(device_id, True)
@@ -401,6 +441,32 @@ async def _send_runtime_vision_to_esp32(device_id: str, enabled: bool) -> None:
         await ws.send_text(json.dumps({"type": "runtime_vision", "enabled": bool(enabled)}))
     except Exception as e:
         print(f"Failed to send runtime_vision to ESP32: {e}")
+
+
+def get_timezone_rule(device_id: str) -> str:
+    if device_id in timezone_rule_by_device:
+        return timezone_rule_by_device[device_id]
+    return get_bot_settings(device_id).get("timezone_rule", DEFAULT_TIMEZONE_RULE)
+
+
+async def _send_runtime_timezone_to_esp32(device_id: str, timezone_rule: str) -> None:
+    """Pushes timezone rule to Pixel so RTC/NTP sync uses local time rules."""
+    ws = get_active_esp32_socket(device_id)
+    if not ws:
+        return
+    try:
+        await ws.send_text(
+            json.dumps(
+                {
+                    "type": "runtime_timezone",
+                    "timezone_rule": str(timezone_rule or DEFAULT_TIMEZONE_RULE),
+                }
+            )
+        )
+    except Exception as e:
+        print(f"Failed to send runtime_timezone to ESP32: {e}")
+
+
 
 
 def get_or_create_chat(device_id: str):
@@ -459,6 +525,23 @@ async def stream_chat_turn_response(device_id: str, message_content):
             )
             if chunk is None:
                 break
+
+            # Detect tool/function calls in this chunk and broadcast them
+            try:
+                if chunk.candidates:
+                    for candidate in chunk.candidates:
+                        if candidate.content and candidate.content.parts:
+                            for part in candidate.content.parts:
+                                fc = getattr(part, "function_call", None)
+                                if fc:
+                                    await manager.broadcast({
+                                        "type": "tool_call",
+                                        "stream_id": stream_id,
+                                        "function_name": fc.name,
+                                        "arguments": dict(fc.args) if fc.args else {}
+                                    })
+            except Exception as e:
+                print(f"Error inspecting chunk for tool calls: {e}")
 
             chunk_text = (chunk.text or "")
             if not chunk_text:
@@ -526,13 +609,41 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                 }
             )
         )
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "runtime_timezone",
+                    "timezone_rule": get_timezone_rule(stream_device_id),
+                }
+            )
+        )
     except Exception as e:
-        print(f"Could not sync runtime_vision to ESP32 on connect: {e}")
+        print(f"Could not sync runtime settings to ESP32 on connect: {e}")
 
     try:
         while True:
-            # Receive binary packet from ESP32
-            data = await websocket.receive_bytes()
+            # Receive data from ESP32 (binary or text)
+            msg = await websocket.receive()
+
+            # Handle text messages from ESP32 (settings sync)
+            if "text" in msg:
+                try:
+                    j = json.loads(msg["text"])
+                    msg_type = j.get("type", "")
+                    dev_id = active_streams[websocket].get("device_id", "default_bot")
+                    if msg_type == "vision_changed":
+                        vision_enabled_by_device[dev_id] = j.get("enabled", True)
+                        await manager.broadcast({"type": "vision_changed", "device_id": dev_id, "enabled": j.get("enabled", True)})
+                    elif msg_type == "timezone_changed":
+                        tz = str(j.get("timezone_rule", DEFAULT_TIMEZONE_RULE) or DEFAULT_TIMEZONE_RULE)
+                        timezone_rule_by_device[dev_id] = tz
+                        await manager.broadcast({"type": "timezone_changed", "device_id": dev_id, "timezone_rule": tz})
+                except Exception as e:
+                    print(f"Error parsing ESP32 text message: {e}")
+                continue
+
+            # Binary packet handling
+            data = msg.get("bytes", b"")
             if not data:
                 continue
                 
@@ -675,11 +786,26 @@ async def get_vision_setting(device_id: str):
     return {"device_id": device_id, "enabled": is_vision_enabled(device_id)}
 
 @app.post("/api/runtime/{device_id}/vision")
-async def set_vision_setting(device_id: str, payload: VisionToggleRequest):
+async def set_vision_setting(device_id: str, payload: VisionToggleRequest):  # noqa: F811
     """Sets whether video frames are included in model requests."""
     vision_enabled_by_device[device_id] = payload.enabled
     await _send_runtime_vision_to_esp32(device_id, payload.enabled)
     return {"status": "success", "device_id": device_id, "enabled": payload.enabled}
+
+
+@app.get("/api/runtime/{device_id}/timezone")
+async def get_timezone_setting(device_id: str):
+    """Gets timezone rule used by the device for RTC/NTP sync."""
+    return {"device_id": device_id, "timezone_rule": get_timezone_rule(device_id)}
+
+
+@app.post("/api/runtime/{device_id}/timezone")
+async def set_timezone_setting(device_id: str, payload: TimezoneRuleRequest):
+    """Sets timezone rule used by the device for RTC/NTP sync."""
+    tz = str(payload.timezone_rule or DEFAULT_TIMEZONE_RULE)
+    timezone_rule_by_device[device_id] = tz
+    await _send_runtime_timezone_to_esp32(device_id, tz)
+    return {"status": "success", "device_id": device_id, "timezone_rule": tz}
 
 @app.get("/ping")
 async def ping():

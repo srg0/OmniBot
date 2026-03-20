@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
 
 // ==========================================
 //        USER CONFIGURATION
@@ -91,7 +92,7 @@ bool isWsConnected = false;
 #define FRAME_INTERVAL_MS 100 
 unsigned long lastFrameTime = 0;
 
-enum RobotState { STATE_IDLE, STATE_RECORDING, STATE_SETUP, STATE_UPLOADING };
+enum RobotState { STATE_IDLE, STATE_RECORDING, STATE_SETUP, STATE_UPLOADING, STATE_SETTINGS };
 volatile RobotState currentState = STATE_SETUP;
 
 // Touch & Gesture Tracking Globals
@@ -121,6 +122,9 @@ volatile bool geminiFirstTokenReceived = false;
 
 // When false, skip JPEG capture during record (matches app "Vision" / server use_vision).
 bool deviceVisionCaptureEnabled = true;
+
+// Settings screen
+bool settingsScreenNeedsRedraw = true;
 
 // Weather overlay (from backend show_weather tool)
 #define WEATHER_KIND_SUNNY 0
@@ -162,6 +166,10 @@ const uint8_t WIFI_CONNECT_ATTEMPTS = 3;
 const uint16_t WIFI_CONNECT_TIMEOUT_MS = 15000;
 const uint8_t WIFI_FAILS_BEFORE_BLE_FALLBACK = 3;
 const uint8_t WIFI_FAILS_BEFORE_CREDS_CLEAR = 8;
+const uint32_t RTC_WIFI_SYNC_INTERVAL_MS = 3600000UL; // 1 hour
+const char* DEFAULT_TIMEZONE_RULE = "EST5EDT,M3.2.0/2,M11.1.0/2";
+char activeTimezoneRule[64] = {0};
+unsigned long lastRtcWifiSyncAttemptMs = 0;
 
 struct IdleAnimState {
     int16_t lookX = 0;
@@ -1046,6 +1054,44 @@ void updateTimeScreen() {
     lastRenderedTime = timeText;
 }
 
+bool syncRtcFromWifiNtp() {
+    if (WiFi.status() != WL_CONNECTED) {
+        return false;
+    }
+
+    configTzTime(
+        activeTimezoneRule[0] ? activeTimezoneRule : DEFAULT_TIMEZONE_RULE,
+        "pool.ntp.org",
+        "time.nist.gov",
+        "time.google.com"
+    );
+
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo, 10000)) {
+        Serial.println("[RTC] NTP sync failed (timeout waiting for time).");
+        return false;
+    }
+
+    // Write local wall clock into RTC (already localized by timezone rule).
+    rtc.adjust(
+        DateTime(
+            timeinfo.tm_year + 1900,
+            timeinfo.tm_mon + 1,
+            timeinfo.tm_mday,
+            timeinfo.tm_hour,
+            timeinfo.tm_min,
+            timeinfo.tm_sec
+        )
+    );
+    DateTime now = rtc.now();
+    Serial.printf(
+        "[RTC] Synced from WiFi NTP (%s): %04d/%02d/%02d %02d:%02d:%02d\n",
+        activeTimezoneRule[0] ? activeTimezoneRule : DEFAULT_TIMEZONE_RULE,
+        now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second()
+    );
+    return true;
+}
+
 // ==========================================
 //          HARDWARE SETUP
 // ==========================================
@@ -1082,6 +1128,80 @@ static void setDeviceVisionCaptureEnabled(bool en) {
     preferences.begin("pixel_prefs", false);
     preferences.putBool("vision_cap", en);
     preferences.end();
+}
+
+static void loadTimezoneRuleFromPrefs() {
+    preferences.begin("pixel_prefs", true);
+    String tz = preferences.getString("tz_rule", DEFAULT_TIMEZONE_RULE);
+    preferences.end();
+    tz.trim();
+    if (tz.length() == 0) {
+        tz = DEFAULT_TIMEZONE_RULE;
+    }
+    strncpy(activeTimezoneRule, tz.c_str(), sizeof(activeTimezoneRule) - 1);
+    activeTimezoneRule[sizeof(activeTimezoneRule) - 1] = '\0';
+}
+
+static void setTimezoneRule(const char* tzRule) {
+    String tz = String(tzRule ? tzRule : "");
+    tz.trim();
+    if (tz.length() == 0) {
+        tz = DEFAULT_TIMEZONE_RULE;
+    }
+    strncpy(activeTimezoneRule, tz.c_str(), sizeof(activeTimezoneRule) - 1);
+    activeTimezoneRule[sizeof(activeTimezoneRule) - 1] = '\0';
+
+    preferences.begin("pixel_prefs", false);
+    preferences.putString("tz_rule", activeTimezoneRule);
+    preferences.end();
+}
+
+
+
+// ==========================================
+//          SETTINGS SCREEN UI
+// ==========================================
+static const uint16_t kSetBg       = 0x10A2; // dark gray
+static const uint16_t kSetRing     = 0x2124;
+static const uint16_t kSetTitle    = 0xEF9D; // warm white
+static const uint16_t kSetLabel    = 0xB5B6; // light gray
+static const uint16_t kSetOnColor  = 0x07E0; // green
+static const uint16_t kSetOffColor = 0xF800; // red
+
+static const int16_t kVidBtnX = 52;
+static const int16_t kVidBtnY = 102;
+static const int16_t kVidBtnW = 136;
+static const int16_t kVidBtnH = 36;
+
+void drawSettingsScreen() {
+    gfx->fillScreen(kSetBg);
+    gfx->drawCircle(120, 120, 118, kSetRing);
+
+    // Title
+    gfx->setTextSize(2);
+    gfx->setTextColor(kSetTitle);
+    const char* title = "SETTINGS";
+    int16_t tw = (int16_t)(strlen(title) * 12);
+    gfx->setCursor((240 - tw) / 2, 50);
+    gfx->print(title);
+
+    // Video toggle button
+    uint16_t btnColor = deviceVisionCaptureEnabled ? kSetOnColor : kSetOffColor;
+    gfx->fillRoundRect(kVidBtnX, kVidBtnY, kVidBtnW, kVidBtnH, 10, btnColor);
+    gfx->setTextSize(2);
+    gfx->setTextColor(WHITE);
+    const char* vidText = deviceVisionCaptureEnabled ? "VIDEO: ON" : "VIDEO: OFF";
+    int16_t vtw = (int16_t)(strlen(vidText) * 12);
+    gfx->setCursor((240 - vtw) / 2, kVidBtnY + 10);
+    gfx->print(vidText);
+
+    // Video label
+    gfx->setTextSize(1);
+    gfx->setTextColor(kSetLabel);
+    const char* camLabel = "CAMERA CAPTURE";
+    int16_t clw = (int16_t)(strlen(camLabel) * 6);
+    gfx->setCursor((240 - clw) / 2, kVidBtnY + kVidBtnH + 6);
+    gfx->print(camLabel);
 }
 
 void captureVideoFrame() {
@@ -1234,6 +1354,8 @@ void setupWiFi() {
     preferences.end();
 
     WiFi.setSleep(false);
+    syncRtcFromWifiNtp();
+    lastRtcWifiSyncAttemptMs = millis();
     currentState = STATE_IDLE; 
     showIdleEyes();
 
@@ -1269,6 +1391,13 @@ void setupWiFi() {
                                     }
                                 }
                                 video_frame_count = 0;
+                            }
+                        } else if (strcmp(msgType, "runtime_timezone") == 0) {
+                            const char* tzRule = doc["timezone_rule"] | DEFAULT_TIMEZONE_RULE;
+                            setTimezoneRule(tzRule);
+                            if (WiFi.status() == WL_CONNECTED) {
+                                syncRtcFromWifiNtp();
+                                lastRtcWifiSyncAttemptMs = millis();
                             }
                         } else if (strcmp(msgType, "show_weather") == 0) {
                             float tRaw = doc["temperature"] | 0.0f;
@@ -1439,6 +1568,7 @@ void setup() {
     config.fb_count = 2;
     esp_camera_init(&config);
 
+    loadTimezoneRuleFromPrefs();
     setupWiFi();
 
     xTaskCreatePinnedToCore(
@@ -1485,6 +1615,15 @@ void loop() {
         Serial.printf("[RTC] %04d/%02d/%02d %02d:%02d:%02d\n", 
                       now.year(), now.month(), now.day(), 
                       now.hour(), now.minute(), now.second());
+    }
+
+    // Hourly RTC re-sync while WiFi is connected.
+    if (
+        WiFi.status() == WL_CONNECTED &&
+        (millis() - lastRtcWifiSyncAttemptMs) >= RTC_WIFI_SYNC_INTERVAL_MS
+    ) {
+        lastRtcWifiSyncAttemptMs = millis();
+        syncRtcFromWifiNtp();
     }
 
     // --- Time Screen UI Refresh ---
@@ -1562,7 +1701,34 @@ void loop() {
             if (millis() - lastTapTime > tapCooldown) {
                 lastTapTime = millis();
                 
-                if (currentState == STATE_IDLE) {
+                if (currentState == STATE_SETTINGS) {
+                    // Handle settings screen taps
+                    int tapX = endX;
+                    int tapY = endY;
+
+                    // Video toggle button tap
+                    if (tapY >= kVidBtnY && tapY <= (kVidBtnY + kVidBtnH)
+                             && tapX >= kVidBtnX && tapX <= (kVidBtnX + kVidBtnW)) {
+                        bool newVal = !deviceVisionCaptureEnabled;
+                        setDeviceVisionCaptureEnabled(newVal);
+                        // Notify backend of the change
+                        if (isWsConnected) {
+                            StaticJsonDocument<128> vDoc;
+                            vDoc["type"] = "vision_changed";
+                            vDoc["enabled"] = newVal;
+                            char buf[128];
+                            serializeJson(vDoc, buf, sizeof(buf));
+                            webSocket.sendTXT(buf);
+                        }
+                        settingsScreenNeedsRedraw = true;
+                    }
+                    // Tap outside controls → exit settings
+                    else {
+                        currentState = STATE_IDLE;
+                        showIdleEyes();
+                    }
+                }
+                else if (currentState == STATE_IDLE) {
                     Serial.println("\n*** TAP DETECTED: STARTING RECORD ***\n");
                     weatherOverlayActive = false;
                     currentState = STATE_RECORDING;
@@ -1611,14 +1777,18 @@ void loop() {
             } else {
                 if (deltaY > 0) {
                     Serial.println("SWIPE DOWN");
-                    if (timeScreenActive && currentState == STATE_IDLE) {
+                    if (currentState == STATE_IDLE) {
                         timeScreenActive = false;
                         resetTimeScreenCache();
-                        showIdleEyes();
+                        currentState = STATE_SETTINGS;
+                        settingsScreenNeedsRedraw = true;
                     }
                 } else {
                     Serial.println("SWIPE UP");
-                    if (timeScreenActive && currentState == STATE_IDLE) {
+                    if (currentState == STATE_SETTINGS) {
+                        currentState = STATE_IDLE;
+                        showIdleEyes();
+                    } else if (timeScreenActive && currentState == STATE_IDLE) {
                         timeScreenActive = false;
                         resetTimeScreenCache();
                         showIdleEyes();
@@ -1668,6 +1838,11 @@ void loop() {
             updateUploadingThinkingAnimation();
         } else if (!timeScreenActive) {
             updateIdleEyesAnimation();
+        }
+    } else if (currentState == STATE_SETTINGS) {
+        if (settingsScreenNeedsRedraw) {
+            drawSettingsScreen();
+            settingsScreenNeedsRedraw = false;
         }
     } else if (currentState == STATE_IDLE && !timeScreenActive) {
         updateIdleEyesAnimation();
