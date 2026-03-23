@@ -20,7 +20,7 @@ from urllib.parse import urlencode
 
 import requests
 
-from semantic_pixel_router import classify_retrieval
+from semantic_pixel_router import classify_retrieval_with_reason
 
 from maps_widget_screenshot import capture_contextual_map_jpeg_sync
 
@@ -53,6 +53,10 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "- Only discuss or analyze the video content if it is relevant to my current prompt or question.\n"
     "- Do not greet me in every message.\n"
     "- You are helpful, slightly curious, and highly efficient.\n\n"
+    "Real-time information:\n"
+    "- For any question that depends on current, live, or rapidly changing facts, use Google Search when that tool is available.\n"
+    "- This includes weather, news, sports scores/results, traffic conditions, market/finance updates, and similar real-time topics.\n"
+    "- Prefer grounded, source-backed answers for these topics over model memory.\n\n"
     "Weather:\n"
     "- When I ask about weather or current conditions, use Google Search for live details when that tool is available.\n"
     "- If only Google Maps grounding is available (no Search in this session), answer from general knowledge and pick a plausible condition and temperature for the display.\n"
@@ -292,6 +296,29 @@ def _extract_maps_widget_token_from_grounding_metadata(gm) -> Optional[str]:
         return None
     s = str(tok).strip()
     return s or None
+
+
+def _extract_search_sources_from_grounding_metadata(gm) -> tuple[list[dict], list[str]]:
+    """Build link list + query list for hub UI (Google Search grounding attribution)."""
+    if gm is None:
+        return [], []
+    chunks = getattr(gm, "grounding_chunks", None) or []
+    by_uri: dict[str, dict] = {}
+    for ch in chunks:
+        web = getattr(ch, "web", None)
+        if web is None:
+            continue
+        uri = getattr(web, "uri", None)
+        if not uri:
+            continue
+        title = (getattr(web, "title", None) or "").strip() or "Web source"
+        by_uri[str(uri)] = {"title": title, "uri": str(uri)}
+    queries = []
+    for q in (getattr(gm, "web_search_queries", None) or []):
+        s = str(q).strip()
+        if s:
+            queries.append(s)
+    return list(by_uri.values()), queries
 
 
 def assemble_video(jpeg_frames: list[bytes], fps: int = 10) -> bytes:
@@ -901,6 +928,8 @@ async def stream_chat_turn_response(device_id: str, message_content):
     first_token_notified = False
     last_maps_sources: list[dict] = []
     last_maps_widget_token: Optional[str] = None
+    last_search_sources: list[dict] = []
+    last_search_queries: list[str] = []
 
     await manager.broadcast({
         "type": "ai_response_stream_start",
@@ -932,8 +961,11 @@ async def stream_chat_turn_response(device_id: str, message_content):
             )
         routing_text = _routing_text_from_message_content(message_content)
         prefer_maps = False
+        route_reason = "fallback_search"
         if routing_text:
-            retrieval = await asyncio.to_thread(classify_retrieval, routing_text)
+            retrieval, route_reason = await asyncio.to_thread(
+                classify_retrieval_with_reason, routing_text
+            )
             prefer_maps = retrieval == "maps"
         if _route_debug_enabled():
             snippet = routing_text if len(routing_text) <= 200 else routing_text[:200] + "..."
@@ -947,7 +979,8 @@ async def stream_chat_turn_response(device_id: str, message_content):
             _route_debug(
                 f"device_id={device_id!r} routing_text={snippet!r} "
                 f"classified_prefer_maps={prefer_maps} effective_builtin_retrieval="
-                f"{'google_maps' if will_maps else 'google_search'}"
+                f"{'google_maps' if will_maps else 'google_search'} "
+                f"route_reason={route_reason}"
             )
         config = _pixel_chat_generate_config(
             system_instruction=system_instruction,
@@ -977,6 +1010,11 @@ async def stream_chat_turn_response(device_id: str, message_content):
                             src = _extract_maps_sources_from_grounding_metadata(gm)
                             if src:
                                 last_maps_sources = src
+                            web_src, web_queries = _extract_search_sources_from_grounding_metadata(gm)
+                            if web_src:
+                                last_search_sources = web_src
+                            if web_queries:
+                                last_search_queries = web_queries
                             wtok = _extract_maps_widget_token_from_grounding_metadata(gm)
                             if wtok:
                                 last_maps_widget_token = wtok
@@ -1033,6 +1071,9 @@ async def stream_chat_turn_response(device_id: str, message_content):
         )
         if last_maps_sources:
             _maps_debug(f"maps source titles: {[s.get('title') for s in last_maps_sources[:5]]}")
+        _maps_debug(
+            f"search_grounding_chunks={len(last_search_sources)} search_queries={len(last_search_queries)}"
+        )
 
     end_msg = {
         "type": "ai_response_stream_end",
@@ -1041,6 +1082,10 @@ async def stream_chat_turn_response(device_id: str, message_content):
     }
     if last_maps_sources:
         end_msg["maps_sources"] = last_maps_sources
+    if last_search_sources:
+        end_msg["search_sources"] = last_search_sources
+    if last_search_queries:
+        end_msg["search_queries"] = last_search_queries
     if last_maps_widget_token:
         end_msg["maps_widget_context_token"] = last_maps_widget_token
     await manager.broadcast(end_msg)

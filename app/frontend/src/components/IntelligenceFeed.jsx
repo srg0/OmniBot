@@ -49,17 +49,29 @@ const parseShowWeatherFromText = (text) => {
 
 const MapsGroundingSources = ({ sources }) => {
   if (!sources || sources.length === 0) return null;
+  const uniqueSources = [];
+  const seen = new Set();
+  for (const s of sources) {
+    const key = `${String(s?.title || '').trim()}|${String(s?.uri || '').trim()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueSources.push(s);
+    }
+  }
+  const visible = uniqueSources.slice(0, 6);
+  const hiddenCount = Math.max(0, uniqueSources.length - visible.length);
   return (
     <div className="maps-grounding-sources">
       <p className="maps-grounding-line">
-        {sources.map((s, i) => (
-          <span key={s.uri}>
+        {visible.map((s, i) => (
+          <span key={`${s.uri || 'source'}-${i}`}>
             {i > 0 && <span>, </span>}
             <a href={s.uri} target="_blank" rel="noopener noreferrer">
               {s.title || 'Place'}
             </a>
           </span>
         ))}
+        {hiddenCount > 0 && <span>{` (+${hiddenCount} more)`}</span>}
       </p>
       <p className="gmp-attribution" translate="no">
         Google Maps
@@ -128,17 +140,70 @@ const MapsContextualWidget = ({ contextToken }) => {
   );
 };
 
+const MapsStableEmbed = ({ sources }) => {
+  if (!sources || sources.length === 0) return null;
+  const first = sources.find((s) => String(s?.title || '').trim() || String(s?.uri || '').trim());
+  if (!first) return null;
+  const query = String(first.title || first.uri || '').trim();
+  if (!query) return null;
+  const src = `https://www.google.com/maps?output=embed&q=${encodeURIComponent(query)}`;
+  return (
+    <div className="maps-embed-wrap">
+      <iframe
+        className="maps-embed-iframe"
+        title="Google Maps results"
+        src={src}
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+      />
+    </div>
+  );
+};
+
 const MapsGroundingBlock = ({ sources, widgetContextToken }) => {
   const hasSources = sources && sources.length > 0;
   const token = String(widgetContextToken || '').trim();
   if (!hasSources && !token) return null;
   return (
     <div className="maps-grounding-block">
+      {hasSources && <MapsStableEmbed sources={sources} />}
       {hasSources && <MapsGroundingSources sources={sources} />}
-      {token && <MapsContextualWidget key={token} contextToken={token} />}
+      {!hasSources && token && <MapsContextualWidget key={token} contextToken={token} />}
       {token && !hasSources && (
         <p className="gmp-attribution" translate="no">
           Google Maps
+        </p>
+      )}
+    </div>
+  );
+};
+
+const SearchGroundingBlock = ({ sources, queries }) => {
+  const hasSources = sources && sources.length > 0;
+  const hasQueries = queries && queries.length > 0;
+  if (!hasSources && !hasQueries) return null;
+  return (
+    <div className="maps-grounding-block">
+      {hasSources && (
+        <div className="maps-grounding-sources">
+          <p className="maps-grounding-line">
+            {sources.map((s, i) => (
+              <span key={s.uri}>
+                {i > 0 && <span>, </span>}
+                <a href={s.uri} target="_blank" rel="noopener noreferrer">
+                  {s.title || 'Web source'}
+                </a>
+              </span>
+            ))}
+          </p>
+          <p className="gmp-attribution" translate="no">
+            Google Search
+          </p>
+        </div>
+      )}
+      {hasQueries && (
+        <p className="maps-widget-hint">
+          Search queries: {queries.join(' | ')}
         </p>
       )}
     </div>
@@ -271,8 +336,15 @@ const IntelligenceFeed = ({
           </div>
         ) : (
           <div className="messages-area">
-            {logs.map((log) => (
-              <div key={log.id} className={`message-bubble ${log.sender}`}>
+            {logs.map((log) => {
+              const hasMapContent =
+                Boolean(log.mapsWidgetContextToken) ||
+                (Array.isArray(log.mapsSources) && log.mapsSources.length > 0);
+              return (
+              <div
+                key={log.id}
+                className={`message-bubble ${log.sender}${hasMapContent ? ' has-map-widget' : ''}`}
+              >
                 <div className="message-meta">
                   <span className="message-sender">
                     {log.sender === 'system' && 'OmniBot Core'}
@@ -322,16 +394,22 @@ const IntelligenceFeed = ({
                     <>
                       {log.text}
                       {log.sender === 'ai' && (
-                        <MapsGroundingBlock
-                          sources={log.mapsSources}
-                          widgetContextToken={log.mapsWidgetContextToken}
-                        />
+                        <>
+                          <MapsGroundingBlock
+                            sources={log.mapsSources}
+                            widgetContextToken={log.mapsWidgetContextToken}
+                          />
+                          <SearchGroundingBlock
+                            sources={log.searchSources}
+                            queries={log.searchQueries}
+                          />
+                        </>
                       )}
                     </>
                   )}
                 </div>
               </div>
-            ))}
+            )})}
             <div ref={logEndRef} />
           </div>
         )}

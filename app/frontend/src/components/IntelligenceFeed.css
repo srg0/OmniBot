@@ -75,6 +75,10 @@
 
 .maps-grounding-block {
   margin-top: 0.75rem;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(0, 102, 204, 0.12);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
 }
 
 .maps-grounding-block > .maps-contextual-wrap:first-child {
@@ -91,13 +95,25 @@
   margin-top: 0.75rem;
 }
 
+.maps-embed-wrap {
+  margin-bottom: 0.65rem;
+}
+
+.maps-embed-iframe {
+  width: 100%;
+  height: 380px;
+  border: 1px solid rgba(0, 102, 204, 0.15);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
 .maps-contextual-host {
-  min-height: 120px;
+  min-height: 420px;
   width: 100%;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid rgba(0, 102, 204, 0.15);
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .maps-widget-hint {
@@ -120,6 +136,7 @@
   font-size: 0.85rem;
   line-height: 1.45;
   color: var(--text-main);
+  word-break: break-word;
 }
 
 .maps-grounding-line a {
@@ -199,9 +216,19 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.02);
 }
 
+/* Google Maps overlays can misalign if initialized inside transformed ancestors. */
+.message-bubble.has-map-widget {
+  animation: fadeInOnly 0.25s ease-out forwards;
+}
+
 @keyframes slideIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInOnly {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .message-meta {

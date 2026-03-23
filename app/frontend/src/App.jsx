@@ -85,14 +85,20 @@ function App() {
             setEsp32Status('online');
             const hasMapsSources =
               message.maps_sources && message.maps_sources.length > 0;
+            const hasSearchSources =
+              message.search_sources && message.search_sources.length > 0;
+            const hasSearchQueries =
+              message.search_queries && message.search_queries.length > 0;
             const mapsToken = message.maps_widget_context_token;
-            if (hasMapsSources || mapsToken) {
+            if (hasMapsSources || mapsToken || hasSearchSources || hasSearchQueries) {
               setLogs((prev) =>
                 prev.map((log) =>
                   log.sender === 'ai' && log.streamId === message.stream_id
                     ? {
                         ...log,
                         ...(hasMapsSources ? { mapsSources: message.maps_sources } : {}),
+                        ...(hasSearchSources ? { searchSources: message.search_sources } : {}),
+                        ...(hasSearchQueries ? { searchQueries: message.search_queries } : {}),
                         ...(mapsToken
                           ? { mapsWidgetContextToken: mapsToken }
                           : {})
