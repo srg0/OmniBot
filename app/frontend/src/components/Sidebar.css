@@ -37,6 +37,18 @@
   font-weight: 600;
 }
 
+.sidebar-empty-bots {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.sidebar-empty-bots strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 /* Bot Card */
 .bot-card {
   background: rgba(255, 255, 255, 0.4);

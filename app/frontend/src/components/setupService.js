@@ -4,6 +4,7 @@ export const initialSetupState = {
   appMode: 'dashboard', // 'dashboard' or 'setup'
   setupStep: 'device', // 'device', 'wifi', 'password'
   bleDevices: [],
+  bleScanMessage: null,
   isScanning: false,
   selectedDevice: null,
   ssid: '',
@@ -17,8 +18,19 @@ export const initialSetupState = {
 // These API calls use the resolved hub origin (Vite proxy in dev, same origin in Docker, or VITE_HUB_API_ORIGIN).
 export const scanForDevices = async () => {
   const res = await fetch(hubUrl('/setup/scan'));
-  const data = await res.json();
-  return data.devices || [];
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return {
+      devices: [],
+      message: data.detail || 'BLE scan failed.',
+      ble_available: false,
+    };
+  }
+  return {
+    devices: data.devices || [],
+    message: data.message || null,
+    ble_available: data.ble_available !== false,
+  };
 };
 
 export const scanForWifi = async () => {

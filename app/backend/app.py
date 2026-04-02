@@ -648,19 +648,31 @@ WIFI_CREDS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef0"
 async def setup_scan():
     """Scans for nearby BLE devices and returns those that might be the Desktop Bot."""
     print("BLE Scanning...")
-    devices = await BleakScanner.discover(timeout=5.0)
+    try:
+        devices = await BleakScanner.discover(timeout=5.0)
+    except Exception as e:
+        print(f"BLE scan unavailable: {e}")
+        return {
+            "devices": [],
+            "ble_available": False,
+            "message": (
+                "Bluetooth scanning is not available in this environment (typical in Docker: no "
+                "host Bluetooth/D-Bus). Run the OmniBot hub on your PC (not in a container) to "
+                "scan for Pixel over BLE, or configure Wi‑Fi on the device manually."
+            ),
+        }
+
     results = []
-    
     for d in devices:
-        # Look for a specific name prefix
         if d.name and "Pixel" in d.name:
             results.append({"name": d.name, "address": d.address})
-            
-    # For testing without the ESP32 code ready, return a fake device if none found
-    if not results:
+
+    # Optional dev-only fake device when no hardware is found (set OMNIBOT_SETUP_SIMULATE_DEVICE=1)
+    sim = (os.getenv("OMNIBOT_SETUP_SIMULATE_DEVICE") or "").strip().lower()
+    if not results and sim in ("1", "true", "yes"):
         results.append({"name": "DesktopBot_Setup (Simulated)", "address": "00:00:00:00:00:00"})
-        
-    return {"devices": results}
+
+    return {"devices": results, "ble_available": True, "message": None}
 
 @app.post("/setup/provision")
 async def setup_provision(creds: WifiCredentials):
@@ -2400,11 +2412,7 @@ async def api_hub_settings_post(body: HubSettingsUpdate):
 
 @app.get("/ping")
 async def ping():
-    """A simple health check. Using this also notifies the UI that ESP32 is online."""
-    await manager.broadcast({
-        "type": "esp32_connected",
-        "data": "ESP32 is online"
-    })
+    """Health check for load balancers / Docker. Does not signal ESP32 connection (avoid false positives from periodic health probes)."""
     return {"status": "ready"}
 
 

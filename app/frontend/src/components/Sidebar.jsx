@@ -18,54 +18,58 @@ const Sidebar = ({
 
       <div className="sidebar-section">
         <h3>Connected Bots</h3>
-        
-        {/* Pixel Bot Status Card */}
-        <div
-          className={`bot-card ${esp32Status}`}
-          role="button"
-          tabIndex={0}
-          title="Open Pixel Intelligence Feed"
-          onClick={() => setAppMode('dashboard')}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              setAppMode('dashboard');
-            }
-          }}
-        >
-          <div className="bot-card-header">
-            <div className="bot-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="holo-icon">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-              </svg>
-            </div>
-            <div className="bot-info">
-              <span className="bot-name">Pixel</span>
-              <span className="bot-status-text">
-                {esp32Status === 'offline' && 'Offline'}
-                {esp32Status === 'online' && 'Ready'}
-                {esp32Status === 'working' && 'Processing'}
-              </span>
-            </div>
-          </div>
-          {lastPing && esp32Status !== 'offline' && (
-            <div className="bot-ping">Last seen: {lastPing}</div>
-          )}
-          <button 
-            className="bot-settings-btn" 
-            title="Pixel bot settings"
-            onClick={(e) => {
-              e.stopPropagation();
-              setSettingsTab('pixel');
-              setAppMode('settings');
+
+        {esp32Status === 'offline' ? (
+          <p className="sidebar-empty-bots">
+            No bots connected yet. Use <strong>Add New Bot</strong> below to provision Pixel, or run the hub on your PC for Bluetooth setup.
+          </p>
+        ) : (
+          <div
+            className={`bot-card ${esp32Status}`}
+            role="button"
+            tabIndex={0}
+            title="Open Pixel Intelligence Feed"
+            onClick={() => setAppMode('dashboard')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setAppMode('dashboard');
+              }
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3"></circle>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-            </svg>
-          </button>
-        </div>
+            <div className="bot-card-header">
+              <div className="bot-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="holo-icon">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+              </div>
+              <div className="bot-info">
+                <span className="bot-name">Pixel</span>
+                <span className="bot-status-text">
+                  {esp32Status === 'online' && 'Ready'}
+                  {esp32Status === 'working' && 'Processing'}
+                </span>
+              </div>
+            </div>
+            {lastPing && (
+              <div className="bot-ping">Last seen: {lastPing}</div>
+            )}
+            <button
+              className="bot-settings-btn"
+              title="Pixel bot settings"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSettingsTab('pixel');
+                setAppMode('settings');
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="sidebar-actions">

@@ -189,11 +189,14 @@ function App() {
   // --- Setup Flow Actions ---
   const handleScan = async () => {
     updateSetup('isScanning', true);
+    updateSetup('bleScanMessage', null);
     try {
-      const devices = await scanForDevices();
+      const { devices, message } = await scanForDevices();
       updateSetup('bleDevices', devices);
+      updateSetup('bleScanMessage', message);
     } catch (e) {
       console.error("Scan error", e);
+      updateSetup('bleScanMessage', e.message || 'Scan failed.');
     } finally {
       updateSetup('isScanning', false);
     }

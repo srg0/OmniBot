@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 const SetupDevice = ({ state, setters, actions }) => {
-  const { bleDevices, isScanning, selectedDevice } = state;
+  const { bleDevices, bleScanMessage, isScanning, selectedDevice } = state;
   const { setSetupStep, setSelectedDevice } = setters;
   const { handleScan, handleWifiScan } = actions;
 
@@ -18,6 +18,12 @@ const SetupDevice = ({ state, setters, actions }) => {
           'Scan for Nearby Bots'
         )}
       </button>
+
+      {bleScanMessage && (
+        <p className="help-text" style={{ marginBottom: '1rem' }} role="status">
+          {bleScanMessage}
+        </p>
+      )}
 
       <div className="device-list">
         {bleDevices.map(d => (
@@ -38,7 +44,7 @@ const SetupDevice = ({ state, setters, actions }) => {
             <div className="device-arrow">→</div>
           </div>
         ))}
-        {bleDevices.length === 0 && !isScanning && (
+        {bleDevices.length === 0 && !isScanning && !bleScanMessage && (
           <div className="empty-state">No nearby devices found. Make sure the bot is powered on.</div>
         )}
       </div>

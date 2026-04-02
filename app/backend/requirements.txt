@@ -1,6 +1,17 @@
+# Narrow transitive deps so installs resolve quickly (pip backtracks hard on these otherwise)
+pyasn1>=0.6.1,<0.7
+pyasn1-modules>=0.4.1,<0.5
+regex>=2024.11.6
+referencing>=0.36.0
+rpds-py>=0.29.0
+numpy>=2.4.0,<3
+jsonschema>=4.23.0,<5
+propcache>=0.3.0
+
 requests
 python-dotenv
-Pillow>=11.0.0,<12.0.0
+# fastembed (semantic-router[fastembed]) requires Pillow<11 on Python 3.12
+Pillow>=10.3.0,<11.0.0
 fastapi
 uvicorn[standard]
 google-genai>=1.50.0

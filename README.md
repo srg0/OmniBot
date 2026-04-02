@@ -11,6 +11,7 @@ OmniBot/
 ├── app/
 │   ├── backend/          # FastAPI + Google GenAI (Gemini), BLE provisioning, WebSockets
 │   └── frontend/         # React + Vite dashboard
+├── scripts/              # install.ps1 / install.sh + start.ps1 / start.sh (recommended quick start)
 ├── Dockerfile            # Multi-stage: build UI + run hub
 ├── docker-compose.yml
 └── bots/
@@ -63,11 +64,37 @@ OMNIBOT_ROUTE_DEBUG=1
 
 **Conversation memory:** Multi-turn context is kept **in RAM** on the backend (`history_by_device`), keyed by `device_id`. It is **cleared** when you save bot settings or call `POST /api/text-command/reset/{device_id}`; it is **lost** if the backend process restarts. Saving settings always applies the latest model, system instruction, and tools on the **next** turn without needing a separate “session” object.
 
-## Quick start
+## Quick start (recommended)
 
-You do **not** need to create a `.env` file by hand. Start the backend and frontend, open the dashboard, and paste your **Gemini API key** on the welcome screen — it is saved to `hub_secrets.json` under the hub data directory. (Optional: set `GEMINI_API_KEY` in `.env` instead if you prefer environment variables.)
+This mirrors a simple “install → run → open dashboard” flow (similar in spirit to tools that ship an install script plus a URL).
 
-### Backend
+1. **Clone** the repo and open a terminal at the **repository root**.
+2. **Install** dependencies once:
+   - **Windows (PowerShell):**  
+     `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` may be required the first time you run local scripts. Then:
+     ```powershell
+     .\scripts\install.ps1
+     ```
+   - **macOS / Linux:**
+     ```bash
+     chmod +x scripts/install.sh scripts/start.sh
+     ./scripts/install.sh
+     ```
+3. **Start** the hub and the dashboard:
+   - **Windows:** `.\scripts\start.ps1`  
+     Starts the FastAPI backend in a **second** window, runs the Vite dev server in the current window, and opens **http://127.0.0.1:5173** in your browser.
+   - **macOS / Linux:** `./scripts/start.sh`  
+     Runs the backend in the background, then `npm run dev`, and tries to open the same URL. Press **Ctrl+C** to stop both.
+
+4. **Onboarding:** You do **not** need to create a `.env` file by hand. On first load, paste your **Gemini API key** on the welcome screen — it is saved to `hub_secrets.json` under the hub data directory. (Optional: set `GEMINI_API_KEY` in `.env` instead.)
+
+**Dashboard URL (local dev):** **http://127.0.0.1:5173** — the Vite dev server **proxies** `/api`, `/setup`, `/ping`, and `/ws` to the backend on port **8000** (`app/frontend/vite.config.js`). The client resolves the hub via `app/frontend/src/hubOrigin.js` (`window.location.origin` in dev).
+
+### Manual start (without scripts)
+
+If you prefer step-by-step commands:
+
+**Backend**
 
 ```bash
 cd app/backend
@@ -77,13 +104,13 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Optional: `copy .env.example .env` and set `GEMINI_API_KEY` there if you do not want to use the UI.
+Optional: `copy .env.example .env` (Windows) or `cp .env.example .env` and set `GEMINI_API_KEY` there if you do not want to use the UI.
 
 When Maps grounding is enabled, the hub uses the Google Static Maps API to fetch a map image and forwards a normalized JPEG to Pixel. Backend map fetch uses `GOOGLE_MAPS_STATIC_API_KEY` when set, otherwise it falls back to `GOOGLE_MAPS_JS_API_KEY`.
 
 The server listens on **http://0.0.0.0:8000** (all interfaces). If you use Conda, activate your environment instead of `venv` before `pip install` / `python app.py`.
 
-### Frontend
+**Frontend**
 
 ```bash
 cd app/frontend
@@ -91,7 +118,7 @@ npm install
 npm run dev
 ```
 
-The dev server **proxies** `/api`, `/setup`, `/ping`, and `/ws` to the backend on port 8000 (see `app/frontend/vite.config.js`). The client resolves the hub URL via `app/frontend/src/hubOrigin.js`: optional **`VITE_HUB_API_ORIGIN`**, otherwise **`window.location.origin`** (works when the built UI is served from the same host as the API, e.g. Docker or a reverse proxy), with a localhost fallback. The maps loader can still set **`VITE_GOOGLE_MAPS_JS_API_KEY`** for the Maps script.
+Then open **http://127.0.0.1:5173**. For production-style single-port serving (built UI + API), use **Docker** below or serve `dist/` with `OMNIBOT_STATIC_ROOT` as documented in `app/backend/app.py`.
 
 ### Pixel firmware
 
@@ -196,7 +223,7 @@ Examples the UI handles: `esp32_connected`, `esp32_disconnected`, `processing_st
 
 ## Python dependencies
 
-See `app/backend/requirements.txt` (FastAPI, uvicorn, `google-genai`, `semantic-router[fastembed]`, explicit **`fastembed`** on Python 3.13+ because that extra’s dependency marker skips 3.13, Bleak, OpenCV/imageio for video assembly, etc.). The router uses **FastEmbed** / ONNX (no `transformers`); **Pillow** is pinned below 12 for compatibility with current **fastembed**. Expect a one-time embedding model download on first classification.
+See `app/backend/requirements.txt` (FastAPI, uvicorn, `google-genai`, `semantic-router[fastembed]`, explicit **`fastembed`** on Python 3.13+ because that extra’s dependency marker skips 3.13, Bleak, OpenCV/imageio for video assembly, etc.). The router uses **FastEmbed** / ONNX (no `transformers`); **Pillow** is pinned below 11 for compatibility with current **fastembed** on Python 3.12. Expect a one-time embedding model download on first classification.
 
 Frontend also depends on **`i18n-iso-countries`** for the settings country list (`npm install` in `app/frontend`).
 

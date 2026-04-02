@@ -4,6 +4,8 @@ Thanks for your interest in Omnibot.
 
 ## Development setup
 
+Fastest path: from the repo root, run [`scripts/install.ps1`](../scripts/install.ps1) / [`scripts/install.sh`](../scripts/install.sh) then [`scripts/start.ps1`](../scripts/start.ps1) / [`scripts/start.sh`](../scripts/start.sh) (see the main README). Manual steps:
+
 1. **Backend** — Python 3.11+ recommended (3.13 supported; see `requirements.txt` notes for `fastembed`).
 
    ```bash
