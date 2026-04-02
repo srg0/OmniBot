@@ -48,8 +48,12 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "overall reply (e.g. \"thanks\", \"nice one\").\n"
     "- Use the `show_weather_animation` tool only when the user asks about weather or conditions. Represent "
     "the weather as a condition plus numeric Fahrenheit temperature.\n"
-    "- Use the `show_map_animation` tool only when your response relies on Google Maps grounding such as "
-    "directions, navigation, or nearby places, so the hub can capture and send a contextual map to the display.\n\n"
+    "- ALWAYS call `show_map_animation` whenever you answer any question about directions, navigation, "
+    "nearby places, or specific businesses — regardless of whether you used Google Maps grounding.\n"
+    "  * Use display_style='directions' when the user asks how to get somewhere or needs navigation. "
+    "Pass the destination street address in the location field.\n"
+    "  * Use display_style='calling_card' when the user asks about a specific place or business. "
+    "Pass the BUSINESS NAME and city (e.g. 'AMC Parkway Pointe 15, Atlanta GA') NOT a street address.\n\n"
     "At most one animation tool should be used per turn. Do not call more than one of: "
     "`face_animation`, `show_face_animation`, `show_weather_animation`, or `show_map_animation` in the same turn.\n\n"
     "When asked about food, activities, or places near me, provide exactly ONE recommendation and do not list multiple options."
@@ -143,18 +147,29 @@ SHOW_MAP_ANIMATION_FUNCTION_DECLARATION = {
     "name": "show_map_animation",
     "description": (
         "Shows a map on the robot round display for several seconds. "
-        "You MUST call this function EVERY TIME after you use Google Maps to lookup locations, directions, or places. Do NOT answer a location or navigation question without calling this function immediately after checking the map results. "
-        "Always pass the specific address or place name in the 'location' parameter so the correct location is shown on the robot display."
+        "You MUST call this function EVERY TIME after you use Google Maps to lookup locations, directions, or places. "
+        "Do NOT answer a location or navigation question without calling this function immediately after checking the map results. "
+        "Always pass the specific address or place name in the 'location' parameter so the correct location is shown on the robot display. "
+        "Choose display_style='directions' for navigation/routing questions, or display_style='calling_card' for general place/business lookups."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "location": {
                 "type": "string",
-                "description": "The specific address or place name to show on the map (e.g. '2450 Cumberland Pkwy SE, Atlanta, GA' or 'Piedmont Park, Atlanta'). Use the most specific address available from the search results.",
+                "description": "For display_style='calling_card': pass the BUSINESS NAME and city (e.g. 'AMC Parkway Pointe 15, Atlanta GA' or 'Publix Paces Ferry Center, Atlanta'), NOT a raw street address — the business name allows the photo to be fetched correctly. For display_style='directions': a street address or place name is fine (e.g. '3101 Cobb Pkwy SE, Atlanta, GA').",
+            },
+            "display_style": {
+                "type": "string",
+                "enum": ["calling_card", "directions"],
+                "description": (
+                    "How to render the map on the robot display. "
+                    "Use 'directions' when the user asks how to get somewhere or needs turn-by-turn navigation — shows a route from their home to the destination. "
+                    "Use 'calling_card' when the user asks generally about a place, business, or landmark — shows the place name, address, photo, and review score."
+                ),
             },
         },
-        "required": ["location"],
+        "required": ["location", "display_style"],
     },
 }
 
@@ -195,6 +210,8 @@ maps_widget_token_latest_by_device: dict[str, str] = {}
 map_jpeg_sent_this_turn_by_device: dict[str, bool] = {}
 # Store explicit location from show_map_animation tool call for end-of-turn map rendering.
 map_location_override_by_device: dict[str, str] = {}
+# Store display_style from show_map_animation tool call for end-of-turn rendering.
+map_display_style_by_device: dict[str, str] = {}
 
 if not API_KEY:
     print("ERROR: API Key not found in .env file!")
@@ -778,7 +795,7 @@ def _make_show_weather_tool(device_id: str):
 def _make_show_map_animation_tool(device_id: str):
     """Builder so show_map_animation is bound to the correct bot device."""
 
-    def show_map_animation(location: str = "") -> dict:
+    def show_map_animation(location: str = "", display_style: str = "calling_card") -> dict:
         tool_state = turn_tool_state_by_device.setdefault(
             device_id, {"show_weather": False, "face_animation": False, "show_map": False}
         )
@@ -790,17 +807,23 @@ def _make_show_map_animation_tool(device_id: str):
             }
         tool_state["show_map"] = True
 
+        # Validate and store display_style
+        style = (display_style or "calling_card").strip().lower()
+        if style not in ("calling_card", "directions"):
+            style = "calling_card"
+        map_display_style_by_device[device_id] = style
+
         # Store the explicit location so the end-of-turn handler uses it
         loc = (location or "").strip()
         if loc:
             map_location_override_by_device[device_id] = loc
-            print(f"[Omnibot] show_map_animation: location override stored: {loc!r}")
+            print(f"[Omnibot] show_map_animation: location={loc!r} display_style={style!r}")
 
         _schedule_face_animation_to_esp32(device_id, "map", "")
         # NOTE: Do NOT send the map JPEG here. The end-of-turn handler will send it
         # once grounding metadata is available, ensuring the correct location is shown.
-        _broadcast_tool_call_to_frontend("show_map_animation", {"location": loc})
-        return {"ok": True, "display": "map animation queued on robot"}
+        _broadcast_tool_call_to_frontend("show_map_animation", {"location": loc, "display_style": style})
+        return {"ok": True, "display": "map animation queued on robot", "display_style": style}
 
     return show_map_animation
 
@@ -1043,31 +1066,49 @@ def _best_maps_location_query(maps_sources: list[dict]) -> str:
     return ""
 
 
-def _capture_static_map_jpeg_sync(
+def _normalize_map_jpeg(im: "Image.Image", size: int = 240) -> Optional[bytes]:
+    """Resize to size×size and re-encode as baseline JPEG ready for ESP32."""
+    try:
+        if im.size != (size, size):
+            im = im.resize((size, size), Image.Resampling.LANCZOS)
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=85, optimize=True, progressive=False)
+        return out.getvalue()
+    except Exception as e:
+        print(f"[Omnibot] Map JPEG normalization failed: {e}")
+        return None
+
+
+def _detect_error_tile(data: bytes) -> bool:
+    """Return True if `data` looks like a Google Maps error tile (uniform gray)."""
+    if len(data) < 256:
+        return True
+    try:
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+        arr = np.array(im)
+        std_dev = float(arr.std())
+        if std_dev < 15.0:
+            print(f"[Omnibot] Map looks like an error tile (std_dev={std_dev:.1f}), skipping.")
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _fetch_plain_static_map(
     *,
     api_key: str,
-    maps_sources: list[dict],
-    fallback_lat: Optional[float],
-    fallback_lng: Optional[float],
-    location_override: str = "",
+    location_query: str,
+    center: str,
     size: int = 240,
 ) -> Optional[bytes]:
-    key = (api_key or "").strip()
-    if not key:
-        return None
-    # Priority: explicit location from tool call > grounding title > fallback coords
-    location_query = (location_override or "").strip() or _best_maps_location_query(maps_sources)
-    center = (
-        f"{float(fallback_lat):.6f},{float(fallback_lng):.6f}"
-        if (fallback_lat is not None and fallback_lng is not None)
-        else ""
-    )
+    """Fetch a plain roadmap JPEG from the Static Maps API. Returns None on any failure."""
     params = {
         "size": f"{size}x{size}",
         "scale": "1",
         "format": "jpg-baseline",
         "maptype": "roadmap",
-        "key": key,
+        "key": api_key,
     }
     if location_query:
         params["markers"] = f"size:mid|color:red|{location_query}"
@@ -1079,67 +1120,388 @@ def _capture_static_map_jpeg_sync(
         params["markers"] = f"size:mid|color:red|{center}"
     else:
         return None
-    # Keep the robot display clean: remove most labels and POI clutter.
     styles = [
         "feature:poi|element:labels|visibility:off",
         "feature:transit|visibility:off",
         "feature:road|element:labels|visibility:off",
     ]
-    for style in styles:
-        params.setdefault("style", []).append(style)
-    
+    for s in styles:
+        params.setdefault("style", []).append(s)
     log_center = location_query or center
     print(f"[Omnibot] Static map request: center={log_center!r}")
-    
     try:
         r = requests.get("https://maps.googleapis.com/maps/api/staticmap", params=params, timeout=20)
         r.raise_for_status()
     except Exception as e:
         print(f"[Omnibot] Static map request failed: {e}")
         return None
-    
-    # Google returns HTTP 200 even for error tiles — detect via warning header
     api_warning = r.headers.get("X-Staticmap-API-Warning", "")
     if api_warning:
-        print(f"[Omnibot] Static Maps API warning (likely error tile): {api_warning}")
+        print(f"[Omnibot] Static Maps API warning: {api_warning}")
         return None
-    
     data = r.content or b""
-    if len(data) < 256:
+    if _detect_error_tile(data):
         return None
-    
-    # Detect error tiles: they are mostly uniform gray. A real map has color variance.
     try:
         im = Image.open(io.BytesIO(data)).convert("RGB")
-        # Sample a few pixels to check for uniformity (error tiles are ~(224,224,224) gray)
-        import numpy as np
-        arr = np.array(im)
-        std_dev = float(arr.std())
-        if std_dev < 15.0:
-            print(f"[Omnibot] Static map looks like an error tile (std_dev={std_dev:.1f}), skipping.")
-            return None
-    except ImportError:
-        # numpy not installed, skip variance check
-        try:
-            im = Image.open(io.BytesIO(data)).convert("RGB")
-        except Exception as e:
-            print(f"[Omnibot] Static map image open failed: {e}")
-            return None
     except Exception as e:
-        print(f"[Omnibot] Static map image analysis failed: {e}")
+        print(f"[Omnibot] Static map image open failed: {e}")
         return None
-    
-    # Normalize to exactly 240x240 baseline JPEG for ESP32 decoder/display.
+    return _normalize_map_jpeg(im, size)
+
+
+def _star_pts(cx: float, cy: float, r_outer: float, r_inner: float, n: int = 5):
+    """Return polygon vertex list for a filled star centered at (cx, cy)."""
+    import math
+    pts = []
+    for i in range(n * 2):
+        angle = math.pi / n * i - math.pi / 2
+        r = r_outer if i % 2 == 0 else r_inner
+        pts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
+    return pts
+
+
+def _capture_calling_card_jpeg_sync(
+    *,
+    api_key: str,
+    location_query: str,
+    fallback_plain_params: dict,
+    size: int = 240,
+) -> Optional[bytes]:
+    """Build a 240x240 Google Maps-style place card.
+
+    Layout:
+      +--------------------------------+
+      |      place photo  (~56%)       |
+      +--------------------------------+
+      |  Place Name   (dark bold)      |
+      |  4.5  ★★★★½  (5,701)         |
+      |  Movie theater                 |
+      +--------------------------------+
+    Uses Places Text Search (one call) to get name/rating/photos.
+    Falls back to Street View then plain static map if no photo available.
+    """
+    from PIL import ImageDraw, ImageFont
+
+    PHOTO_H   = int(size * 0.56)   # ~134 px
+    INFO_H    = size - PHOTO_H      # ~106 px
+    INFO_BG   = (255, 255, 255)
+    DARK      = (30,  30,  30)
+    GRAY      = (100, 100, 100)
+    BLUE      = (26,  115, 232)
+    GOLD      = (251, 188, 4)
+    STAR_GRAY = (180, 180, 180)
+
+    # ── Step 1: Places Text Search (handles business names + addresses) ──
+    name = address = rating = user_ratings_total = place_type = place_lat = place_lng = None
+    photo_refs: list = []
     try:
-        if im.size != (240, 240):
-            im = im.resize((240, 240), Image.Resampling.LANCZOS)
-        out = io.BytesIO()
-        im.save(out, format="JPEG", quality=85, optimize=True, progressive=False)
-        data = out.getvalue()
+        ts_r = requests.get(
+            "https://maps.googleapis.com/maps/api/place/textsearch/json",
+            params={"query": location_query, "key": api_key},
+            timeout=12)
+        ts_r.raise_for_status()
+        ts_json = ts_r.json()
+        status = ts_json.get("status")
+        results = ts_json.get("results", [])
+        print(f"[Omnibot] Places TextSearch status={status!r} results={len(results)}")
+        if results:
+            hit = results[0]
+            name    = hit.get("name", "")
+            address = hit.get("formatted_address", "")
+            rating  = hit.get("rating")
+            user_ratings_total = hit.get("user_ratings_total")
+            skip = {"point_of_interest", "establishment", "premise", "food"}
+            for t in hit.get("types", []):
+                if t not in skip:
+                    place_type = t.replace("_", " ").title()
+                    break
+            photo_refs = [p["photo_reference"] for p in hit.get("photos", []) if p.get("photo_reference")]
+            loc = hit.get("geometry", {}).get("location", {})
+            place_lat = loc.get("lat")
+            place_lng = loc.get("lng")
+            print(f"[Omnibot] TextSearch hit: {name!r}  rating={rating}  photos={len(photo_refs)}  lat={place_lat}")
     except Exception as e:
-        print(f"[Omnibot] Static map image normalization failed: {e}")
+        print(f"[Omnibot] Places TextSearch failed: {e}")
+
+    # ── Step 2: Fetch place photo (or Street View fallback) ───────────
+    place_photo = None
+
+    if photo_refs:
+        try:
+            ph_r = requests.get(
+                "https://maps.googleapis.com/maps/api/place/photo",
+                params={"maxwidth": "600", "photo_reference": photo_refs[0], "key": api_key},
+                timeout=15, allow_redirects=True)
+            ph_r.raise_for_status()
+            ct = ph_r.headers.get("Content-Type", "")
+            print(f"[Omnibot] Place photo: status={ph_r.status_code} ct={ct!r} size={len(ph_r.content)}")
+            if len(ph_r.content) > 256:
+                try:
+                    place_photo = Image.open(io.BytesIO(ph_r.content)).convert("RGB")
+                except Exception as e2:
+                    print(f"[Omnibot] Place photo open failed: {e2}")
+        except Exception as e:
+            print(f"[Omnibot] Place photo fetch failed: {e}")
+
+    # Street View fallback if no Places photo
+    if place_photo is None:
+        sv_loc = (f"{place_lat},{place_lng}" if place_lat and place_lng else location_query)
+        print(f"[Omnibot] No Places photo — trying Street View at {sv_loc!r}")
+        try:
+            sv_r = requests.get(
+                "https://maps.googleapis.com/maps/api/streetview",
+                params={"size": f"{size}x{PHOTO_H}", "location": sv_loc,
+                        "fov": "80", "pitch": "5", "key": api_key},
+                timeout=15)
+            sv_r.raise_for_status()
+            ct = sv_r.headers.get("Content-Type", "")
+            print(f"[Omnibot] Street View: status={sv_r.status_code} ct={ct!r} size={len(sv_r.content)}")
+            if len(sv_r.content) > 1024:   # error SVs are ~2KB grey tiles
+                place_photo = Image.open(io.BytesIO(sv_r.content)).convert("RGB")
+        except Exception as e:
+            print(f"[Omnibot] Street View fetch failed: {e}")
+
+    if place_photo is None:
+        print("[Omnibot] No photo source available — falling back to plain static map.")
+        return _fetch_plain_static_map(**fallback_plain_params)
+
+    # ── Step 3: Composite ─────────────────────────────────────────────
+    try:
+        canvas = Image.new("RGB", (size, size), INFO_BG)
+
+        # Photo panel — scale+crop to size × PHOTO_H
+        w, h = place_photo.size
+        scale_w = size / w
+        new_h = int(h * scale_w)
+        if new_h < PHOTO_H:
+            scale_h = PHOTO_H / h
+            new_w   = int(w * scale_h)
+            place_photo = place_photo.resize((new_w, PHOTO_H), Image.Resampling.LANCZOS)
+            crop_x = (new_w - size) // 2
+            place_photo = place_photo.crop((crop_x, 0, crop_x + size, PHOTO_H))
+        else:
+            place_photo = place_photo.resize((size, new_h), Image.Resampling.LANCZOS)
+            crop_y = (new_h - PHOTO_H) // 2
+            place_photo = place_photo.crop((0, crop_y, size, crop_y + PHOTO_H))
+        canvas.paste(place_photo, (0, 0))
+
+        draw = ImageDraw.Draw(canvas)
+        draw.rectangle([(0, PHOTO_H), (size, size)], fill=INFO_BG)
+        draw.line([(0, PHOTO_H), (size, PHOTO_H)], fill=(220, 220, 220), width=1)
+
+        # Fonts
+        def _font(hint: str, pt: int):
+            for f in (hint, "arial.ttf", "DejaVuSans.ttf"):
+                try:
+                    return ImageFont.truetype(f, pt)
+                except Exception:
+                    pass
+            return ImageFont.load_default()
+
+        font_title = _font("arialbd.ttf", 15)
+        font_small = _font("arial.ttf",   10)
+        font_score = _font("arialbd.ttf", 11)
+
+        PAD = 7
+        y   = PHOTO_H + 5
+
+        # Place name (wrap to 2 lines)
+        display_name = (name or location_query).strip()
+        words = display_name.split()
+        line1, line2 = "", ""
+        MAX_CH = 22
+        for w in words:
+            if len(line1) + len(w) + (1 if line1 else 0) <= MAX_CH:
+                line1 += (" " if line1 else "") + w
+            else:
+                line2 += (" " if line2 else "") + w
+        draw.text((PAD, y), line1, font=font_title, fill=DARK)
+        y += 18
+        if line2:
+            draw.text((PAD, y), line2[:MAX_CH], font=font_title, fill=DARK)
+            y += 18
+
+        # Rating + stars + review count
+        if rating is not None:
+            try:
+                r_val = float(rating)
+                draw.text((PAD, y + 1), f"{r_val:.1f}", font=font_score, fill=DARK)
+                sx = PAD + 22
+                OR, IR  = 5.2, 2.2
+                SP      = 12
+                for i in range(5):
+                    cx = sx + i * SP + OR
+                    cy = y + OR + 1
+                    filled = r_val >= i + 0.75
+                    half   = (not filled) and r_val >= i + 0.25
+                    pts = _star_pts(cx, cy, OR, IR)
+                    if filled:
+                        draw.polygon(pts, fill=GOLD)
+                    elif half:
+                        draw.polygon(pts, fill=STAR_GRAY)
+                        draw.polygon([(min(px, cx), py) for px, py in pts], fill=GOLD)
+                    else:
+                        draw.polygon(pts, fill=STAR_GRAY)
+                if user_ratings_total is not None:
+                    draw.text((sx + 5 * SP + 4, y + 1),
+                              f"({int(user_ratings_total):,})", font=font_small, fill=BLUE)
+                y += 16
+            except Exception:
+                pass
+
+        # Place type
+        if place_type:
+            draw.text((PAD, y), place_type, font=font_small, fill=GRAY)
+
+        return _normalize_map_jpeg(canvas, size)
+    except Exception as e:
+        print(f"[Omnibot] Calling card composite failed: {e}; falling back to plain static map.")
+        return _fetch_plain_static_map(**fallback_plain_params)
+
+
+def _capture_directions_map_jpeg_sync(
+    *,
+    api_key: str,
+    origin_lat: float,
+    origin_lng: float,
+    destination: str,
+    fallback_plain_params: dict,
+    size: int = 240,
+) -> Optional[bytes]:
+    """Build a 240x240 route map JPEG using the Directions + Static Maps APIs.
+
+    Falls back to the plain static map on any error.
+    """
+    polyline_str: Optional[str] = None
+    try:
+        dir_params = {
+            "origin": f"{origin_lat:.6f},{origin_lng:.6f}",
+            "destination": destination,
+            "key": api_key,
+        }
+        dir_r = requests.get(
+            "https://maps.googleapis.com/maps/api/directions/json",
+            params=dir_params, timeout=15)
+        dir_r.raise_for_status()
+        dir_data = dir_r.json()
+        routes = dir_data.get("routes", [])
+        if routes:
+            overview = routes[0].get("overview_polyline", {})
+            polyline_str = overview.get("points", "")
+            print(f"[Omnibot] Directions polyline length: {len(polyline_str)} chars")
+        else:
+            status = dir_data.get("status", "UNKNOWN")
+            print(f"[Omnibot] Directions API returned no routes (status={status!r}); falling back.")
+    except Exception as e:
+        print(f"[Omnibot] Directions API request failed: {e}")
+
+    if not polyline_str:
+        return _fetch_plain_static_map(**fallback_plain_params)
+
+    # Build a Static Map with the route polyline + origin/destination markers
+    # scale=1 keeps the JPEG small enough for the ESP32 JPEG decoder.
+    # format=jpg (NOT jpg-baseline) is required for polylines to render.
+    # color:green|size:mid / color:red|size:mid give clean pin markers.
+    sm_params = [
+        ("size", f"{size}x{size}"),
+        ("scale", "1"),
+        ("format", "jpg"),
+        ("maptype", "roadmap"),
+        ("key", api_key),
+        ("path", f"color:0x1A73E8FF|weight:5|enc:{polyline_str}"),
+        ("markers", f"color:green|size:mid|{origin_lat:.6f},{origin_lng:.6f}"),
+        ("markers", f"color:red|size:mid|{destination}"),
+        ("style", "feature:poi|element:labels|visibility:off"),
+        ("style", "feature:transit|visibility:off"),
+    ]
+    print(f"[Omnibot] Directions map request: dest={destination!r}")
+    try:
+        r = requests.get(
+            "https://maps.googleapis.com/maps/api/staticmap",
+            params=sm_params, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        print(f"[Omnibot] Directions static map request failed: {e}")
+        return _fetch_plain_static_map(**fallback_plain_params)
+
+    api_warning = r.headers.get("X-Staticmap-API-Warning", "")
+    if api_warning:
+        print(f"[Omnibot] Directions map API warning: {api_warning}")
+        return _fetch_plain_static_map(**fallback_plain_params)
+
+    data = r.content or b""
+    if _detect_error_tile(data):
+        return _fetch_plain_static_map(**fallback_plain_params)
+
+    try:
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception as e:
+        print(f"[Omnibot] Directions map image open failed: {e}")
+        return _fetch_plain_static_map(**fallback_plain_params)
+    return _normalize_map_jpeg(im, size)
+
+
+def _capture_static_map_jpeg_sync(
+    *,
+    api_key: str,
+    maps_sources: list[dict],
+    fallback_lat: Optional[float],
+    fallback_lng: Optional[float],
+    location_override: str = "",
+    display_style: str = "calling_card",
+    size: int = 240,
+) -> Optional[bytes]:
+    """Route to the correct map renderer based on display_style."""
+    key = (api_key or "").strip()
+    if not key:
         return None
-    return data
+
+    # Priority: explicit location from tool call > grounding title > fallback coords
+    location_query = (location_override or "").strip() or _best_maps_location_query(maps_sources)
+    center = (
+        f"{float(fallback_lat):.6f},{float(fallback_lng):.6f}"
+        if (fallback_lat is not None and fallback_lng is not None)
+        else ""
+    )
+
+    # Common fallback params for the plain static map (used by both helpers)
+    fallback_plain_params = dict(
+        api_key=key,
+        location_query=location_query,
+        center=center,
+        size=size,
+    )
+
+    style = (display_style or "calling_card").strip().lower()
+
+    if style == "directions":
+        if fallback_lat is not None and fallback_lng is not None and location_query:
+            print(f"[Omnibot] Rendering directions map: home->'{location_query}'")
+            return _capture_directions_map_jpeg_sync(
+                api_key=key,
+                origin_lat=float(fallback_lat),
+                origin_lng=float(fallback_lng),
+                destination=location_query,
+                fallback_plain_params=fallback_plain_params,
+                size=size,
+            )
+        else:
+            print("[Omnibot] Directions requested but no home coordinates; falling back to calling_card.")
+            style = "calling_card"  # fall through
+
+    # calling_card (default)
+    if location_query:
+        print(f"[Omnibot] Rendering calling card: '{location_query}'")
+        return _capture_calling_card_jpeg_sync(
+            api_key=key,
+            location_query=location_query,
+            fallback_plain_params=fallback_plain_params,
+            size=size,
+        )
+
+    # Last resort: plain static map centered on home
+    return _fetch_plain_static_map(**fallback_plain_params)
 
 
 async def _send_static_map_jpeg_to_esp32(
@@ -1149,6 +1511,7 @@ async def _send_static_map_jpeg_to_esp32(
     fallback_lat: Optional[float],
     fallback_lng: Optional[float],
     location_override: str = "",
+    display_style: str = "calling_card",
 ) -> bool:
     loop = asyncio.get_running_loop()
     try:
@@ -1160,6 +1523,7 @@ async def _send_static_map_jpeg_to_esp32(
                 fallback_lat=fallback_lat,
                 fallback_lng=fallback_lng,
                 location_override=location_override,
+                display_style=display_style,
             ),
         )
     except Exception as e:
@@ -1173,9 +1537,9 @@ async def _send_static_map_jpeg_to_esp32(
     try:
         packet = bytes([0x04]) + jpeg
         await ws.send_bytes(packet)
-        print(f"[Omnibot] Sent static map JPEG to ESP32 ({len(jpeg)} bytes image, {len(packet)} total)")
+        print(f"[Omnibot] Sent {display_style} map JPEG to ESP32 ({len(jpeg)} bytes)")
     except Exception as e:
-        print(f"[Omnibot] Failed to send static map JPEG to ESP32: {e}")
+        print(f"[Omnibot] Failed to send map JPEG to ESP32: {e}")
         return False
     return True
 
@@ -1187,6 +1551,7 @@ async def _send_map_jpeg_to_esp32_after_turn(
     fallback_lat: Optional[float],
     fallback_lng: Optional[float],
     location_override: str = "",
+    display_style: str = "calling_card",
 ) -> None:
     """End-of-turn fallback: send map JPEG if not already sent (e.g. model omitted face_animation(map))."""
     if map_jpeg_sent_this_turn_by_device.get(device_id):
@@ -1198,6 +1563,7 @@ async def _send_map_jpeg_to_esp32_after_turn(
         fallback_lat=fallback_lat,
         fallback_lng=fallback_lng,
         location_override=location_override,
+        display_style=display_style,
     )
     if ok:
         map_jpeg_sent_this_turn_by_device[device_id] = True
@@ -1459,14 +1825,19 @@ async def stream_chat_turn_response(device_id: str, message_content):
     await manager.broadcast(end_msg)
 
     tok = (last_maps_widget_token or "").strip()
-    if last_maps_sources or tok:
+    # Pop the tool-call overrides regardless of grounding path, so they are
+    # always consumed even when the model skips the built-in Maps tool.
+    loc_override = map_location_override_by_device.pop(device_id, "")
+    disp_style   = map_display_style_by_device.pop(device_id, "calling_card")
+    # Trigger map rendering if the model used grounding OR explicitly called
+    # show_map_animation with a location (no grounding needed in that case).
+    if last_maps_sources or tok or loc_override:
         maps_key = (
             (os.getenv("GOOGLE_MAPS_STATIC_API_KEY") or "").strip()
             or (os.getenv("GOOGLE_MAPS_JS_API_KEY") or "").strip()
         )
         if maps_key:
             bot = get_bot_settings(device_id)
-            loc_override = map_location_override_by_device.pop(device_id, "")
             asyncio.create_task(
                 _send_map_jpeg_to_esp32_after_turn(
                     device_id=device_id,
@@ -1475,11 +1846,12 @@ async def stream_chat_turn_response(device_id: str, message_content):
                     fallback_lat=bot.get("maps_latitude"),
                     fallback_lng=bot.get("maps_longitude"),
                     location_override=loc_override,
+                    display_style=disp_style,
                 )
             )
         else:
             print(
-                "[Omnibot] Maps grounding present but no GOOGLE_MAPS_STATIC_API_KEY/GOOGLE_MAPS_JS_API_KEY found; "
+                "[Omnibot] Map animation called but no GOOGLE_MAPS_STATIC_API_KEY/GOOGLE_MAPS_JS_API_KEY found; "
                 "skipping ESP32 map image."
             )
 
