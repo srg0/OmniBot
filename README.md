@@ -63,6 +63,8 @@ OMNIBOT_ROUTE_DEBUG=1
 
 ## Quick start
 
+You do **not** need to create a `.env` file by hand. Start the backend and frontend, open the dashboard, and paste your **Gemini API key** on the welcome screen — it is saved to `hub_secrets.json` under the hub data directory. (Optional: set `GEMINI_API_KEY` in `.env` instead if you prefer environment variables.)
+
 ### Backend
 
 ```bash
@@ -70,9 +72,10 @@ cd app/backend
 python -m venv .venv
 .venv\Scripts\activate          # Windows; on macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-copy .env.example .env          # Windows; on macOS/Linux: cp .env.example .env — then add at least GEMINI_API_KEY
 python app.py
 ```
+
+Optional: `copy .env.example .env` and set `GEMINI_API_KEY` there if you do not want to use the UI.
 
 When Maps grounding is enabled, the hub uses the Google Static Maps API to fetch a map image and forwards a normalized JPEG to Pixel. Backend map fetch uses `GOOGLE_MAPS_STATIC_API_KEY` when set, otherwise it falls back to `GOOGLE_MAPS_JS_API_KEY`.
 

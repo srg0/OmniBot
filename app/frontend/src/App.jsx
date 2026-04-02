@@ -1,14 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import './index.css';
 
 import Sidebar from './components/Sidebar';
 import IntelligenceFeed from './components/IntelligenceFeed';
 import SetupOrchestrator from './components/SetupOrchestrator';
 import SettingsShell from './components/SettingsShell';
-import { initialSetupState, scanForDevices, scanForWifi, sendProvision } from './components/setupService';
+import FirstRunSetup from './components/FirstRunSetup';
+import { initialSetupState, scanForDevices, scanForWifi, sendProvision, getHubStatus } from './components/setupService';
 import { hubUrl, getHubWebSocketUrl } from './hubOrigin';
 
 function App() {
+  /** null = checking, false = show first-run key screen, true = hub has Gemini configured */
+  const [geminiConfigured, setGeminiConfigured] = useState(null);
+  const [hubLoadError, setHubLoadError] = useState(null);
+
+  const loadHubStatus = useCallback(() => {
+    setHubLoadError(null);
+    setGeminiConfigured(null);
+    getHubStatus()
+      .then((s) => setGeminiConfigured(Boolean(s.gemini_configured)))
+      .catch(() =>
+        setHubLoadError(
+          'Cannot reach the OmniBot hub. Start the backend (e.g. python app.py in app/backend) and ensure this UI can reach it (port 8000, or your Vite proxy).'
+        )
+      );
+  }, []);
+
+  useEffect(() => {
+    loadHubStatus();
+  }, [loadHubStatus]);
+
   // --- WebSocket Monitor States ---
   const [esp32Status, setEsp32Status] = useState('offline'); // offline | online | working
   const [lastPing, setLastPing] = useState(null);
@@ -50,8 +71,12 @@ function App() {
     );
   };
 
-  // --- WebSocket Initialization ---
+  // --- WebSocket Initialization (after Gemini is configured so first-run UX is clean) ---
   useEffect(() => {
+    if (geminiConfigured !== true) {
+      return undefined;
+    }
+
     let ws;
     let reconnectTimer;
 
@@ -159,7 +184,7 @@ function App() {
       clearTimeout(reconnectTimer);
       if (ws) ws.close();
     };
-  }, []);
+  }, [geminiConfigured]);
 
   // --- Setup Flow Actions ---
   const handleScan = async () => {
@@ -248,6 +273,36 @@ function App() {
     handleWifiScan,
     handleProvision
   };
+
+  if (hubLoadError) {
+    return (
+      <div className="first-run">
+        <div className="first-run-card">
+          <h1 className="first-run-title">Cannot connect</h1>
+          <p className="first-run-lead">{hubLoadError}</p>
+          <button type="button" className="first-run-submit" onClick={loadHubStatus}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (geminiConfigured === null) {
+    return (
+      <div className="first-run">
+        <div className="first-run-card">
+          <p className="first-run-lead" style={{ margin: 0 }}>
+            Connecting to hub…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (geminiConfigured === false) {
+    return <FirstRunSetup onConfigured={() => setGeminiConfigured(true)} />;
+  }
 
   return (
     <div className="app-container">

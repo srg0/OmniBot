@@ -12,8 +12,8 @@ Thanks for your interest in Omnibot.
    # Windows: .venv\Scripts\activate
    # macOS/Linux: source .venv/bin/activate
    pip install -r requirements.txt
-   cp .env.example .env   # then add keys
    python app.py
+   # Optional: cp .env.example .env and set GEMINI_API_KEY — otherwise paste the key in the dashboard first-run screen.
    ```
 
 2. **Frontend** — Node.js 20+:

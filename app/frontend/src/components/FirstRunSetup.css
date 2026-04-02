@@ -1,0 +1,113 @@
+.first-run {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: linear-gradient(160deg, rgba(0, 102, 204, 0.08) 0%, rgba(255, 255, 255, 0.9) 45%, rgba(0, 136, 255, 0.06) 100%);
+}
+
+.first-run-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 2rem 2.25rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 48px rgba(0, 102, 204, 0.12);
+}
+
+.first-run-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  background: var(--brand-grad, linear-gradient(135deg, #0088ff, #0066cc));
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.first-run-lead,
+.first-run-hint,
+.first-run-footnote {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-main, #1a1a2e);
+}
+
+.first-run-hint {
+  font-size: 0.9rem;
+  color: var(--text-muted, #5a6b7a);
+  margin-bottom: 1.25rem;
+}
+
+.first-run-hint a {
+  color: var(--accent, #0088ff);
+  font-weight: 600;
+}
+
+.first-run-code {
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(0, 136, 255, 0.08);
+}
+
+.first-run-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.first-run-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.first-run-input {
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 102, 204, 0.25);
+  font-size: 1rem;
+  font-family: ui-monospace, monospace;
+  box-sizing: border-box;
+}
+
+.first-run-input:focus {
+  outline: none;
+  border-color: rgba(0, 136, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(0, 136, 255, 0.15);
+}
+
+.first-run-error {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #c62828;
+}
+
+.first-run-submit {
+  margin-top: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  border: none;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  background: linear-gradient(135deg, #0088ff, #0066cc);
+  color: #fff;
+}
+
+.first-run-submit:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.first-run-footnote {
+  margin-top: 1.25rem;
+  margin-bottom: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted, #5a6b7a);
+}
