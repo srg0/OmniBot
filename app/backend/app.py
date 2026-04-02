@@ -15,7 +15,7 @@ from google import genai
 from google.genai import types
 import json
 import re
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlencode, urlparse, parse_qs
 
 import requests
@@ -62,6 +62,16 @@ DEFAULT_SYSTEM_INSTRUCTION = (
 WEATHER_DISPLAY_MS = 5000
 FACE_ANIMATION_DISPLAY_MS = 2500
 MAP_DISPLAY_MS = 9000
+
+# Calling card full-bleed square for round display (must match Pixel defaults / decode size)
+CALLING_CARD_PHOTO_W = 240
+CALLING_CARD_PHOTO_H = 240
+CALLING_CARD_NAME_MAX = 80
+CALLING_CARD_ADDRESS_MAX = 120
+CALLING_CARD_CATEGORY_MAX = 48
+
+# links2004/WebSockets defaults to WEBSOCKETS_MAX_DATA_SIZE = 15KB on ESP32; binary frames must fit.
+CALLING_CARD_JPEG_MAX_BYTES = 14 * 1024
 
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 DEFAULT_NOMINATIM_USER_AGENT = (
@@ -819,9 +829,10 @@ def _make_show_map_animation_tool(device_id: str):
             map_location_override_by_device[device_id] = loc
             print(f"[Omnibot] show_map_animation: location={loc!r} display_style={style!r}")
 
-        _schedule_face_animation_to_esp32(device_id, "map", "")
-        # NOTE: Do NOT send the map JPEG here. The end-of-turn handler will send it
-        # once grounding metadata is available, ensuring the correct location is shown.
+        # Teal "map mode" placeholder only for directions; calling card is drawn on-device when data arrives.
+        if style == "directions":
+            _schedule_face_animation_to_esp32(device_id, "map", "")
+        # NOTE: Map JPEG / calling card payload is sent in the end-of-turn handler.
         _broadcast_tool_call_to_frontend("show_map_animation", {"location": loc, "display_style": style})
         return {"ok": True, "display": "map animation queued on robot", "display_style": style}
 
@@ -1150,56 +1161,101 @@ def _fetch_plain_static_map(
     return _normalize_map_jpeg(im, size)
 
 
-def _star_pts(cx: float, cy: float, r_outer: float, r_inner: float, n: int = 5):
-    """Return polygon vertex list for a filled star centered at (cx, cy)."""
-    import math
-    pts = []
-    for i in range(n * 2):
-        angle = math.pi / n * i - math.pi / 2
-        r = r_outer if i % 2 == 0 else r_inner
-        pts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
-    return pts
+def _truncate_calling_card_str(s: str, max_chars: int) -> str:
+    t = (s or "").strip()
+    if len(t) <= max_chars:
+        return t
+    return t[: max_chars - 1].rstrip() + "…"
 
 
-def _capture_calling_card_jpeg_sync(
+def _cover_crop_square(im: "Image.Image", dim: int) -> "Image.Image":
+    """Scale and center-crop to dim×dim (cover)."""
+    w, h = im.size
+    if w <= 0 or h <= 0:
+        return im
+    scale = max(dim / w, dim / h)
+    new_w = max(1, int(w * scale + 0.5))
+    new_h = max(1, int(h * scale + 0.5))
+    im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    left = (new_w - dim) // 2
+    top = (new_h - dim) // 2
+    return im.crop((left, top, left + dim, top + dim))
+
+
+def _calling_card_photo_to_jpeg(place_photo: "Image.Image", size: int = 240) -> Optional[bytes]:
+    """Cover-crop to a square, encode JPEG under ESP32 WebSocket ~15KB frame limit."""
+    try:
+        w, h = place_photo.size
+        if w <= 0 or h <= 0:
+            return None
+        max_b = CALLING_CARD_JPEG_MAX_BYTES
+        # Try full resolution down to ~128px until a quality step fits under max_b.
+        for dim in (size, 220, 200, 185, 170, 160, 148, 136, 128):
+            square = _cover_crop_square(place_photo, dim)
+            for q in range(88, 9, -3):
+                out = io.BytesIO()
+                square.save(
+                    out,
+                    format="JPEG",
+                    quality=q,
+                    optimize=True,
+                    progressive=False,
+                    subsampling=2,
+                )
+                data = out.getvalue()
+                if 256 < len(data) <= max_b:
+                    print(
+                        f"[Omnibot] Calling card JPEG: {len(data)} bytes "
+                        f"(square={dim} quality={q}, fits WebSocket limit)"
+                    )
+                    return data
+        print(
+            f"[Omnibot] Calling card JPEG: could not encode under {max_b} bytes; "
+            "ESP32 would drop frame — no photo"
+        )
+        return None
+    except Exception as e:
+        print(f"[Omnibot] Calling card photo JPEG encode failed: {e}")
+        return None
+
+
+def _fetch_calling_card_place_sync(
     *,
     api_key: str,
     location_query: str,
-    fallback_plain_params: dict,
-    size: int = 240,
-) -> Optional[bytes]:
-    """Build a 240x240 Google Maps-style place card.
+    photo_size: int = CALLING_CARD_PHOTO_W,
+) -> dict[str, Any]:
+    """Places Text Search + optional photo / Street View; returns metadata and photo_jpeg for ESP32.
 
-    Layout:
-      +--------------------------------+
-      |      place photo  (~56%)       |
-      +--------------------------------+
-      |  Place Name   (dark bold)      |
-      |  4.5  ★★★★½  (5,701)         |
-      |  Movie theater                 |
-      +--------------------------------+
-    Uses Places Text Search (one call) to get name/rating/photos.
-    Falls back to Street View then plain static map if no photo available.
+    Does not composite a full-screen card (Pixel renders text). If no imagery is available,
+    ``photo_jpeg`` is None.
     """
-    from PIL import ImageDraw, ImageFont
+    name: Optional[str] = None
+    address: Optional[str] = None
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
+    place_type: Optional[str] = None
+    place_lat: Optional[float] = None
+    place_lng: Optional[float] = None
+    photo_refs: list[str] = []
 
-    PHOTO_H   = int(size * 0.56)   # ~134 px
-    INFO_H    = size - PHOTO_H      # ~106 px
-    INFO_BG   = (255, 255, 255)
-    DARK      = (30,  30,  30)
-    GRAY      = (100, 100, 100)
-    BLUE      = (26,  115, 232)
-    GOLD      = (251, 188, 4)
-    STAR_GRAY = (180, 180, 180)
+    q = (location_query or "").strip()
+    if not q:
+        return {
+            "name": "",
+            "address": "",
+            "rating": None,
+            "review_count": None,
+            "category": "",
+            "photo_jpeg": None,
+        }
 
-    # ── Step 1: Places Text Search (handles business names + addresses) ──
-    name = address = rating = user_ratings_total = place_type = place_lat = place_lng = None
-    photo_refs: list = []
     try:
         ts_r = requests.get(
             "https://maps.googleapis.com/maps/api/place/textsearch/json",
-            params={"query": location_query, "key": api_key},
-            timeout=12)
+            params={"query": q, "key": api_key},
+            timeout=12,
+        )
         ts_r.raise_for_status()
         ts_json = ts_r.json()
         status = ts_json.get("status")
@@ -1207,10 +1263,20 @@ def _capture_calling_card_jpeg_sync(
         print(f"[Omnibot] Places TextSearch status={status!r} results={len(results)}")
         if results:
             hit = results[0]
-            name    = hit.get("name", "")
-            address = hit.get("formatted_address", "")
-            rating  = hit.get("rating")
-            user_ratings_total = hit.get("user_ratings_total")
+            name = hit.get("name", "") or ""
+            address = hit.get("formatted_address", "") or ""
+            r = hit.get("rating")
+            if r is not None:
+                try:
+                    rating = float(r)
+                except (TypeError, ValueError):
+                    rating = None
+            urt = hit.get("user_ratings_total")
+            if urt is not None:
+                try:
+                    review_count = int(urt)
+                except (TypeError, ValueError):
+                    review_count = None
             skip = {"point_of_interest", "establishment", "premise", "food"}
             for t in hit.get("types", []):
                 if t not in skip:
@@ -1220,22 +1286,26 @@ def _capture_calling_card_jpeg_sync(
             loc = hit.get("geometry", {}).get("location", {})
             place_lat = loc.get("lat")
             place_lng = loc.get("lng")
-            print(f"[Omnibot] TextSearch hit: {name!r}  rating={rating}  photos={len(photo_refs)}  lat={place_lat}")
+            print(
+                f"[Omnibot] TextSearch hit: {name!r}  rating={rating}  photos={len(photo_refs)}  lat={place_lat}"
+            )
     except Exception as e:
         print(f"[Omnibot] Places TextSearch failed: {e}")
 
-    # ── Step 2: Fetch place photo (or Street View fallback) ───────────
     place_photo = None
-
     if photo_refs:
         try:
             ph_r = requests.get(
                 "https://maps.googleapis.com/maps/api/place/photo",
                 params={"maxwidth": "600", "photo_reference": photo_refs[0], "key": api_key},
-                timeout=15, allow_redirects=True)
+                timeout=15,
+                allow_redirects=True,
+            )
             ph_r.raise_for_status()
-            ct = ph_r.headers.get("Content-Type", "")
-            print(f"[Omnibot] Place photo: status={ph_r.status_code} ct={ct!r} size={len(ph_r.content)}")
+            print(
+                f"[Omnibot] Place photo: status={ph_r.status_code} "
+                f"size={len(ph_r.content or b'')}"
+            )
             if len(ph_r.content) > 256:
                 try:
                     place_photo = Image.open(io.BytesIO(ph_r.content)).convert("RGB")
@@ -1244,120 +1314,43 @@ def _capture_calling_card_jpeg_sync(
         except Exception as e:
             print(f"[Omnibot] Place photo fetch failed: {e}")
 
-    # Street View fallback if no Places photo
     if place_photo is None:
-        sv_loc = (f"{place_lat},{place_lng}" if place_lat and place_lng else location_query)
+        sv_loc = f"{place_lat},{place_lng}" if place_lat and place_lng else q
         print(f"[Omnibot] No Places photo — trying Street View at {sv_loc!r}")
         try:
             sv_r = requests.get(
                 "https://maps.googleapis.com/maps/api/streetview",
-                params={"size": f"{size}x{PHOTO_H}", "location": sv_loc,
-                        "fov": "80", "pitch": "5", "key": api_key},
-                timeout=15)
+                params={
+                    "size": f"{photo_size}x{photo_size}",
+                    "location": sv_loc,
+                    "fov": "80",
+                    "pitch": "5",
+                    "key": api_key,
+                },
+                timeout=15,
+            )
             sv_r.raise_for_status()
-            ct = sv_r.headers.get("Content-Type", "")
-            print(f"[Omnibot] Street View: status={sv_r.status_code} ct={ct!r} size={len(sv_r.content)}")
-            if len(sv_r.content) > 1024:   # error SVs are ~2KB grey tiles
+            print(
+                f"[Omnibot] Street View: status={sv_r.status_code} size={len(sv_r.content or b'')}"
+            )
+            if len(sv_r.content) > 1024:
                 place_photo = Image.open(io.BytesIO(sv_r.content)).convert("RGB")
         except Exception as e:
             print(f"[Omnibot] Street View fetch failed: {e}")
 
-    if place_photo is None:
-        print("[Omnibot] No photo source available — falling back to plain static map.")
-        return _fetch_plain_static_map(**fallback_plain_params)
+    photo_jpeg: Optional[bytes] = None
+    if place_photo is not None:
+        photo_jpeg = _calling_card_photo_to_jpeg(place_photo, photo_size)
 
-    # ── Step 3: Composite ─────────────────────────────────────────────
-    try:
-        canvas = Image.new("RGB", (size, size), INFO_BG)
-
-        # Photo panel — scale+crop to size × PHOTO_H
-        w, h = place_photo.size
-        scale_w = size / w
-        new_h = int(h * scale_w)
-        if new_h < PHOTO_H:
-            scale_h = PHOTO_H / h
-            new_w   = int(w * scale_h)
-            place_photo = place_photo.resize((new_w, PHOTO_H), Image.Resampling.LANCZOS)
-            crop_x = (new_w - size) // 2
-            place_photo = place_photo.crop((crop_x, 0, crop_x + size, PHOTO_H))
-        else:
-            place_photo = place_photo.resize((size, new_h), Image.Resampling.LANCZOS)
-            crop_y = (new_h - PHOTO_H) // 2
-            place_photo = place_photo.crop((0, crop_y, size, crop_y + PHOTO_H))
-        canvas.paste(place_photo, (0, 0))
-
-        draw = ImageDraw.Draw(canvas)
-        draw.rectangle([(0, PHOTO_H), (size, size)], fill=INFO_BG)
-        draw.line([(0, PHOTO_H), (size, PHOTO_H)], fill=(220, 220, 220), width=1)
-
-        # Fonts
-        def _font(hint: str, pt: int):
-            for f in (hint, "arial.ttf", "DejaVuSans.ttf"):
-                try:
-                    return ImageFont.truetype(f, pt)
-                except Exception:
-                    pass
-            return ImageFont.load_default()
-
-        font_title = _font("arialbd.ttf", 15)
-        font_small = _font("arial.ttf",   10)
-        font_score = _font("arialbd.ttf", 11)
-
-        PAD = 7
-        y   = PHOTO_H + 5
-
-        # Place name (wrap to 2 lines)
-        display_name = (name or location_query).strip()
-        words = display_name.split()
-        line1, line2 = "", ""
-        MAX_CH = 22
-        for w in words:
-            if len(line1) + len(w) + (1 if line1 else 0) <= MAX_CH:
-                line1 += (" " if line1 else "") + w
-            else:
-                line2 += (" " if line2 else "") + w
-        draw.text((PAD, y), line1, font=font_title, fill=DARK)
-        y += 18
-        if line2:
-            draw.text((PAD, y), line2[:MAX_CH], font=font_title, fill=DARK)
-            y += 18
-
-        # Rating + stars + review count
-        if rating is not None:
-            try:
-                r_val = float(rating)
-                draw.text((PAD, y + 1), f"{r_val:.1f}", font=font_score, fill=DARK)
-                sx = PAD + 22
-                OR, IR  = 5.2, 2.2
-                SP      = 12
-                for i in range(5):
-                    cx = sx + i * SP + OR
-                    cy = y + OR + 1
-                    filled = r_val >= i + 0.75
-                    half   = (not filled) and r_val >= i + 0.25
-                    pts = _star_pts(cx, cy, OR, IR)
-                    if filled:
-                        draw.polygon(pts, fill=GOLD)
-                    elif half:
-                        draw.polygon(pts, fill=STAR_GRAY)
-                        draw.polygon([(min(px, cx), py) for px, py in pts], fill=GOLD)
-                    else:
-                        draw.polygon(pts, fill=STAR_GRAY)
-                if user_ratings_total is not None:
-                    draw.text((sx + 5 * SP + 4, y + 1),
-                              f"({int(user_ratings_total):,})", font=font_small, fill=BLUE)
-                y += 16
-            except Exception:
-                pass
-
-        # Place type
-        if place_type:
-            draw.text((PAD, y), place_type, font=font_small, fill=GRAY)
-
-        return _normalize_map_jpeg(canvas, size)
-    except Exception as e:
-        print(f"[Omnibot] Calling card composite failed: {e}; falling back to plain static map.")
-        return _fetch_plain_static_map(**fallback_plain_params)
+    display_name = (name or q).strip()
+    return {
+        "name": display_name,
+        "address": (address or "").strip(),
+        "rating": rating,
+        "review_count": review_count,
+        "category": (place_type or "").strip(),
+        "photo_jpeg": photo_jpeg,
+    }
 
 
 def _capture_directions_map_jpeg_sync(
@@ -1473,7 +1466,7 @@ def _capture_static_map_jpeg_sync(
         size=size,
     )
 
-    style = (display_style or "calling_card").strip().lower()
+    style = (display_style or "directions").strip().lower()
 
     if style == "directions":
         if fallback_lat is not None and fallback_lng is not None and location_query:
@@ -1486,22 +1479,82 @@ def _capture_static_map_jpeg_sync(
                 fallback_plain_params=fallback_plain_params,
                 size=size,
             )
-        else:
-            print("[Omnibot] Directions requested but no home coordinates; falling back to calling_card.")
-            style = "calling_card"  # fall through
+        print("[Omnibot] Directions requested but no home coordinates; using plain static map.")
+        return _fetch_plain_static_map(**fallback_plain_params)
 
-    # calling_card (default)
-    if location_query:
-        print(f"[Omnibot] Rendering calling card: '{location_query}'")
-        return _capture_calling_card_jpeg_sync(
-            api_key=key,
-            location_query=location_query,
-            fallback_plain_params=fallback_plain_params,
-            size=size,
-        )
-
-    # Last resort: plain static map centered on home
+    # Non-directions callers should use _send_calling_card_to_esp32 instead.
     return _fetch_plain_static_map(**fallback_plain_params)
+
+
+async def _send_calling_card_to_esp32(
+    device_id: str,
+    maps_sources: list[dict],
+    api_key: str,
+    fallback_lat: Optional[float],
+    fallback_lng: Optional[float],
+    location_override: str = "",
+) -> bool:
+    """Send `show_calling_card` JSON plus optional photo JPEG (0x05) for Pixel to render the card."""
+    key = (api_key or "").strip()
+    if not key:
+        return False
+
+    location_query = (location_override or "").strip() or _best_maps_location_query(maps_sources)
+
+    loop = asyncio.get_running_loop()
+    try:
+        data = await loop.run_in_executor(
+            None,
+            lambda: _fetch_calling_card_place_sync(api_key=key, location_query=location_query),
+        )
+    except Exception as e:
+        print(f"[Omnibot] Calling card fetch failed: {e}")
+        return False
+
+    if not isinstance(data, dict):
+        return False
+
+    name_raw = str(data.get("name") or location_query or "Place")
+    addr_raw = str(data.get("address") or "")
+    cat_raw = str(data.get("category") or "")
+    rating = data.get("rating")
+    review_count = data.get("review_count")
+    photo_jpeg = data.get("photo_jpeg")
+
+    payload: dict[str, Any] = {
+        "type": "show_calling_card",
+        "name": _truncate_calling_card_str(name_raw, CALLING_CARD_NAME_MAX),
+        "address": _truncate_calling_card_str(addr_raw, CALLING_CARD_ADDRESS_MAX),
+        "category": _truncate_calling_card_str(cat_raw, CALLING_CARD_CATEGORY_MAX),
+        "duration_ms": MAP_DISPLAY_MS,
+        "photo_w": CALLING_CARD_PHOTO_W,
+        "photo_h": CALLING_CARD_PHOTO_H,
+    }
+    if rating is not None:
+        try:
+            payload["rating"] = float(rating)
+        except (TypeError, ValueError):
+            pass
+    if review_count is not None:
+        try:
+            payload["review_count"] = int(review_count)
+        except (TypeError, ValueError):
+            pass
+
+    ws = get_active_esp32_socket(device_id)
+    if not ws:
+        return False
+    try:
+        await ws.send_text(json.dumps(payload))
+        if isinstance(photo_jpeg, (bytes, bytearray)) and len(photo_jpeg) > 32:
+            await ws.send_bytes(bytes([0x05]) + bytes(photo_jpeg))
+        print(
+            f"[Omnibot] Sent calling card to ESP32 (photo={'yes' if photo_jpeg else 'no'})"
+        )
+    except Exception as e:
+        print(f"[Omnibot] Failed to send calling card to ESP32: {e}")
+        return False
+    return True
 
 
 async def _send_static_map_jpeg_to_esp32(
@@ -1511,8 +1564,8 @@ async def _send_static_map_jpeg_to_esp32(
     fallback_lat: Optional[float],
     fallback_lng: Optional[float],
     location_override: str = "",
-    display_style: str = "calling_card",
 ) -> bool:
+    """Send a full-frame directions or plain static map as binary 0x04 (not calling cards)."""
     loop = asyncio.get_running_loop()
     try:
         jpeg = await loop.run_in_executor(
@@ -1523,7 +1576,7 @@ async def _send_static_map_jpeg_to_esp32(
                 fallback_lat=fallback_lat,
                 fallback_lng=fallback_lng,
                 location_override=location_override,
-                display_style=display_style,
+                display_style="directions",
             ),
         )
     except Exception as e:
@@ -1537,7 +1590,7 @@ async def _send_static_map_jpeg_to_esp32(
     try:
         packet = bytes([0x04]) + jpeg
         await ws.send_bytes(packet)
-        print(f"[Omnibot] Sent {display_style} map JPEG to ESP32 ({len(jpeg)} bytes)")
+        print(f"[Omnibot] Sent directions map JPEG to ESP32 ({len(jpeg)} bytes)")
     except Exception as e:
         print(f"[Omnibot] Failed to send map JPEG to ESP32: {e}")
         return False
@@ -1553,33 +1606,46 @@ async def _send_map_jpeg_to_esp32_after_turn(
     location_override: str = "",
     display_style: str = "calling_card",
 ) -> None:
-    """End-of-turn fallback: send map JPEG if not already sent (e.g. model omitted face_animation(map))."""
+    """End-of-turn: calling card (JSON + 0x05) or directions map JPEG (0x04)."""
     if map_jpeg_sent_this_turn_by_device.get(device_id):
         return
-    ok = await _send_static_map_jpeg_to_esp32(
-        device_id=device_id,
-        maps_sources=maps_sources,
-        api_key=api_key,
-        fallback_lat=fallback_lat,
-        fallback_lng=fallback_lng,
-        location_override=location_override,
-        display_style=display_style,
-    )
+    style = (display_style or "calling_card").strip().lower()
+    if style == "directions" and (fallback_lat is None or fallback_lng is None):
+        style = "calling_card"
+    if style == "calling_card":
+        ok = await _send_calling_card_to_esp32(
+            device_id=device_id,
+            maps_sources=maps_sources,
+            api_key=api_key,
+            fallback_lat=fallback_lat,
+            fallback_lng=fallback_lng,
+            location_override=location_override,
+        )
+    else:
+        ok = await _send_static_map_jpeg_to_esp32(
+            device_id=device_id,
+            maps_sources=maps_sources,
+            api_key=api_key,
+            fallback_lat=fallback_lat,
+            fallback_lng=fallback_lng,
+            location_override=location_override,
+        )
     if ok:
         map_jpeg_sent_this_turn_by_device[device_id] = True
 
 
 async def _send_map_jpeg_after_face_animation_map(device_id: str, api_key: str) -> None:
-    """Best-effort immediate static map (before end-of-turn metadata)."""
+    """Best-effort calling card when model uses face_animation(map) before end-of-turn metadata."""
     if map_jpeg_sent_this_turn_by_device.get(device_id):
         return
     bot = get_bot_settings(device_id)
-    ok = await _send_static_map_jpeg_to_esp32(
+    ok = await _send_calling_card_to_esp32(
         device_id=device_id,
         maps_sources=[],
         api_key=api_key,
         fallback_lat=bot.get("maps_latitude"),
         fallback_lng=bot.get("maps_longitude"),
+        location_override="",
     )
     if ok:
         map_jpeg_sent_this_turn_by_device[device_id] = True

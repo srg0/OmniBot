@@ -155,6 +155,30 @@ bool suppressUploadThinkingAfterMap = false;
 static uint16_t *s_mapRgb565 = nullptr;
 static JPEGDEC s_jpegDec;
 
+// Calling card from hub (JSON show_calling_card + binary 0x05 place photo JPEG)
+#define CALLING_CARD_TITLE_MAX 80
+#define CALLING_CARD_ADDR_MAX 120
+#define CALLING_CARD_CAT_MAX 48
+#define CALLING_CARD_DEFAULT_PHOTO_W 240
+#define CALLING_CARD_DEFAULT_PHOTO_H 240
+bool callingCardOverlayActive = false;
+uint32_t callingCardOverlayUntilMs = 0;
+bool callingCardNeedsRedraw = true;
+bool callingCardHasPhoto = false;
+bool suppressUploadThinkingAfterCallingCard = false;
+static char callingCardTitle[CALLING_CARD_TITLE_MAX + 1];
+static char callingCardAddress[CALLING_CARD_ADDR_MAX + 1];
+static char callingCardCategory[CALLING_CARD_CAT_MAX + 1];
+static bool callingCardHasRating = false;
+static float callingCardRating = 0.0f;
+static bool callingCardHasReviewCount = false;
+static int32_t callingCardReviewCount = 0;
+static int16_t callingCardPhotoW = CALLING_CARD_DEFAULT_PHOTO_W;
+static int16_t callingCardPhotoH = CALLING_CARD_DEFAULT_PHOTO_H;
+static uint16_t *s_callingCardPhoto565 = nullptr;
+static size_t s_callingCardPhotoCapacity = 0;
+static JPEGDEC s_jpegDecCallingCard;
+
 static int mapJpegDrawCallback(JPEGDRAW *pDraw) {
     if (!s_mapRgb565) {
         return 0;
@@ -166,6 +190,27 @@ static int mapJpegDrawCallback(JPEGDRAW *pDraw) {
     int16_t h = pDraw->iHeight;
     for (int16_t row = 0; row < h; row++) {
         uint16_t *dst = s_mapRgb565 + (y + row) * MAP_DISPLAY_PX + x;
+        memcpy(dst, src + row * w, w * sizeof(uint16_t));
+    }
+    return 1;
+}
+
+static int callingCardJpegDrawCallback(JPEGDRAW *pDraw) {
+    if (!s_callingCardPhoto565) {
+        return 0;
+    }
+    uint16_t *src = pDraw->pPixels;
+    int16_t x = pDraw->x;
+    int16_t y = pDraw->y;
+    int16_t w = pDraw->iWidth;
+    int16_t h = pDraw->iHeight;
+    int16_t stride = callingCardPhotoW;
+    for (int16_t row = 0; row < h; row++) {
+        int16_t yy = y + row;
+        if (yy < 0 || yy >= callingCardPhotoH) {
+            continue;
+        }
+        uint16_t *dst = s_callingCardPhoto565 + yy * stride + x;
         memcpy(dst, src + row * w, w * sizeof(uint16_t));
     }
     return 1;
@@ -684,6 +729,250 @@ static void drawWeatherOverlay() {
     }
 
     drawTemperatureLineF(kWxTempCyTop, 5, kWxTemp);
+}
+
+static int16_t ccApproxTextWidthPx(const char *s, int textSize) {
+    if (!s) {
+        return 0;
+    }
+    return (int16_t)(strlen(s) * 6 * textSize);
+}
+
+/** Width/height of a string at the current text size (Adafruit/Arduino_GFX metrics). */
+static void ccTextBounds(const char *s, int textSize, uint16_t *outW, uint16_t *outH) {
+    *outW = 0;
+    *outH = 0;
+    if (!s || !s[0]) {
+        return;
+    }
+    gfx->setTextSize(textSize);
+    int16_t x1 = 0;
+    int16_t y1 = 0;
+    uint16_t w = 0;
+    uint16_t h = 0;
+    gfx->getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+    *outW = w;
+    *outH = h;
+}
+
+static void ccAsciiToUpper(char *dst, const char *src, size_t dstSz) {
+    size_t i = 0;
+    for (; i + 1 < dstSz && src[i]; i++) {
+        char c = src[i];
+        if (c >= 'a' && c <= 'z') {
+            c = (char)(c - 32);
+        }
+        dst[i] = c;
+    }
+    dst[i] = '\0';
+}
+
+static void ccPrintCenteredShadow(const char *line, int16_t y, int textSize, uint16_t fg) {
+    if (!line || !line[0]) {
+        return;
+    }
+    uint16_t tw = 0;
+    uint16_t th = 0;
+    ccTextBounds(line, textSize, &tw, &th);
+    int16_t x = (MAP_DISPLAY_PX / 2) - (int16_t)(tw / 2);
+    const int16_t inset = 10;
+    if (x < inset) {
+        x = inset;
+    }
+    if (x + (int16_t)tw > MAP_DISPLAY_PX - inset) {
+        x = (int16_t)(MAP_DISPLAY_PX - inset - (int16_t)tw);
+    }
+    gfx->setTextSize(textSize);
+    gfx->setTextColor(BLACK);
+    gfx->setCursor((int16_t)(x + 1), (int16_t)(y + 1));
+    gfx->print(line);
+    gfx->setTextColor(fg);
+    gfx->setCursor(x, y);
+    gfx->print(line);
+}
+
+/** Perceived ~50% black overlay on RGB565 (no display alpha — darkens toward black). */
+static uint16_t ccRgb565BlendBlack50(uint16_t c) {
+    uint32_t r = (c >> 11) & 0x1F;
+    uint32_t g = (c >> 5) & 0x3F;
+    uint32_t b = c & 0x1F;
+    r >>= 1;
+    g >>= 1;
+    b >>= 1;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static void ccDarkenPhotoBackdropRect(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
+    if (!callingCardHasPhoto || s_callingCardPhoto565 == nullptr) {
+        return;
+    }
+    int16_t bw = callingCardPhotoW;
+    int16_t bh = callingCardPhotoH;
+    if (bw <= 0 || bh <= 0) {
+        return;
+    }
+    if (x0 < 0) {
+        x0 = 0;
+    }
+    if (y0 < 0) {
+        y0 = 0;
+    }
+    if (x1 >= bw) {
+        x1 = (int16_t)(bw - 1);
+    }
+    if (y1 >= bh) {
+        y1 = (int16_t)(bh - 1);
+    }
+    if (x1 < x0 || y1 < y0) {
+        return;
+    }
+    for (int16_t yy = y0; yy <= y1; yy++) {
+        uint16_t *row = s_callingCardPhoto565 + (int32_t)yy * (int32_t)bw;
+        for (int16_t xx = x0; xx <= x1; xx++) {
+            row[xx] = ccRgb565BlendBlack50(row[xx]);
+        }
+    }
+}
+
+static void ccSplitTwoLinesMax(const char *src, int maxFirst, char *line1, size_t l1sz, char *line2, size_t l2sz) {
+    line1[0] = '\0';
+    line2[0] = '\0';
+    if (!src || !src[0]) {
+        return;
+    }
+    size_t n = strlen(src);
+    if (n <= (size_t)maxFirst) {
+        strncpy(line1, src, l1sz - 1);
+        line1[l1sz - 1] = '\0';
+        return;
+    }
+    int split = maxFirst;
+    while (split > 0 && src[split] != ' ') {
+        split--;
+    }
+    if (split <= 0) {
+        split = maxFirst;
+    }
+    strncpy(line1, src, (size_t)split);
+    line1[split] = '\0';
+    const char *rest = src + split;
+    while (*rest == ' ') {
+        rest++;
+    }
+    strncpy(line2, rest, l2sz - 1);
+    line2[l2sz - 1] = '\0';
+}
+
+static void drawCallingCardOverlay() {
+    const int16_t cx = MAP_DISPLAY_PX / 2;
+
+    char titleUpper[CALLING_CARD_TITLE_MAX + 1];
+    ccAsciiToUpper(titleUpper, callingCardTitle, sizeof(titleUpper));
+
+    char L1[44];
+    char L2[CALLING_CARD_TITLE_MAX + 1];
+    // Shorter lines than square LCD: round panel clips wide title text (~12 chars/line at size 2).
+    ccSplitTwoLinesMax(titleUpper, 12, L1, sizeof(L1), L2, sizeof(L2));
+    if (strlen(L2) > 12) {
+        L2[9] = '\0';
+        strcat(L2, "...");
+    }
+
+    int16_t titleH = (int16_t)((L2[0] != '\0') ? 36 : 18);
+    int16_t ratingH = callingCardHasRating ? 22 : 0;
+    int16_t revH = (callingCardHasRating && callingCardHasReviewCount) ? 12 : 0;
+    int16_t catH = (callingCardCategory[0] != '\0') ? 12 : 0;
+    int16_t addrH = (callingCardAddress[0] != '\0') ? 22 : 0;
+    int16_t gap = 6;
+    int16_t blockH = (int16_t)(titleH + gap + ratingH + revH + gap + catH + addrH + 4);
+    const int16_t cy = MAP_DISPLAY_PX / 2;
+    int16_t y = (int16_t)(cy - blockH / 2);
+    if (y < 28) {
+        y = 28;
+    }
+
+    const int16_t bgPadX = 6;
+    const int16_t bgPadY = 8;
+    int16_t bgY0 = (int16_t)(y - bgPadY);
+    int16_t bgY1 = (int16_t)(y + blockH + bgPadY);
+    int16_t bgX0 = bgPadX;
+    int16_t bgX1 = (int16_t)(MAP_DISPLAY_PX - 1 - bgPadX);
+    ccDarkenPhotoBackdropRect(bgX0, bgY0, bgX1, bgY1);
+
+    if (callingCardHasPhoto && s_callingCardPhoto565 != nullptr) {
+        gfx->draw16bitRGBBitmap(0, 0, s_callingCardPhoto565, callingCardPhotoW, callingCardPhotoH);
+    } else {
+        gfx->fillScreen(0x2104);
+        gfx->setTextSize(2);
+        gfx->setTextColor(WHITE);
+        const char *np = "No photo";
+        int16_t tw = ccApproxTextWidthPx(np, 2);
+        gfx->setCursor((int16_t)(cx - tw / 2), 112);
+        gfx->print(np);
+    }
+
+    if (L1[0]) {
+        ccPrintCenteredShadow(L1, y, 2, WHITE);
+        y += 18;
+    }
+    if (L2[0]) {
+        ccPrintCenteredShadow(L2, y, 2, WHITE);
+        y += 18;
+    }
+    y += gap;
+
+    if (callingCardHasRating) {
+        char rs[8];
+        snprintf(rs, sizeof(rs), "%.1f", callingCardRating);
+        int tsR = 2;
+        int16_t numW = ccApproxTextWidthPx(rs, tsR);
+        const int16_t starPitch = 14;
+        const int16_t starR = 4;
+        int16_t starBlockW = (int16_t)(5 * starPitch + 4);
+        int16_t gapNum = 8;
+        int16_t totalW = (int16_t)(starBlockW + gapNum + numW);
+        int16_t left = (int16_t)(cx - totalW / 2);
+        int16_t starY = (int16_t)(y + 10);
+        for (int i = 0; i < 5; i++) {
+            bool full = callingCardRating >= (float)(i + 1) - 0.35f;
+            uint16_t starC = full ? 0xFE00 : 0x6B4D;
+            gfx->fillCircle((int16_t)(left + starR + i * starPitch), starY, starR, starC);
+        }
+        gfx->setTextSize(tsR);
+        gfx->setTextColor(BLACK);
+        gfx->setCursor((int16_t)(left + starBlockW + gapNum + 1), (int16_t)(y + 1));
+        gfx->print(rs);
+        gfx->setTextColor(WHITE);
+        gfx->setCursor((int16_t)(left + starBlockW + gapNum), y);
+        gfx->print(rs);
+        y = (int16_t)(y + ratingH);
+
+        if (callingCardHasReviewCount && callingCardReviewCount >= 0) {
+            char rv[40];
+            snprintf(rv, sizeof(rv), "(%ld Reviews)", (long)callingCardReviewCount);
+            ccPrintCenteredShadow(rv, y, 1, 0xDEFB);
+            y += revH;
+        }
+        y += gap;
+    }
+
+    if (callingCardCategory[0]) {
+        ccPrintCenteredShadow(callingCardCategory, y, 1, WHITE);
+        y += catH;
+    }
+
+    if (callingCardAddress[0]) {
+        char a1[44];
+        char a2[CALLING_CARD_ADDR_MAX + 1];
+        ccSplitTwoLinesMax(callingCardAddress, 24, a1, sizeof(a1), a2, sizeof(a2));
+        if (a1[0]) {
+            ccPrintCenteredShadow(a1, y, 1, 0xCE79);
+            y += 10;
+        }
+        if (a2[0]) {
+            ccPrintCenteredShadow(a2, y, 1, 0xCE79);
+        }
+    }
 }
 
 void drawEyes(int16_t eyeXOffset, int16_t eyeYOffset, int16_t eyeRyL, int16_t eyeRyR, uint16_t color) {
@@ -1898,7 +2187,7 @@ void setupWiFi() {
                 break;
             case WStype_TEXT:
                 if (payload && length > 0) {
-                    StaticJsonDocument<384> doc;
+                    StaticJsonDocument<2048> doc;
                     DeserializationError err = deserializeJson(doc, payload, length);
                     if (!err) {
                         const char* msgType = doc["type"] | "";
@@ -1991,6 +2280,49 @@ void setupWiFi() {
                                     idleAnim.hasPrevFrame = false;
                                 }
                             }
+                        } else if (strcmp(msgType, "show_calling_card") == 0) {
+                            const char *nm = doc["name"] | "";
+                            const char *addr = doc["address"] | "";
+                            const char *cat = doc["category"] | "";
+                            strncpy(callingCardTitle, nm, sizeof(callingCardTitle) - 1);
+                            callingCardTitle[sizeof(callingCardTitle) - 1] = '\0';
+                            strncpy(callingCardAddress, addr, sizeof(callingCardAddress) - 1);
+                            callingCardAddress[sizeof(callingCardAddress) - 1] = '\0';
+                            strncpy(callingCardCategory, cat, sizeof(callingCardCategory) - 1);
+                            callingCardCategory[sizeof(callingCardCategory) - 1] = '\0';
+                            callingCardHasRating = doc.containsKey("rating");
+                            callingCardRating = doc["rating"] | 0.0f;
+                            callingCardHasReviewCount = doc.containsKey("review_count");
+                            callingCardReviewCount = (int32_t)(doc["review_count"] | 0);
+                            int dur = doc["duration_ms"] | (int)MAP_OVERLAY_EXTEND_MS;
+                            if (dur < 800) {
+                                dur = 800;
+                            }
+                            if (dur > 60000) {
+                                dur = 60000;
+                            }
+                            int pwi = doc["photo_w"] | CALLING_CARD_DEFAULT_PHOTO_W;
+                            int phi = doc["photo_h"] | CALLING_CARD_DEFAULT_PHOTO_H;
+                            if (pwi > 0 && pwi <= MAP_DISPLAY_PX) {
+                                callingCardPhotoW = (int16_t)pwi;
+                            } else {
+                                callingCardPhotoW = CALLING_CARD_DEFAULT_PHOTO_W;
+                            }
+                            if (phi > 0 && phi < MAP_DISPLAY_PX) {
+                                callingCardPhotoH = (int16_t)phi;
+                            } else {
+                                callingCardPhotoH = CALLING_CARD_DEFAULT_PHOTO_H;
+                            }
+                            callingCardHasPhoto = false;
+                            callingCardOverlayActive = true;
+                            callingCardNeedsRedraw = true;
+                            callingCardOverlayUntilMs = millis() + (uint32_t)dur;
+                            faceAnimActive = false;
+                            faceAnimWords[0] = '\0';
+                            clearFaceAnimCaptionBox();
+                            if (currentState == STATE_UPLOADING) {
+                                suppressUploadThinkingAfterCallingCard = true;
+                            }
                         } else if (strcmp(msgType, "show_weather") == 0) {
                             float tRaw = doc["temperature"] | 0.0f;
                             weatherTempDisplay = (int)(tRaw >= 0.0f ? (tRaw + 0.5f) : (tRaw - 0.5f));
@@ -2047,6 +2379,42 @@ void setupWiFi() {
                         } else {
                             Serial.printf("[map] JPEG decode failed (%u bytes)\n", (unsigned)jpgLen);
                         }
+                    }
+                } else if (payload && length > 1 && payload[0] == 0x05) {
+                    const uint8_t *jpg = payload + 1;
+                    size_t jpgLen = length - 1;
+                    if (jpgLen > 32 && s_jpegDecCallingCard.openRAM((uint8_t *)jpg, (int32_t)jpgLen, callingCardJpegDrawCallback)) {
+                        s_jpegDecCallingCard.setPixelType(RGB565_LITTLE_ENDIAN);
+                        int iw = s_jpegDecCallingCard.getWidth();
+                        int ih = s_jpegDecCallingCard.getHeight();
+                        if (iw > 0 && ih > 0 && iw <= MAP_DISPLAY_PX && ih <= MAP_DISPLAY_PX) {
+                            callingCardPhotoW = (int16_t)iw;
+                            callingCardPhotoH = (int16_t)ih;
+                            size_t need = (size_t)iw * (size_t)ih * sizeof(uint16_t);
+                            if (need > s_callingCardPhotoCapacity || s_callingCardPhoto565 == nullptr) {
+                                if (s_callingCardPhoto565) {
+                                    heap_caps_free(s_callingCardPhoto565);
+                                    s_callingCardPhoto565 = nullptr;
+                                }
+                                s_callingCardPhoto565 = (uint16_t *)heap_caps_malloc(
+                                    need, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                                s_callingCardPhotoCapacity = s_callingCardPhoto565 ? need : 0;
+                            }
+                            if (s_callingCardPhoto565 != nullptr && need <= s_callingCardPhotoCapacity) {
+                                memset(s_callingCardPhoto565, 0, need);
+                                s_jpegDecCallingCard.decode(0, 0, 0);
+                                callingCardHasPhoto = true;
+                                callingCardNeedsRedraw = true;
+                                callingCardOverlayActive = true;
+                                callingCardOverlayUntilMs = millis() + MAP_OVERLAY_EXTEND_MS;
+                                if (currentState == STATE_UPLOADING) {
+                                    suppressUploadThinkingAfterCallingCard = true;
+                                }
+                            }
+                        }
+                        s_jpegDecCallingCard.close();
+                    } else if (jpgLen > 0) {
+                        Serial.printf("[calling_card] JPEG decode failed (%u bytes)\n", (unsigned)jpgLen);
                     }
                 }
                 break;
@@ -2203,7 +2571,8 @@ void loop() {
 
     // Force a full refresh on transitions to/from the thinking animation.
     if (currentState != previousVisualState) {
-        if ((currentState == STATE_UPLOADING || previousVisualState == STATE_UPLOADING) && !weatherOverlayActive && !mapOverlayActive) {
+        if ((currentState == STATE_UPLOADING || previousVisualState == STATE_UPLOADING) && !weatherOverlayActive && !mapOverlayActive
+            && !callingCardOverlayActive) {
             gfx->fillScreen(BLACK);
             idleAnim.hasPrevFrame = false;
             uploadAnim.hasPrevFrame = false;
@@ -2218,7 +2587,21 @@ void loop() {
     if (weatherOverlayActive && millis() >= weatherOverlayUntilMs) {
         weatherOverlayActive = false;
         idleAnim.hasPrevFrame = false;
-        if (!timeScreenActive && !faceAnimActive && !mapOverlayActive) {
+        if (!timeScreenActive && !faceAnimActive && !mapOverlayActive && !callingCardOverlayActive) {
+            showIdleEyes();
+            lastIdleEyesUpdate = 0;
+        } else {
+            gfx->fillScreen(BLACK);
+        }
+    }
+
+    if (callingCardOverlayActive && millis() >= callingCardOverlayUntilMs) {
+        callingCardOverlayActive = false;
+        callingCardHasPhoto = false;
+        callingCardNeedsRedraw = false;
+        suppressUploadThinkingAfterCallingCard = false;
+        idleAnim.hasPrevFrame = false;
+        if (!timeScreenActive && !faceAnimActive && !weatherOverlayActive && !mapOverlayActive) {
             showIdleEyes();
             lastIdleEyesUpdate = 0;
         } else {
@@ -2232,7 +2615,7 @@ void loop() {
         mapNeedsRedraw = false;
         suppressUploadThinkingAfterMap = false;
         idleAnim.hasPrevFrame = false;
-        if (!timeScreenActive && !faceAnimActive && !weatherOverlayActive) {
+        if (!timeScreenActive && !faceAnimActive && !weatherOverlayActive && !callingCardOverlayActive) {
             showIdleEyes();
             lastIdleEyesUpdate = 0;
         } else {
@@ -2249,7 +2632,8 @@ void loop() {
         idleAnim.hasPrevFrame = false;
         uploadAnim.hasPrevFrame = false;
         recordingAnim.hasPrevFrame = false;
-        if (!timeScreenActive && !weatherOverlayActive && !mapOverlayActive && currentState == STATE_IDLE) {
+        if (!timeScreenActive && !weatherOverlayActive && !mapOverlayActive && !callingCardOverlayActive
+            && currentState == STATE_IDLE) {
             lastIdleEyesUpdate = 0;
         }
     }
@@ -2384,6 +2768,7 @@ void loop() {
                 else if (currentState == STATE_IDLE) {
                     Serial.println("\n*** TAP DETECTED: STARTING RECORD ***\n");
                     weatherOverlayActive = false;
+                    callingCardOverlayActive = false;
                     currentState = STATE_RECORDING;
                     timeScreenActive = false;
                     resetTimeScreenCache();
@@ -2469,8 +2854,12 @@ void loop() {
         currentState = STATE_IDLE;
         suppressUploadThinkingAfterWeather = false;
         suppressUploadThinkingAfterMap = false;
+        suppressUploadThinkingAfterCallingCard = false;
         if (weatherOverlayActive) {
             weatherNeedsRedraw = true;
+        } else if (callingCardOverlayActive) {
+            callingCardNeedsRedraw = true;
+            lastIdleEyesUpdate = 0;
         } else if (mapOverlayActive) {
             lastIdleEyesUpdate = 0;
         } else if (faceAnimActive) {
@@ -2488,6 +2877,11 @@ void loop() {
         } else {
             updateWeatherOverlayAnimation(millis());
         }
+    } else if (callingCardOverlayActive && (currentState == STATE_IDLE || currentState == STATE_UPLOADING) && !timeScreenActive) {
+        if (callingCardNeedsRedraw) {
+            drawCallingCardOverlay();
+            callingCardNeedsRedraw = false;
+        }
     } else if (mapOverlayActive && (currentState == STATE_IDLE || currentState == STATE_UPLOADING) && !timeScreenActive) {
         if (mapHasImage && mapNeedsRedraw && s_mapRgb565 != nullptr) {
             gfx->draw16bitRGBBitmap(0, 0, s_mapRgb565, MAP_DISPLAY_PX, MAP_DISPLAY_PX);
@@ -2500,7 +2894,7 @@ void loop() {
         processAudio();
         captureVideoFrame(); 
     } else if (currentState == STATE_UPLOADING) {
-        if (!suppressUploadThinkingAfterWeather && !suppressUploadThinkingAfterMap) {
+        if (!suppressUploadThinkingAfterWeather && !suppressUploadThinkingAfterMap && !suppressUploadThinkingAfterCallingCard) {
             updateUploadingThinkingAnimation();
         } else if (!timeScreenActive) {
             updateIdleEyesAnimation();
