@@ -24,8 +24,8 @@ fi
 # shellcheck source=/dev/null
 source .venv/bin/activate
 echo "Installing Python dependencies (this may take a few minutes) ..."
-pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 deactivate
 
 cd "$REPO_ROOT/app/frontend"

@@ -52,12 +52,12 @@ try {
     Write-Host "Hub venv: $venvDir (Python $venvVer) - pip installs into this interpreter, not whatever 'python' is first on PATH."
     Write-Host "Node: $(node -v | ForEach-Object { $_.Trim() })"
     Write-Host ""
-    $pip = Join-Path (Get-Location) "$venvDir\Scripts\pip.exe"
     Write-Host "Installing Python dependencies (this may take a few minutes) ..."
     Write-Host "If pip prints 'Ignoring ... python_version >= 3.13', that is normal when this venv is 3.12 (markers for 3.13-only lines are skipped)."
     Write-Host ""
-    & $pip install --upgrade pip
-    & $pip install -r requirements.txt
+    # Use python -m pip (not pip.exe) so upgrading pip itself is allowed on Windows/pip 25+
+    & $venvPy -m pip install --upgrade pip
+    & $venvPy -m pip install -r requirements.txt
 } finally {
     Pop-Location
 }
