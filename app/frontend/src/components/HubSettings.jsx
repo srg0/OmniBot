@@ -449,8 +449,8 @@ const HubSettings = () => {
             >
               <option value="">Select country</option>
               {countryOptions.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
+                <option key={c.code} value={c.code}>
+                  {c.name}
                 </option>
               ))}
             </select>

@@ -111,3 +111,89 @@
   font-size: 0.8rem;
   color: var(--text-muted, #5a6b7a);
 }
+
+.first-run-card--wide {
+  max-width: 520px;
+}
+
+.first-run-steps {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted, #5a6b7a);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.first-run-step-dots {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+
+.first-run-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(0, 102, 204, 0.2);
+}
+
+.first-run-dot--active {
+  background: linear-gradient(135deg, #0088ff, #0066cc);
+}
+
+.first-run-hint--tight {
+  margin-top: 0.35rem !important;
+  margin-bottom: 0 !important;
+}
+
+.first-run-form--stack {
+  gap: 0;
+  margin-top: 0.5rem;
+}
+
+.first-run-form--stack .form-group {
+  margin-bottom: 1rem;
+}
+
+.first-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.first-run-submit--inline {
+  margin-top: 0;
+}
+
+.first-run-nav {
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(0, 102, 204, 0.12);
+}
+
+.first-run-back {
+  background: none;
+  border: none;
+  color: var(--accent, #0088ff);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.25rem 0;
+}
+
+.first-run-back:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.first-run-back:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.first-run-geocode-msg {
+  margin-bottom: 0.75rem;
+}
