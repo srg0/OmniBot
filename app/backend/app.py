@@ -67,7 +67,7 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "  * Use display_style='directions' when the user asks how to get somewhere or needs navigation. "
     "Pass the destination street address in the location field.\n"
     "  * Use display_style='calling_card' when the user asks about a specific place or business. "
-    "Pass the BUSINESS NAME and city (e.g. 'AMC Parkway Pointe 15, Atlanta GA') NOT a street address.\n\n"
+    "Pass the BUSINESS NAME and city (e.g. '[BUSINESS_NAME], [CITY]') NOT a street address.\n\n"
     "At most one animation tool should be used per turn. Do not call more than one of: "
     "`face_animation`, `show_face_animation`, `show_weather_animation`, or `show_map_animation` in the same turn.\n\n"
     "When asked about food, activities, or places near me, provide exactly ONE recommendation and do not list multiple options."
@@ -178,7 +178,7 @@ SHOW_MAP_ANIMATION_FUNCTION_DECLARATION = {
         "properties": {
             "location": {
                 "type": "string",
-                "description": "For display_style='calling_card': pass the BUSINESS NAME and city (e.g. 'AMC Parkway Pointe 15, Atlanta GA' or 'Publix Paces Ferry Center, Atlanta'), NOT a raw street address — the business name allows the photo to be fetched correctly. For display_style='directions': a street address or place name is fine (e.g. '3101 Cobb Pkwy SE, Atlanta, GA').",
+                "description": "For display_style='calling_card': pass the BUSINESS NAME and city (e.g. '[BUSINESS_NAME], [CITY]'), NOT a raw street address — the business name allows the photo to be fetched correctly. For display_style='directions': a street address or place name is fine (e.g. '[STREET_ADDRESS], [CITY], [STATE]').",
             },
             "display_style": {
                 "type": "string",
