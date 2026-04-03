@@ -30,11 +30,7 @@ const SetupOrchestrator = ({
           )}
 
           {setupStep === 'wifi' && (
-            <SetupWifi 
-              state={state} 
-              setters={setters} 
-              actions={actions} 
-            />
+            <SetupWifi state={state} setters={setters} actions={actions} />
           )}
 
           {setupStep === 'password' && (

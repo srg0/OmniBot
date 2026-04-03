@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './index.css';
 
 import Sidebar from './components/Sidebar';
@@ -6,7 +6,14 @@ import IntelligenceFeed from './components/IntelligenceFeed';
 import SetupOrchestrator from './components/SetupOrchestrator';
 import SettingsShell from './components/SettingsShell';
 import FirstRunSetup from './components/FirstRunSetup';
-import { initialSetupState, scanForDevices, scanForWifi, sendProvision, getHubStatus } from './components/setupService';
+import {
+  initialSetupState,
+  scanForDevices,
+  scanForWifi,
+  sendProvision,
+  getHubStatus,
+  listBots,
+} from './components/setupService';
 import { hubUrl, getHubWebSocketUrl } from './hubOrigin';
 
 function App() {
@@ -30,39 +37,41 @@ function App() {
     loadHubStatus();
   }, [loadHubStatus]);
 
-  // --- WebSocket Monitor States ---
-  const [esp32Status, setEsp32Status] = useState('offline'); // offline | online | working
-  const [lastPing, setLastPing] = useState(null);
+  const [sidebarBots, setSidebarBots] = useState([]);
+  const [botUiStatus, setBotUiStatus] = useState({});
+  const [lastPingById, setLastPingById] = useState({});
+  const [selectedBotId, setSelectedBotId] = useState('default_bot');
+  const selectedBotIdRef = useRef(selectedBotId);
+  selectedBotIdRef.current = selectedBotId;
+
   const [logs, setLogs] = useState([]);
   const [wsStatus, setWsStatus] = useState('disconnected');
   const [textMessage, setTextMessage] = useState('');
   const [isSendingText, setIsSendingText] = useState(false);
-  
-  // --- Orchestrator & Setup States ---
+
   const [setupState, setSetupState] = useState(initialSetupState);
   const [settingsTab, setSettingsTab] = useState('pixel');
 
-  // Helper to cleanly update nested setup state
   const updateSetup = (key, value) => {
-    setSetupState(prev => ({ ...prev, [key]: value }));
+    setSetupState((prev) => ({ ...prev, [key]: value }));
   };
 
   const addLog = (sender, text, extra = {}) => {
-    setLogs(prevLogs => [
+    setLogs((prevLogs) => [
       ...prevLogs,
       {
         id: Date.now() + Math.random(),
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         sender,
         text,
-        ...extra
-      }
+        ...extra,
+      },
     ]);
   };
 
   const appendAiStreamDelta = (stream_id, delta) => {
-    setLogs(prevLogs =>
-      prevLogs.map(log => {
+    setLogs((prevLogs) =>
+      prevLogs.map((log) => {
         if (log.sender === 'ai' && log.streamId === stream_id) {
           return { ...log, text: (log.text || '') + delta };
         }
@@ -71,16 +80,53 @@ function App() {
     );
   };
 
-  // --- WebSocket Initialization (after Gemini is configured so first-run UX is clean) ---
+  const mergeBotList = useCallback((rows) => {
+    const bots = rows || [];
+    setSidebarBots(bots);
+    setBotUiStatus((prev) => {
+      const next = {};
+      const ids = new Set(bots.map((b) => b.device_id));
+      for (const b of bots) {
+        const id = b.device_id;
+        next[id] = prev[id] !== undefined ? prev[id] : 'offline';
+      }
+      for (const k of Object.keys(prev)) {
+        if (!ids.has(k)) delete next[k];
+      }
+      return next;
+    });
+  }, []);
+
+  const refreshBotList = useCallback(async () => {
+    const data = await listBots();
+    mergeBotList(data.bots || []);
+  }, [mergeBotList]);
+
+  useEffect(() => {
+    if (sidebarBots.length === 0) return;
+    const ids = new Set(sidebarBots.map((b) => b.device_id));
+    if (!ids.has(selectedBotId)) {
+      setSelectedBotId(sidebarBots[0].device_id);
+    }
+  }, [sidebarBots, selectedBotId]);
+
   useEffect(() => {
     if (geminiConfigured !== true) {
       return undefined;
     }
 
     let ws;
-    let reconnectTimer;
+    let cancelled = false;
 
-    const connectWebSocket = () => {
+    const run = async () => {
+      try {
+        const data = await listBots();
+        if (cancelled) return;
+        mergeBotList(data.bots || []);
+      } catch (e) {
+        console.error('Failed to load bot list', e);
+      }
+
       ws = new WebSocket(getHubWebSocketUrl('/ws/monitor'));
 
       ws.onopen = () => {
@@ -91,31 +137,60 @@ function App() {
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          
+
+          if (message.type === 'stream_snapshot') {
+            const online = new Set(message.online_device_ids || []);
+            setBotUiStatus((prev) => {
+              const next = { ...prev };
+              for (const k of Object.keys(next)) {
+                next[k] = online.has(k) ? 'online' : 'offline';
+              }
+              for (const id of online) {
+                next[id] = 'online';
+              }
+              return next;
+            });
+            return;
+          }
+
           if (message.type === 'esp32_connected') {
-            setEsp32Status('online');
-            setLastPing(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            const did = message.device_id || 'default_bot';
+            void refreshBotList().then(() => {
+              setBotUiStatus((prev) => ({ ...prev, [did]: 'online' }));
+              const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              setLastPingById((p) => ({ ...p, [did]: t }));
+            });
           } else if (message.type === 'esp32_disconnected') {
-            setEsp32Status('offline');
+            const did = message.device_id || 'default_bot';
+            setBotUiStatus((prev) => ({ ...prev, [did]: 'offline' }));
           } else if (message.type === 'processing_started') {
-            setEsp32Status('working');
+            const did = message.device_id || selectedBotIdRef.current;
+            if (did) {
+              setBotUiStatus((prev) => ({ ...prev, [did]: 'working' }));
+            }
           } else if (message.type === 'video_captured') {
             addLog('video', message.data);
           } else if (message.type === 'audio_captured') {
             addLog('audio', message.data);
           } else if (message.type === 'ai_response_stream_start') {
-            setEsp32Status('working');
+            if (message.device_id) {
+              setBotUiStatus((prev) => ({ ...prev, [message.device_id]: 'working' }));
+            }
             addLog('ai', '', { streamId: message.stream_id });
           } else if (message.type === 'ai_response_stream_delta') {
             appendAiStreamDelta(message.stream_id, message.data);
           } else if (message.type === 'ai_response_stream_end') {
-            setEsp32Status('online');
-            const hasMapsSources =
-              message.maps_sources && message.maps_sources.length > 0;
-            const hasSearchSources =
-              message.search_sources && message.search_sources.length > 0;
-            const hasSearchQueries =
-              message.search_queries && message.search_queries.length > 0;
+            if (message.device_id) {
+              const live = message.device_stream_connected;
+              setBotUiStatus((prev) => ({
+                ...prev,
+                [message.device_id]:
+                  live === undefined ? 'online' : live ? 'online' : 'offline',
+              }));
+            }
+            const hasMapsSources = message.maps_sources && message.maps_sources.length > 0;
+            const hasSearchSources = message.search_sources && message.search_sources.length > 0;
+            const hasSearchQueries = message.search_queries && message.search_queries.length > 0;
             const mapsToken = message.maps_widget_context_token;
             if (hasMapsSources || mapsToken || hasSearchSources || hasSearchQueries) {
               setLogs((prev) =>
@@ -126,16 +201,21 @@ function App() {
                         ...(hasMapsSources ? { mapsSources: message.maps_sources } : {}),
                         ...(hasSearchSources ? { searchSources: message.search_sources } : {}),
                         ...(hasSearchQueries ? { searchQueries: message.search_queries } : {}),
-                        ...(mapsToken
-                          ? { mapsWidgetContextToken: mapsToken }
-                          : {})
+                        ...(mapsToken ? { mapsWidgetContextToken: mapsToken } : {}),
                       }
                     : log
                 )
               );
             }
           } else if (message.type === 'error') {
-            setEsp32Status('online');
+            if (message.device_id) {
+              const live = message.device_stream_connected;
+              setBotUiStatus((prev) => ({
+                ...prev,
+                [message.device_id]:
+                  live === undefined ? 'online' : live ? 'online' : 'offline',
+              }));
+            }
             addLog('error', message.data);
           } else if (message.type === 'tool_call') {
             const args = message.arguments || {};
@@ -145,16 +225,12 @@ function App() {
               const condition = String(args.condition ?? args.sky_condition ?? args.cond ?? '');
               const temperatureRaw = args.temperature ?? args.temp ?? 0;
               const temperature = Number(temperatureRaw);
-              addLog(
-                'tool',
-                `${message.function_name}(${argsStr})`,
-                {
-                  toolType: 'show_weather',
-                  weatherCondition: condition,
-                  weatherTemperature: Number.isFinite(temperature) ? temperature : 0,
-                  durationMs: 5000
-                }
-              );
+              addLog('tool', `${message.function_name}(${argsStr})`, {
+                toolType: 'show_weather',
+                weatherCondition: condition,
+                weatherTemperature: Number.isFinite(temperature) ? temperature : 0,
+                durationMs: 5000,
+              });
             } else if (fnName.includes('face_animation') && String(args.animation ?? '').toLowerCase() === 'map') {
               addLog('tool', `${message.function_name}(${argsStr}) — map snapshot on Pixel`);
             } else if (fnName.includes('show_map_animation')) {
@@ -165,37 +241,42 @@ function App() {
             }
           }
         } catch {
-          console.error("Failed to parse message:", event.data);
+          console.error('Failed to parse message:', event.data);
         }
       };
 
       ws.onclose = () => {
         setWsStatus('disconnected');
-        setEsp32Status('offline');
-        addLog('error', 'Lost connection to OmniBot Core. Reconnecting in 5s...');
-        reconnectTimer = setTimeout(connectWebSocket, 5000);
+        setBotUiStatus((prev) => {
+          const next = { ...prev };
+          for (const k of Object.keys(next)) {
+            next[k] = 'offline';
+          }
+          return next;
+        });
+        addLog('error', 'Lost connection to OmniBot Core. Refresh the page to reconnect.');
       };
-      
+
       ws.onerror = () => ws.close();
     };
 
-    connectWebSocket();
+    run();
+
     return () => {
-      clearTimeout(reconnectTimer);
+      cancelled = true;
       if (ws) ws.close();
     };
-  }, [geminiConfigured]);
+  }, [geminiConfigured, mergeBotList, refreshBotList]);
 
-  // --- Setup Flow Actions ---
   const handleScan = async () => {
     updateSetup('isScanning', true);
     updateSetup('bleScanMessage', null);
     try {
       const { devices, message } = await scanForDevices();
       updateSetup('bleDevices', devices);
-      updateSetup('bleScanMessage', message);
+      updateSetup('bleScanMessage', message || null);
     } catch (e) {
-      console.error("Scan error", e);
+      console.error('Scan error', e);
       updateSetup('bleScanMessage', e.message || 'Scan failed.');
     } finally {
       updateSetup('isScanning', false);
@@ -209,7 +290,7 @@ function App() {
       updateSetup('wifiNetworks', networks);
       updateSetup('wifiScanMessage', message);
     } catch (e) {
-      console.error("Wi-Fi Scan error", e);
+      console.error('Wi-Fi Scan error', e);
     } finally {
       updateSetup('isScanningWifi', false);
     }
@@ -220,11 +301,14 @@ function App() {
     updateSetup('isProvisioning', true);
     try {
       const data = await sendProvision(setupState.ssid, setupState.password, setupState.selectedDevice.address);
-      if(data.status === 'success') {
-         addLog('system', `Credentials transmitted to ${setupState.selectedDevice.name}. Awaiting connection heartbeat...`);
+      if (data.status === 'success') {
+        addLog(
+          'system',
+          `Credentials transmitted to ${setupState.selectedDevice.name}. Awaiting connection heartbeat...`
+        );
       }
     } catch (e) {
-      console.error("Provision error", e);
+      console.error('Provision error', e);
     } finally {
       updateSetup('isProvisioning', false);
     }
@@ -247,8 +331,8 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message,
-          device_id: 'default_bot'
-        })
+          device_id: selectedBotId,
+        }),
       });
 
       if (!res.ok) {
@@ -262,7 +346,6 @@ function App() {
     }
   };
 
-  // Group setters and actions for SetupOrchestrator
   const setupSetters = {
     setAppMode: (val) => updateSetup('appMode', val),
     setSetupStep: (val) => updateSetup('setupStep', val),
@@ -274,7 +357,7 @@ function App() {
   const setupActions = {
     handleScan,
     handleWifiScan,
-    handleProvision
+    handleProvision,
   };
 
   if (hubLoadError) {
@@ -309,19 +392,22 @@ function App() {
 
   return (
     <div className="app-container">
-      <Sidebar 
-        esp32Status={esp32Status}
-        lastPing={lastPing}
+      <Sidebar
+        bots={sidebarBots}
+        botStatus={botUiStatus}
+        lastPingById={lastPingById}
+        selectedBotId={selectedBotId}
+        setSelectedBotId={setSelectedBotId}
         appMode={setupState.appMode}
         setAppMode={setupSetters.setAppMode}
         setSetupStep={setupSetters.setSetupStep}
         setSettingsTab={setSettingsTab}
         settingsTab={settingsTab}
       />
-      
+
       <main className="main-content">
         {setupState.appMode === 'dashboard' && (
-          <IntelligenceFeed 
+          <IntelligenceFeed
             logs={logs}
             wsStatus={wsStatus}
             textMessage={textMessage}
@@ -330,17 +416,19 @@ function App() {
             onSendTextCommand={handleSendTextCommand}
           />
         )}
-        
+
         {setupState.appMode === 'setup' && (
-          <SetupOrchestrator 
-            state={setupState}
-            setters={setupSetters}
-            actions={setupActions}
-          />
+          <SetupOrchestrator state={setupState} setters={setupSetters} actions={setupActions} />
         )}
-        
+
         {setupState.appMode === 'settings' && (
-          <SettingsShell setAppMode={setupSetters.setAppMode} tab={settingsTab} setTab={setSettingsTab} />
+          <SettingsShell
+            setAppMode={setupSetters.setAppMode}
+            tab={settingsTab}
+            setTab={setSettingsTab}
+            deviceId={selectedBotId}
+            onBotsChanged={refreshBotList}
+          />
         )}
       </main>
     </div>

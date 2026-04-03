@@ -9,7 +9,7 @@
 
 .setup-card {
   width: 100%;
-  max-width: 440px;
+  max-width: 480px;
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -245,6 +245,11 @@
 .text-btn:hover {
   color: var(--text-main);
   text-decoration: underline;
+}
+
+.setup-scan-hint {
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
 
 .scanning-container {

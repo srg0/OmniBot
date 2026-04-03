@@ -3,8 +3,7 @@ import './BotSettings.css';
 import './SettingsShell.css';
 import { getBotSettings, updateBotSettings, resetBotSettingsToDefault, deleteBot } from './setupService';
 
-const BotSettings = ({ setAppMode, embedded = false }) => {
-  const [deviceId] = useState('default_bot');
+const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', onBotsChanged }) => {
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
   const [systemInstruction, setSystemInstruction] = useState('');
   const [visionEnabled, setVisionEnabled] = useState(false);
@@ -56,7 +55,7 @@ const BotSettings = ({ setAppMode, embedded = false }) => {
     if (
       !window.confirm(
         `Remove "${deviceId}" from this hub?\n\n` +
-          'This deletes saved Pixel settings for this bot, clears chat history in memory, and disconnects the bot if it is online. The hub will reject reconnects until you save Pixel bot settings again (or reset to defaults). Hub-wide settings (API keys, Maps location) are not removed.'
+          'This deletes saved Pixel settings for this bot, clears chat history in memory, and disconnects the bot if it is online. The bot can connect again anytime (uses defaults until you save settings). Hub-wide settings (API keys, Maps location) are not removed.'
       )
     ) {
       return;
@@ -65,6 +64,7 @@ const BotSettings = ({ setAppMode, embedded = false }) => {
     setSaveStatus(null);
     try {
       await deleteBot(deviceId);
+      onBotsChanged?.();
       setAppMode('dashboard');
     } catch (err) {
       console.error('Failed to remove bot', err);
@@ -175,7 +175,7 @@ const BotSettings = ({ setAppMode, embedded = false }) => {
       <div className="form-group danger-zone">
         <label>Remove bot from hub</label>
         <p className="help-text">
-          Disconnects this bot if connected and deletes its saved model, instructions, and vision preference. The hub will not accept this device until you save Pixel settings here again or use Reset to defaults. Wi‑Fi on the device is unchanged.
+          Disconnects this bot if connected and deletes its saved model, instructions, and vision preference. You can reconnect immediately; save settings here when you want them stored again. Wi‑Fi on the device is unchanged.
         </p>
         <button
           type="button"

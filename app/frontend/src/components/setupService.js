@@ -95,6 +95,13 @@ export const getHubStatus = async () => {
   return res.json();
 };
 
+/** Bots known to the hub (saved settings and/or devices that have streamed). */
+export const listBots = async () => {
+  const res = await fetch(hubUrl('/api/bots'));
+  if (!res.ok) throw new Error('Failed to list bots');
+  return res.json();
+};
+
 export const getHubSettings = async () => {
   const res = await fetch(hubUrl('/api/hub/settings'));
   if (!res.ok) throw new Error('Failed to load hub settings');

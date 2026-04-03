@@ -2020,9 +2020,21 @@ static const uint16_t kSetOnColor  = 0x07E0; // green
 static const uint16_t kSetOffColor = 0xF800; // red
 
 static const int16_t kVidBtnX = 52;
-static const int16_t kVidBtnY = 102;
+static const int16_t kVidBtnY = 68;
 static const int16_t kVidBtnW = 136;
-static const int16_t kVidBtnH = 36;
+static const int16_t kVidBtnH = 32;
+
+static const int16_t kBleBtnX = 52;
+static const int16_t kBleBtnY = 118;
+static const int16_t kBleBtnW = 136;
+static const int16_t kBleBtnH = 30;
+static const uint16_t kBleBtnFill = 0x19BF; // blue-gray, readable on round panel
+
+static const int16_t kWifiResetBtnX = 52;
+static const int16_t kWifiResetBtnY = 164;
+static const int16_t kWifiResetBtnW = 136;
+static const int16_t kWifiResetBtnH = 28;
+static const uint16_t kWifiResetFill = 0xC986; // distinct from BT / video
 
 void drawSettingsScreen() {
     gfx->fillScreen(kSetBg);
@@ -2033,7 +2045,7 @@ void drawSettingsScreen() {
     gfx->setTextColor(kSetTitle);
     const char* title = "SETTINGS";
     int16_t tw = (int16_t)(strlen(title) * 12);
-    gfx->setCursor((240 - tw) / 2, 50);
+    gfx->setCursor((240 - tw) / 2, 40);
     gfx->print(title);
 
     // Video toggle button
@@ -2043,7 +2055,7 @@ void drawSettingsScreen() {
     gfx->setTextColor(WHITE);
     const char* vidText = deviceVisionCaptureEnabled ? "VIDEO: ON" : "VIDEO: OFF";
     int16_t vtw = (int16_t)(strlen(vidText) * 12);
-    gfx->setCursor((240 - vtw) / 2, kVidBtnY + 10);
+    gfx->setCursor((240 - vtw) / 2, kVidBtnY + 8);
     gfx->print(vidText);
 
     // Video label
@@ -2053,6 +2065,38 @@ void drawSettingsScreen() {
     int16_t clw = (int16_t)(strlen(camLabel) * 6);
     gfx->setCursor((240 - clw) / 2, kVidBtnY + kVidBtnH + 6);
     gfx->print(camLabel);
+
+    // Bluetooth Wi‑Fi provisioning (turns off Wi‑Fi, same flow as first-time BLE setup)
+    gfx->fillRoundRect(kBleBtnX, kBleBtnY, kBleBtnW, kBleBtnH, 10, kBleBtnFill);
+    gfx->setTextSize(2);
+    gfx->setTextColor(WHITE);
+    const char* bleText = "BT SETUP";
+    int16_t btw = (int16_t)(strlen(bleText) * 12);
+    gfx->setCursor((240 - btw) / 2, kBleBtnY + 7);
+    gfx->print(bleText);
+
+    gfx->setTextSize(1);
+    gfx->setTextColor(kSetLabel);
+    const char* bleLabel = "CHANGE WIFI VIA BT";
+    int16_t blw = (int16_t)(strlen(bleLabel) * 6);
+    gfx->setCursor((240 - blw) / 2, kBleBtnY + kBleBtnH + 4);
+    gfx->print(bleLabel);
+
+    // Erase stored Wi‑Fi (NVS); next boot uses BLE setup or new provision
+    gfx->fillRoundRect(kWifiResetBtnX, kWifiResetBtnY, kWifiResetBtnW, kWifiResetBtnH, 8, kWifiResetFill);
+    gfx->setTextSize(2);
+    gfx->setTextColor(WHITE);
+    const char* clrText = "CLR WIFI";
+    int16_t ctw = (int16_t)(strlen(clrText) * 12);
+    gfx->setCursor((240 - ctw) / 2, kWifiResetBtnY + 6);
+    gfx->print(clrText);
+
+    gfx->setTextSize(1);
+    gfx->setTextColor(kSetLabel);
+    const char* clrLabel = "ERASE SAVED WIFI";
+    int16_t clrw = (int16_t)(strlen(clrLabel) * 6);
+    gfx->setCursor((240 - clrw) / 2, kWifiResetBtnY + kWifiResetBtnH + 4);
+    gfx->print(clrLabel);
 }
 
 void captureVideoFrame() {
@@ -2103,11 +2147,12 @@ class ProvisionCallbacks: public BLECharacteristicCallbacks {
             String new_pass = doc["password"].as<String>();
             
             if(new_ssid.length() > 0) {
-                preferences.begin("wifi_creds", false); 
+                Serial.printf("[BLE] WiFi credentials received over GATT (ssid len=%u)\n", (unsigned)new_ssid.length());
+                preferences.begin("wifi_creds", false);
                 preferences.putString("ssid", new_ssid);
                 preferences.putString("password", new_pass);
                 preferences.end();
-                
+
                 needsRestart = true;
             }
         }
@@ -2118,25 +2163,74 @@ class ProvisionCallbacks: public BLECharacteristicCallbacks {
 void startBLEProvisioning() {
     currentState = STATE_SETUP;
     updateScreen("BLE SETUP", BLUE);
-    
+    Serial.println("[BLE] startBLEProvisioning: screen shows BLE SETUP");
+
     BLEDevice::init(BLE_SERVICE_NAME);
     BLEServer *pServer = BLEDevice::createServer();
     BLEService *pService = pServer->createService(SERVICE_UUID);
-    
+
     BLECharacteristic *pCharacteristic = pService->createCharacteristic(
                                          WIFI_CREDS_CHAR_UUID,
                                          BLECharacteristic::PROPERTY_WRITE
                                        );
-                                       
+
     pCharacteristic->setCallbacks(new ProvisionCallbacks());
     pService->start();
-    
+
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
-    pAdvertising->setMinPreferred(0x06);  
+    pAdvertising->setMinPreferred(0x06);
     pAdvertising->setMinPreferred(0x12);
     BLEDevice::startAdvertising();
+    Serial.println("[BLE] NimBLE advertising ON — connect from hub (name Pixel, provisioning GATT writable)");
+}
+
+/** Erase stored SSID/password (and fail counter), show message, restart — next boot opens BLE setup if no creds. */
+static void clearWifiCredentialsAndRestart() {
+    Serial.println("[WiFi] CLR WIFI: disconnecting, erasing NVS wifi_creds + wifi_meta.fail_count");
+    webSocket.disconnect();
+    delay(50);
+    isWsConnected = false;
+    if (WiFi.getMode() != WIFI_OFF) {
+        WiFi.disconnect(true, false);
+        WiFi.mode(WIFI_OFF);
+        delay(80);
+    }
+
+    preferences.begin("wifi_creds", false);
+    preferences.remove("ssid");
+    preferences.remove("password");
+    preferences.end();
+
+    preferences.begin("wifi_meta", false);
+    preferences.putUChar("fail_count", 0);
+    preferences.end();
+
+    Serial.println("[WiFi] Stored Wi-Fi credentials cleared; rebooting");
+    updateScreen("CLR WIFI", RED);
+    delay(700);
+    ESP.restart();
+}
+
+/** Disconnect hub stream, turn off Wi‑Fi, then advertise BLE for Wi‑Fi reprovisioning (from SETTINGS). */
+static void enterBleProvisioningFromSettings() {
+    Serial.println("[BT] enterBleProvisioningFromSettings: user chose BT SETUP in SETTINGS");
+    updateScreen("BT ON", CYAN);
+    delay(250);
+
+    Serial.println("[BT] disconnecting hub WebSocket...");
+    webSocket.disconnect();
+    delay(80);
+    isWsConnected = false;
+
+    Serial.printf("[BT] WiFi before off: status=%d mode=%d\n", (int)WiFi.status(), (int)WiFi.getMode());
+    WiFi.disconnect(true, false);
+    WiFi.mode(WIFI_OFF);
+    delay(200);
+    Serial.println("[BT] WiFi OFF — radio ready for BLE");
+
+    startBLEProvisioning();
 }
 
 void setupWiFi() {
@@ -2741,9 +2835,18 @@ void loop() {
             Wire.read(); // Reserved ID
             int tempY = Wire.read(); 
             
-            // Map physical touch to visual coordinates (90 deg CCW rotation)
+            // Map raw CHSC6X to GC9A01 rotation-3 framebuffer (same axes as gfx->draw*).
+            // Rotation: (tempX,tempY) -> (tempY, 239-tempX). Then mirror Y so on-screen
+            // "up" matches drawable coords; without this, SETTINGS rows cycle (video/BT
+            // swap) and bottom taps read as gaps / "outside".
             int mappedX = tempY;
-            int mappedY = 240 - tempX;
+            int mappedY = 239 - tempX;
+            mappedY = 219 - mappedY;
+            if (mappedY < 0) {
+                mappedY = 0;
+            } else if (mappedY > 239) {
+                mappedY = 239;
+            }
             tempX = mappedX;
             tempY = mappedY;
             
@@ -2799,12 +2902,11 @@ void loop() {
                     int tapX = endX;
                     int tapY = endY;
 
-                    // Video toggle button tap
+                    // Video toggle (top)
                     if (tapY >= kVidBtnY && tapY <= (kVidBtnY + kVidBtnH)
                              && tapX >= kVidBtnX && tapX <= (kVidBtnX + kVidBtnW)) {
                         bool newVal = !deviceVisionCaptureEnabled;
                         setDeviceVisionCaptureEnabled(newVal);
-                        // Notify backend of the change
                         if (isWsConnected) {
                             StaticJsonDocument<128> vDoc;
                             vDoc["type"] = "vision_changed";
@@ -2814,6 +2916,18 @@ void loop() {
                             webSocket.sendTXT(buf);
                         }
                         settingsScreenNeedsRedraw = true;
+                    }
+                    // Bluetooth Wi‑Fi setup
+                    else if (tapY >= kBleBtnY && tapY <= (kBleBtnY + kBleBtnH)
+                             && tapX >= kBleBtnX && tapX <= (kBleBtnX + kBleBtnW)) {
+                        Serial.printf("[BT] BT SETUP button pressed (tap %d,%d)\n", tapX, tapY);
+                        enterBleProvisioningFromSettings();
+                    }
+                    // Erase saved Wi‑Fi only (restart → BLE setup or reprovision)
+                    else if (tapY >= kWifiResetBtnY && tapY <= (kWifiResetBtnY + kWifiResetBtnH)
+                             && tapX >= kWifiResetBtnX && tapX <= (kWifiResetBtnX + kWifiResetBtnW)) {
+                        Serial.printf("[WiFi] CLR WIFI button pressed (tap %d,%d)\n", tapX, tapY);
+                        clearWifiCredentialsAndRestart();
                     }
                     // Tap outside controls → exit settings
                     else {

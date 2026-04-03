@@ -3,7 +3,7 @@ import BotSettings from './BotSettings';
 import HubSettings from './HubSettings';
 import './SettingsShell.css';
 
-const SettingsShell = ({ setAppMode, tab, setTab }) => {
+const SettingsShell = ({ setAppMode, tab, setTab, deviceId = 'default_bot', onBotsChanged }) => {
   return (
     <div className="settings-container fade-in">
       <div className="settings-header">
@@ -34,7 +34,9 @@ const SettingsShell = ({ setAppMode, tab, setTab }) => {
         </button>
       </div>
 
-      {tab === 'pixel' && <BotSettings setAppMode={setAppMode} embedded />}
+      {tab === 'pixel' && (
+        <BotSettings setAppMode={setAppMode} embedded deviceId={deviceId} onBotsChanged={onBotsChanged} />
+      )}
       {tab === 'hub' && <HubSettings />}
     </div>
   );

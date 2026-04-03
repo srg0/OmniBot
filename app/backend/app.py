@@ -1,6 +1,7 @@
 import io
 import os
 import uvicorn
+from pathlib import Path
 import tempfile
 import base64
 import cv2
@@ -14,6 +15,7 @@ from PIL import Image
 from google.genai import types
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any, Optional, Tuple
 from urllib.parse import urlencode, urlparse, parse_qs
 
@@ -24,7 +26,7 @@ from wifi_scan import scan_wifi_ssids
 
 from hub_config import (
     DEFAULT_NOMINATIM_USER_AGENT,
-    REMOVED_DEVICE_IDS_FILE,
+    KNOWN_BOTS_FILE,
     SETTINGS_FILE,
     get_genai_client,
     get_gemini_api_key,
@@ -250,57 +252,63 @@ def save_all_settings(settings):
         print(f"Error saving settings: {e}")
 
 
-def load_removed_device_ids() -> set[str]:
-    """Device ids removed via the hub; streams are rejected until explicitly re-registered (e.g. Save Pixel settings)."""
-    if not os.path.exists(REMOVED_DEVICE_IDS_FILE):
-        return set()
+def _default_display_name_for_device_id(device_id: str) -> str:
+    did = (device_id or "").strip()
+    if did == "default_bot":
+        return "Pixel"
+    return did.replace("_", " ") or "Bot"
+
+
+def load_known_bots() -> dict[str, dict[str, Any]]:
+    if not os.path.exists(KNOWN_BOTS_FILE):
+        return {}
     try:
-        with open(REMOVED_DEVICE_IDS_FILE, "r", encoding="utf-8") as f:
+        with open(KNOWN_BOTS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, list):
-            return {str(x).strip() for x in data if str(x).strip()}
-        return set()
+            return data if isinstance(data, dict) else {}
     except Exception as e:
-        print(f"Error loading removed device ids: {e}")
-        return set()
+        print(f"Error loading known bots: {e}")
+        return {}
 
 
-def save_removed_device_ids(ids: set[str]) -> None:
+def save_known_bots(data: dict[str, dict[str, Any]]) -> None:
     try:
-        parent = os.path.dirname(REMOVED_DEVICE_IDS_FILE) or "."
-        os.makedirs(parent, exist_ok=True)
-        with open(REMOVED_DEVICE_IDS_FILE, "w", encoding="utf-8") as f:
-            json.dump(sorted(ids), f, indent=2)
+        Path(KNOWN_BOTS_FILE).parent.mkdir(parents=True, exist_ok=True)
+        with open(KNOWN_BOTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
     except Exception as e:
-        print(f"Error saving removed device ids: {e}")
+        print(f"Error saving known bots: {e}")
 
 
-def is_device_removed(device_id: str) -> bool:
-    did = (device_id or "").strip()
-    if not did:
-        return False
-    return did in load_removed_device_ids()
+def record_bot_seen(device_id: str) -> None:
+    """Persist that a stream device has connected (sidebar / hub memory)."""
+    did = (device_id or "").strip() or "default_bot"
+    kb = load_known_bots()
+    row = dict(kb.get(did) or {})
+    row["last_seen"] = datetime.now(timezone.utc).isoformat()
+    if not row.get("display_name"):
+        row["display_name"] = _default_display_name_for_device_id(did)
+    kb[did] = row
+    save_known_bots(kb)
 
 
-def add_removed_device_id(device_id: str) -> None:
-    did = (device_id or "").strip()
-    if not did:
-        return
-    ids = load_removed_device_ids()
-    if did not in ids:
-        ids.add(did)
-        save_removed_device_ids(ids)
-
-
-def remove_removed_device_id(device_id: str) -> None:
-    """Call when the user explicitly registers this device again (saved settings, reset, or runtime vision row)."""
-    did = (device_id or "").strip()
-    if not did:
-        return
-    ids = load_removed_device_ids()
-    if did in ids:
-        ids.discard(did)
-        save_removed_device_ids(ids)
+def list_registered_bots() -> list[dict[str, Any]]:
+    """Union of bot_settings.json keys and known_bots.json (seen stream devices)."""
+    settings = get_all_settings()
+    kb = load_known_bots()
+    ids = sorted(set(settings.keys()) | set(kb.keys()))
+    out: list[dict[str, Any]] = []
+    for did in ids:
+        meta = kb.get(did) or {}
+        display = (meta.get("display_name") or "").strip() or _default_display_name_for_device_id(did)
+        out.append(
+            {
+                "device_id": did,
+                "display_name": display,
+                "last_seen": meta.get("last_seen"),
+            }
+        )
+    return out
 
 
 def get_bot_settings(device_id: str):
@@ -639,6 +647,15 @@ manager = ConnectionManager()
 @app.websocket("/ws/monitor")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    online_ids = sorted(
+        {active_streams[ws].get("device_id", "default_bot") for ws in active_streams}
+    )
+    try:
+        await websocket.send_text(
+            json.dumps({"type": "stream_snapshot", "online_device_ids": online_ids})
+        )
+    except Exception as e:
+        print(f"Failed to send stream snapshot to monitor: {e}")
     try:
         while True:
             # We don't expect the frontend to send us anything, but we keep the loop open
@@ -695,6 +712,39 @@ class HubSettingsUpdate(BaseModel):
 
 # Use a standard BLE UUID for our custom generic characteristic
 WIFI_CREDS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef0"
+# Must match bots/Pixel/src/main.cpp SERVICE_UUID (provisioning service in advertisements).
+OMNIBOT_BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+
+
+def _normalize_uuid_for_compare(u: str) -> str:
+    return (u or "").strip().lower().replace("-", "")
+
+
+def _ble_device_advertises_omnibot_service(device) -> bool:
+    """True if scan metadata lists Pixel's provisioning service (some OSes omit the local name)."""
+    target = _normalize_uuid_for_compare(OMNIBOT_BLE_SERVICE_UUID)
+    md = getattr(device, "metadata", None) or {}
+    uuids = md.get("uuids")
+    if not uuids:
+        return False
+    for u in uuids:
+        if _normalize_uuid_for_compare(str(u)) == target:
+            return True
+    return False
+
+
+def _ble_device_is_pixel_setup(device) -> bool:
+    """Pixel in BLE provisioning: local name contains Pixel, or our service UUID appears in the advertisement."""
+    name = (device.name or "").strip()
+    if name and "Pixel" in name:
+        return True
+    return _ble_device_advertises_omnibot_service(device)
+
+
+def _pixel_display_name_for_scan(device) -> str:
+    n = (device.name or "").strip()
+    return n if n else "Pixel"
+
 
 # ==========================================
 #          API ENDPOINTS (ESP32 SETUP)
@@ -704,7 +754,8 @@ async def setup_scan():
     """Scans for nearby BLE devices and returns those that might be the Desktop Bot."""
     print("BLE Scanning...")
     try:
-        devices = await BleakScanner.discover(timeout=5.0)
+        # Slightly longer timeout helps Windows Bluetooth stacks complete a full pass.
+        devices = await BleakScanner.discover(timeout=8.0)
     except Exception as e:
         print(f"BLE scan unavailable: {e}")
         return {
@@ -719,15 +770,23 @@ async def setup_scan():
 
     results = []
     for d in devices:
-        if d.name and "Pixel" in d.name:
-            results.append({"name": d.name, "address": d.address})
+        if _ble_device_is_pixel_setup(d):
+            results.append({"name": _pixel_display_name_for_scan(d), "address": d.address})
 
     # Optional dev-only fake device when no hardware is found (set OMNIBOT_SETUP_SIMULATE_DEVICE=1)
     sim = (os.getenv("OMNIBOT_SETUP_SIMULATE_DEVICE") or "").strip().lower()
     if not results and sim in ("1", "true", "yes"):
         results.append({"name": "DesktopBot_Setup (Simulated)", "address": "00:00:00:00:00:00"})
 
-    return {"devices": results, "ble_available": True, "message": None}
+    empty_hint = (
+        "No Pixel found in Bluetooth setup mode. If Pixel already has Wi‑Fi, open SETTINGS on the device "
+        "(swipe down) and tap BT SETUP, then scan again."
+    )
+    return {
+        "devices": results,
+        "ble_available": True,
+        "message": empty_hint if not results else None,
+    }
 
 @app.post("/setup/provision")
 async def setup_provision(creds: WifiCredentials):
@@ -756,9 +815,16 @@ async def setup_wifi_networks():
         print(f"[Omnibot/wifi-scan] {result['message']}")
     return {"networks": result["networks"], "message": result.get("message")}
 
+
 # ==========================================
 #          API ENDPOINTS (SETTINGS)
 # ==========================================
+@app.get("/api/bots")
+async def api_list_bots():
+    """Bots known to the hub (saved settings and/or stream connects)."""
+    return {"bots": list_registered_bots()}
+
+
 @app.get("/api/settings/{device_id}")
 async def get_settings(device_id: str):
     """Gets the current settings for a specific bot."""
@@ -767,7 +833,6 @@ async def get_settings(device_id: str):
 @app.post("/api/settings/{device_id}")
 async def update_settings(device_id: str, new_settings: BotSettingsSchema):
     """Updates Pixel-only settings (model, system instruction, vision) for a bot."""
-    remove_removed_device_id(device_id)
     settings = get_all_settings()
     row = {
         "model": new_settings.model,
@@ -793,7 +858,6 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
 @app.post("/api/settings/{device_id}/reset")
 async def reset_settings_to_default(device_id: str):
     """Restore Pixel-only stored settings to defaults; hub clock/Maps are unchanged."""
-    remove_removed_device_id(device_id)
     row = _default_stored_bot_settings()
     settings = get_all_settings()
     settings[device_id] = row
@@ -814,8 +878,11 @@ async def delete_bot_settings(device_id: str):
     if did in settings:
         del settings[did]
         save_all_settings(settings)
+    kb = load_known_bots()
+    if did in kb:
+        del kb[did]
+        save_known_bots(kb)
     _purge_bot_runtime_state(did)
-    add_removed_device_id(did)
     await _disconnect_websockets_for_device(did)
     await manager.broadcast(
         {
@@ -1910,7 +1977,8 @@ async def stream_chat_turn_response(device_id: str, message_content):
 
     await manager.broadcast({
         "type": "ai_response_stream_start",
-        "stream_id": stream_id
+        "stream_id": stream_id,
+        "device_id": device_id,
     })
 
     lock = gemini_turn_locks.setdefault(device_id, asyncio.Lock())
@@ -2108,6 +2176,7 @@ async def stream_chat_turn_response(device_id: str, message_content):
     end_msg = {
         "type": "ai_response_stream_end",
         "stream_id": stream_id,
+        "device_id": device_id,
         "data": full_text,
     }
     if last_maps_sources:
@@ -2118,6 +2187,7 @@ async def stream_chat_turn_response(device_id: str, message_content):
         end_msg["search_queries"] = last_search_queries
     if last_maps_widget_token:
         end_msg["maps_widget_context_token"] = last_maps_widget_token
+    end_msg["device_stream_connected"] = device_stream_is_live(device_id)
     await manager.broadcast(end_msg)
 
     tok = (last_maps_widget_token or "").strip()
@@ -2150,6 +2220,12 @@ async def stream_chat_turn_response(device_id: str, message_content):
 
     return full_text
 
+def device_stream_is_live(device_id: str) -> bool:
+    """True if this device_id has an active /ws/stream session."""
+    did = (device_id or "").strip() or "default_bot"
+    return any(s.get("device_id") == did for s in active_streams.values())
+
+
 def get_active_esp32_socket(device_id: str):
     """Returns an active ESP32 WebSocket for the requested bot, if available."""
     for ws, session in active_streams.items():
@@ -2161,23 +2237,6 @@ def get_active_esp32_socket(device_id: str):
 async def esp32_stream_endpoint(websocket: WebSocket):
     await websocket.accept()
     stream_device_id = "default_bot"
-    if is_device_removed(stream_device_id):
-        print(f"ESP32 stream rejected (device {stream_device_id!r} removed from hub).")
-        try:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "hub_reject",
-                        "reason": "device_removed",
-                        "device_id": stream_device_id,
-                        "message": "This device was removed from the hub. Save Pixel bot settings to register again.",
-                    }
-                )
-            )
-        except Exception as e:
-            print(f"Could not send hub_reject to ESP32: {e}")
-        await websocket.close(code=1008, reason="Device removed from hub")
-        return
 
     print("ESP32 connected to streaming endpoint!")
 
@@ -2187,6 +2246,7 @@ async def esp32_stream_endpoint(websocket: WebSocket):
         "video_frames": [],
         "device_id": stream_device_id,
     }
+    record_bot_seen(stream_device_id)
     await manager.broadcast(
         {
             "type": "esp32_connected",
@@ -2272,7 +2332,8 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                 # Broadcast to UI that processing started
                 await manager.broadcast({
                     "type": "processing_started",
-                    "data": "Stream finished. Processing via Gemini..."
+                    "device_id": session["device_id"],
+                    "data": "Stream finished. Processing via Gemini...",
                 })
                 
                 try:
@@ -2332,7 +2393,14 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                 except Exception as e:
                     print(f"\nAPI Error: {e}")
                     error_msg = str(e)
-                    await manager.broadcast({"type": "error", "data": error_msg})
+                    await manager.broadcast(
+                        {
+                            "type": "error",
+                            "device_id": session["device_id"],
+                            "data": error_msg,
+                            "device_stream_connected": device_stream_is_live(session["device_id"]),
+                        }
+                    )
                     await websocket.send_text(json.dumps({"status": "error", "message": error_msg}))
                 
                 # Clear buffers for next interaction
@@ -2380,11 +2448,6 @@ async def text_command(req: TextCommandRequest):
     message = (req.message or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-    if is_device_removed(req.device_id):
-        raise HTTPException(
-            status_code=403,
-            detail="This device was removed from the hub. Save Pixel bot settings (or reset to defaults) to register it again.",
-        )
     if not get_gemini_api_key():
         raise HTTPException(
             status_code=503,
@@ -2393,7 +2456,8 @@ async def text_command(req: TextCommandRequest):
 
     await manager.broadcast({
         "type": "processing_started",
-        "data": "Text command received. Processing via Gemini..."
+        "device_id": req.device_id,
+        "data": "Text command received. Processing via Gemini...",
     })
 
     try:
@@ -2411,7 +2475,14 @@ async def text_command(req: TextCommandRequest):
     except Exception as e:
         error_msg = str(e)
         print(f"\nText command API Error: {error_msg}")
-        await manager.broadcast({"type": "error", "data": error_msg})
+        await manager.broadcast(
+            {
+                "type": "error",
+                "device_id": req.device_id,
+                "data": error_msg,
+                "device_stream_connected": device_stream_is_live(req.device_id),
+            }
+        )
         raise HTTPException(status_code=500, detail=error_msg)
 
 @app.post("/api/text-command/reset/{device_id}")
@@ -2428,7 +2499,6 @@ async def get_vision_setting(device_id: str):
 @app.post("/api/runtime/{device_id}/vision")
 async def set_vision_setting(device_id: str, payload: VisionToggleRequest):  # noqa: F811
     """Sets whether video frames are included in model requests."""
-    remove_removed_device_id(device_id)
     vision_enabled_by_device[device_id] = payload.enabled
     settings = get_all_settings()
     bot_conf = dict(settings.get(device_id) or {})
