@@ -5,6 +5,15 @@ app/backend/models/
 .env
 app/backend/hub_secrets.json
 app/backend/hub_app_settings.json
+# Runtime hub data (per-machine; do not commit)
+app/backend/bot_settings.json
+app/backend/known_bots.json
+app/backend/removed_device_ids.json
+# Local scratch / debug output
+app/backend/error_log.txt
+app/backend/debug_types.txt
+app/backend/debug_types2.txt
+app/backend/test_output.txt
 app/backend/.venv/
 
 # Node

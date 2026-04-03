@@ -24,7 +24,8 @@
 // ==========================================
 //        USER CONFIGURATION
 // ==========================================
-const char* backend_ip = "10.0.0.180"; 
+// Hub PC on your LAN (not 127.0.0.1 — the ESP32 must reach the machine running the hub).
+const char* backend_ip = "192.168.1.100";
 const int backend_port = 8000;
 
 #define BLE_SERVICE_NAME "Pixel"
