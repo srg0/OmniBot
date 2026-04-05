@@ -11,6 +11,7 @@ import {
   scanForDevices,
   scanForWifi,
   sendProvision,
+  fetchSetupHubEndpoint,
   getHubStatus,
   listBots,
 } from './components/setupService';
@@ -51,6 +52,7 @@ function App() {
 
   const [setupState, setSetupState] = useState(initialSetupState);
   const [settingsTab, setSettingsTab] = useState('pixel');
+  const provisionPollRef = useRef(null);
 
   const updateSetup = (key, value) => {
     setSetupState((prev) => ({ ...prev, [key]: value }));
@@ -88,7 +90,14 @@ function App() {
       const ids = new Set(bots.map((b) => b.device_id));
       for (const b of bots) {
         const id = b.device_id;
-        next[id] = prev[id] !== undefined ? prev[id] : 'offline';
+        const was = prev[id];
+        if (was === 'working') {
+          next[id] = 'working';
+        } else if (b.online === true) {
+          next[id] = 'online';
+        } else {
+          next[id] = 'offline';
+        }
       }
       for (const k of Object.keys(prev)) {
         if (!ids.has(k)) delete next[k];
@@ -109,6 +118,17 @@ function App() {
       setSelectedBotId(sidebarBots[0].device_id);
     }
   }, [sidebarBots, selectedBotId]);
+
+  /** Poll hub stream presence so Offline stays accurate if WebSocket events are missed. */
+  useEffect(() => {
+    if (geminiConfigured !== true) {
+      return undefined;
+    }
+    const id = window.setInterval(() => {
+      void refreshBotList().catch(() => {});
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, [geminiConfigured, refreshBotList]);
 
   useEffect(() => {
     if (geminiConfigured !== true) {
@@ -156,6 +176,13 @@ function App() {
           if (message.type === 'esp32_connected') {
             const did = message.device_id || 'default_bot';
             void refreshBotList().then(() => {
+              if (provisionPollRef.current) {
+                clearInterval(provisionPollRef.current);
+                provisionPollRef.current = null;
+              }
+              setSetupState((prev) =>
+                prev.appMode === 'setup' ? { ...prev, appMode: 'dashboard', setupStep: 'device' } : prev
+              );
               setBotUiStatus((prev) => ({ ...prev, [did]: 'online' }));
               const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
               setLastPingById((p) => ({ ...p, [did]: t }));
@@ -268,6 +295,16 @@ function App() {
     };
   }, [geminiConfigured, mergeBotList, refreshBotList]);
 
+  useEffect(
+    () => () => {
+      if (provisionPollRef.current) {
+        clearInterval(provisionPollRef.current);
+        provisionPollRef.current = null;
+      }
+    },
+    []
+  );
+
   const handleScan = async () => {
     updateSetup('isScanning', true);
     updateSetup('bleScanMessage', null);
@@ -300,12 +337,46 @@ function App() {
     e.preventDefault();
     updateSetup('isProvisioning', true);
     try {
-      const data = await sendProvision(setupState.ssid, setupState.password, setupState.selectedDevice.address);
+      let hubIp = null;
+      let hubPort = 8000;
+      try {
+        const ep = await fetchSetupHubEndpoint();
+        hubIp = ep.hub_ip;
+        hubPort = ep.hub_port;
+      } catch {
+        /* hub-endpoint is best-effort */
+      }
+      const data = await sendProvision(
+        setupState.ssid,
+        setupState.password,
+        setupState.selectedDevice.address,
+        hubIp,
+        hubPort
+      );
       if (data.status === 'success') {
         addLog(
           'system',
-          `Credentials transmitted to ${setupState.selectedDevice.name}. Awaiting connection heartbeat...`
+          hubIp
+            ? `Credentials and hub address (${hubIp}:${hubPort}) sent to ${setupState.selectedDevice.name}. Waiting for Pixel to connect…`
+            : `Credentials sent to ${setupState.selectedDevice.name}. Hub LAN IP was not detected — ensure Pixel firmware points to this PC, then wait for connection…`
         );
+        try {
+          await refreshBotList();
+        } catch {
+          /* ignore */
+        }
+        if (provisionPollRef.current) {
+          clearInterval(provisionPollRef.current);
+        }
+        provisionPollRef.current = setInterval(() => {
+          void refreshBotList().catch(() => {});
+        }, 3000);
+        window.setTimeout(() => {
+          if (provisionPollRef.current) {
+            clearInterval(provisionPollRef.current);
+            provisionPollRef.current = null;
+          }
+        }, 90000);
       }
     } catch (e) {
       console.error('Provision error', e);

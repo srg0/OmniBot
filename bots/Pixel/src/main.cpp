@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <string>
 
 // ==========================================
 //        USER CONFIGURATION
@@ -92,6 +93,8 @@ int video_frame_count = 0;
 
 WebSocketsClient webSocket;
 bool isWsConnected = false;
+/** Set true only after hub `webSocket.begin()` (Wi‑Fi connected path). Used to guard `webSocket.loop()`. */
+bool hubWebSocketEnabled = false;
 
 #define FRAME_INTERVAL_MS 100 
 unsigned long lastFrameTime = 0;
@@ -348,10 +351,9 @@ struct WeatherAnimState {
     } rain[9];
 };
 static WeatherAnimState wAnim;
-const uint8_t WIFI_CONNECT_ATTEMPTS = 3;
-const uint16_t WIFI_CONNECT_TIMEOUT_MS = 15000;
-const uint8_t WIFI_FAILS_BEFORE_BLE_FALLBACK = 3;
-const uint8_t WIFI_FAILS_BEFORE_CREDS_CLEAR = 8;
+const uint8_t WIFI_CONNECT_ATTEMPTS = 2;
+/** Per-attempt association window (boot only; keep short). */
+const uint16_t WIFI_CONNECT_TIMEOUT_MS = 2000;
 const uint32_t RTC_WIFI_SYNC_INTERVAL_MS = 3600000UL; // 1 hour
 const char* DEFAULT_TIMEZONE_RULE = "EST5EDT,M3.2.0/2,M11.1.0/2";
 char activeTimezoneRule[64] = {0};
@@ -423,6 +425,19 @@ void updateScreen(String text, uint16_t color) {
     
     gfx->setCursor(cursorX, 110);
     gfx->print(text);
+}
+
+static const char* wifiStatusLabel(wl_status_t s) {
+    switch (s) {
+        case WL_IDLE_STATUS: return "IDLE";
+        case WL_NO_SSID_AVAIL: return "NO AP";
+        case WL_SCAN_COMPLETED: return "SCAN";
+        case WL_CONNECTED: return "OK";
+        case WL_CONNECT_FAILED: return "AUTH?";
+        case WL_CONNECTION_LOST: return "LOST";
+        case WL_DISCONNECTED: return "DISC";
+        default: return "?";
+    }
 }
 
 static void fillOval(int16_t xc, int16_t yc, int16_t rx, int16_t ry, uint16_t color) {
@@ -2137,23 +2152,71 @@ void processAudio() {
 // ==========================================
 class ProvisionCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
-      String rxValue = pCharacteristic->getValue().c_str();
+      // GATT write runs on NimBLE/BT tasks with small stacks — keep heap JSON, cap payload size.
+      // NimBLE-Arduino returns std::string from getValue(), not Arduino String.
+      std::string rxValue = pCharacteristic->getValue();
+      if (rxValue.empty() || rxValue.size() > 900) {
+        return;
+      }
 
-      if (rxValue.length() > 0) {
-        StaticJsonDocument<256> doc;
+      {
+        DynamicJsonDocument doc(768);
         DeserializationError error = deserializeJson(doc, rxValue);
         
         if (!error) {
-            String new_ssid = doc["ssid"].as<String>();
-            String new_pass = doc["password"].as<String>();
-            
-            if(new_ssid.length() > 0) {
+            // Hub sends two writes: (1) ssid+password (2) hub_ip+hub_port only. Never treat hub-only JSON as Wi‑Fi.
+            String new_ssid;
+            String new_pass;
+            bool hasWifi = false;
+            if (!doc["ssid"].isNull()) {
+                if (doc["ssid"].is<const char*>()) {
+                    const char* s = doc["ssid"].as<const char*>();
+                    if (s && s[0] && strcmp(s, "null") != 0) {
+                        new_ssid = String(s);
+                        new_ssid.trim();
+                    }
+                } else {
+                    new_ssid = doc["ssid"].as<String>();
+                    new_ssid.trim();
+                }
+                if (new_ssid.length() > 0) {
+                    if (doc["password"].is<const char*>()) {
+                        new_pass = String(doc["password"].as<const char*>());
+                    } else {
+                        new_pass = doc["password"].as<String>();
+                    }
+                    hasWifi = true;
+                }
+            }
+
+            bool hasHub = false;
+            if (!doc["hub_ip"].isNull()) {
+                String hip = doc["hub_ip"].is<const char*>() ? String(doc["hub_ip"].as<const char*>()) : doc["hub_ip"].as<String>();
+                hip.trim();
+                hasHub = hip.length() > 0;
+            }
+
+            if (hasWifi) {
                 Serial.printf("[BLE] WiFi credentials received over GATT (ssid len=%u)\n", (unsigned)new_ssid.length());
                 preferences.begin("wifi_creds", false);
                 preferences.putString("ssid", new_ssid);
                 preferences.putString("password", new_pass);
                 preferences.end();
+            }
 
+            if (hasHub) {
+                String hip = doc["hub_ip"].as<String>();
+                hip.trim();
+                int hp = doc["hub_port"] | 8000;
+                if (hp < 1 || hp > 65535) hp = 8000;
+                preferences.begin("hub_ep", false);
+                preferences.putString("ip", hip);
+                preferences.putUInt("port", (uint32_t)hp);
+                preferences.end();
+                Serial.printf("[BLE] Hub endpoint stored for WebSocket: %s:%d\n", hip.c_str(), hp);
+            }
+
+            if (hasWifi || hasHub) {
                 needsRestart = true;
             }
         }
@@ -2190,8 +2253,11 @@ void startBLEProvisioning() {
 /** Erase stored SSID/password (and fail counter), show message, restart — next boot opens BLE setup if no creds. */
 static void clearWifiCredentialsAndRestart() {
     Serial.println("[WiFi] CLR WIFI: disconnecting, erasing NVS wifi_creds + wifi_meta.fail_count");
-    webSocket.disconnect();
-    delay(50);
+    if (hubWebSocketEnabled) {
+        webSocket.disconnect();
+        delay(50);
+    }
+    hubWebSocketEnabled = false;
     isWsConnected = false;
     if (WiFi.getMode() != WIFI_OFF) {
         WiFi.disconnect(true, false);
@@ -2220,9 +2286,12 @@ static void enterBleProvisioningFromSettings() {
     updateScreen("BT ON", CYAN);
     delay(250);
 
-    Serial.println("[BT] disconnecting hub WebSocket...");
-    webSocket.disconnect();
-    delay(80);
+    if (hubWebSocketEnabled) {
+        Serial.println("[BT] disconnecting hub WebSocket...");
+        webSocket.disconnect();
+        delay(80);
+    }
+    hubWebSocketEnabled = false;
     isWsConnected = false;
 
     Serial.printf("[BT] WiFi before off: status=%d mode=%d\n", (int)WiFi.status(), (int)WiFi.getMode());
@@ -2234,64 +2303,74 @@ static void enterBleProvisioningFromSettings() {
     startBLEProvisioning();
 }
 
+/** No Wi‑Fi on boot: idle face only. BLE provisioning runs only from SETTINGS → BT SETUP. */
+static void enterWifiOfflineIdle() {
+    Serial.println("[WiFi] Stopping Wi‑Fi; idle face. Use SETTINGS → BT SETUP to add or change Wi‑Fi.");
+    if (WiFi.getMode() != WIFI_OFF) {
+        WiFi.disconnect(true, false);
+        WiFi.mode(WIFI_OFF);
+        delay(80);
+    }
+    hubWebSocketEnabled = false;
+    isWsConnected = false;
+    currentState = STATE_IDLE;
+    showIdleEyes();
+    loadRuntimeVisionFromPrefs();
+}
+
 void setupWiFi() {
     preferences.begin("wifi_creds", true); 
     String saved_ssid = preferences.getString("ssid", "");
     String saved_pass = preferences.getString("password", "");
     preferences.end();
-    
-    if (saved_ssid == "") {
-        startBLEProvisioning();
+
+    saved_ssid.trim();
+    if (saved_ssid.length() == 0) {
+        enterWifiOfflineIdle();
         return;
     }
     
-    updateScreen("CONNECTING", YELLOW);
     esp_wifi_set_max_tx_power(78); 
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
 
     bool connected = false;
     for (uint8_t attempt = 0; attempt < WIFI_CONNECT_ATTEMPTS; attempt++) {
         WiFi.disconnect(true, false);
         delay(80);
+        Serial.printf("[WiFi] begin ssid len=%u attempt %u/%u\n", (unsigned)saved_ssid.length(), (unsigned)(attempt + 1), (unsigned)WIFI_CONNECT_ATTEMPTS);
+        updateScreen("CONNECTING", YELLOW);
         WiFi.begin(saved_ssid.c_str(), saved_pass.c_str());
 
         uint32_t attemptStart = millis();
+        uint32_t lastLog = 0;
+        wl_status_t lastSt = WL_IDLE_STATUS;
+
         while (WiFi.status() != WL_CONNECTED && (millis() - attemptStart) < WIFI_CONNECT_TIMEOUT_MS) {
-            delay(250);
+            yield();
+            delay(100);
+            uint32_t now = millis();
+            wl_status_t st = (wl_status_t)WiFi.status();
+            if (st != lastSt) {
+                lastSt = st;
+                Serial.printf("[WiFi] status -> %d (%s)\n", (int)st, wifiStatusLabel(st));
+            }
+            if (now - lastLog >= 1500) {
+                lastLog = now;
+                Serial.printf("[WiFi] still connecting... %lus (%s)\n", (unsigned long)((now - attemptStart) / 1000), wifiStatusLabel(st));
+            }
         }
 
         if (WiFi.status() == WL_CONNECTED) {
             connected = true;
+            Serial.printf("[WiFi] connected, IP %s\n", WiFi.localIP().toString().c_str());
             break;
         }
+        Serial.printf("[WiFi] attempt %u failed, status=%d (%s)\n", (unsigned)(attempt + 1), (int)WiFi.status(), wifiStatusLabel((wl_status_t)WiFi.status()));
     }
 
     if (!connected) {
-        preferences.begin("wifi_meta", false);
-        uint8_t failCount = preferences.getUChar("fail_count", 0);
-        if (failCount < 255) failCount++;
-        preferences.putUChar("fail_count", failCount);
-        preferences.end();
-
-        if (failCount >= WIFI_FAILS_BEFORE_CREDS_CLEAR) {
-            // Last-resort recovery after many failed boots.
-            preferences.begin("wifi_creds", false);
-            preferences.remove("ssid");
-            preferences.remove("password");
-            preferences.end();
-
-            preferences.begin("wifi_meta", false);
-            preferences.putUChar("fail_count", 0);
-            preferences.end();
-        }
-
-        if (failCount >= WIFI_FAILS_BEFORE_BLE_FALLBACK) {
-            startBLEProvisioning();
-        } else {
-            updateScreen("WIFI RETRY", YELLOW);
-            delay(800);
-            ESP.restart();
-        }
+        enterWifiOfflineIdle();
         return;
     }
     
@@ -2299,7 +2378,7 @@ void setupWiFi() {
     preferences.putUChar("fail_count", 0);
     preferences.end();
 
-    WiFi.setSleep(false);
+    updateScreen("TIME SYNC", CYAN);
     syncRtcFromWifiNtp();
     lastRtcWifiSyncAttemptMs = millis();
     currentState = STATE_IDLE; 
@@ -2307,7 +2386,18 @@ void setupWiFi() {
 
     loadRuntimeVisionFromPrefs();
 
-    webSocket.begin(backend_ip, backend_port, "/ws/stream");
+    {
+        preferences.begin("hub_ep", true);
+        String hubHost = preferences.getString("ip", "");
+        uint32_t hubPortU = preferences.getUInt("port", 0);
+        preferences.end();
+        if (hubHost.length() == 0) {
+            hubHost = String(backend_ip);
+        }
+        uint16_t hubPort = (hubPortU > 0 && hubPortU <= 65535u) ? (uint16_t)hubPortU : (uint16_t)backend_port;
+        Serial.printf("[Hub] WebSocket connecting to %s:%u\n", hubHost.c_str(), (unsigned)hubPort);
+        webSocket.begin(hubHost, hubPort, "/ws/stream");
+    }
     webSocket.onEvent([](WStype_t type, uint8_t * payload, size_t length) {
         switch(type) {
             case WStype_DISCONNECTED:
@@ -2575,6 +2665,7 @@ void setupWiFi() {
     });
 
     webSocket.setReconnectInterval(5000); 
+    hubWebSocketEnabled = true;
 }
 
 void triggerGeminiProcessing() {
@@ -2816,7 +2907,7 @@ void loop() {
         }
     }
 
-    if (currentState != STATE_SETUP) {
+    if (hubWebSocketEnabled && currentState != STATE_SETUP) {
         webSocket.loop();
     }
 

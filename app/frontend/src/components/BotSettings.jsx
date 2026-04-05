@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './BotSettings.css';
 import './SettingsShell.css';
-import { getBotSettings, updateBotSettings, resetBotSettingsToDefault, deleteBot } from './setupService';
+import { getBotSettings, updateBotSettings, resetBotSettingsToDefault } from './setupService';
 
 const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', onBotsChanged }) => {
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
@@ -45,29 +45,6 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err) {
       console.error('Failed to save settings', err);
-      setSaveStatus('error');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleRemoveBot = async () => {
-    if (
-      !window.confirm(
-        `Remove "${deviceId}" from this hub?\n\n` +
-          'This deletes saved Pixel settings for this bot, clears chat history in memory, and disconnects the bot if it is online. The bot can connect again anytime (uses defaults until you save settings). Hub-wide settings (API keys, Maps location) are not removed.'
-      )
-    ) {
-      return;
-    }
-    setIsSaving(true);
-    setSaveStatus(null);
-    try {
-      await deleteBot(deviceId);
-      onBotsChanged?.();
-      setAppMode('dashboard');
-    } catch (err) {
-      console.error('Failed to remove bot', err);
       setSaveStatus('error');
     } finally {
       setIsSaving(false);
@@ -170,21 +147,6 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           rows="6"
         />
         <p className="help-text">Personality and behavior for this bot.</p>
-      </div>
-
-      <div className="form-group danger-zone">
-        <label>Remove bot from hub</label>
-        <p className="help-text">
-          Disconnects this bot if connected and deletes its saved model, instructions, and vision preference. You can reconnect immediately; save settings here when you want them stored again. Wi‑Fi on the device is unchanged.
-        </p>
-        <button
-          type="button"
-          className="btn btn-remove-bot"
-          onClick={handleRemoveBot}
-          disabled={isSaving}
-        >
-          Remove bot from hub
-        </button>
       </div>
 
       <div className="form-actions">

@@ -1,5 +1,6 @@
 import io
 import os
+import socket
 import uvicorn
 from pathlib import Path
 import tempfile
@@ -301,11 +302,13 @@ def list_registered_bots() -> list[dict[str, Any]]:
     for did in ids:
         meta = kb.get(did) or {}
         display = (meta.get("display_name") or "").strip() or _default_display_name_for_device_id(did)
+        online = device_stream_is_live(did)
         out.append(
             {
                 "device_id": did,
                 "display_name": display,
                 "last_seen": meta.get("last_seen"),
+                "online": online,
             }
         )
     return out
@@ -663,10 +666,27 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+def _detect_lan_ipv4() -> Optional[str]:
+    """IPv4 of the interface used for outbound traffic — Pixel must use this to reach the hub (not 127.0.0.1)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.25)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not str(ip).startswith("127."):
+            return str(ip)
+    except Exception:
+        pass
+    return None
+
+
 class WifiCredentials(BaseModel):
     ssid: str
-    password: str
+    password: str = ""
     device_address: str
+    hub_ip: Optional[str] = None
+    hub_port: int = 8000
 
 class BotSettingsSchema(BaseModel):
     """Pixel-only fields stored per device_id in bot_settings.json."""
@@ -778,8 +798,7 @@ async def setup_scan():
         results.append({"name": "DesktopBot_Setup (Simulated)", "address": "00:00:00:00:00:00"})
 
     empty_hint = (
-        "No Pixel found in Bluetooth setup mode. If Pixel already has Wi‑Fi, open SETTINGS on the device "
-        "(swipe down) and tap BT SETUP, then scan again."
+        "No Pixel found in Bluetooth setup mode. On the device, open SETTINGS (swipe down) and tap BT SETUP, then scan again."
     )
     return {
         "devices": results,
@@ -787,11 +806,29 @@ async def setup_scan():
         "message": empty_hint if not results else None,
     }
 
+@app.get("/setup/hub-endpoint")
+async def setup_hub_endpoint():
+    """LAN IP and port Pixel should use for the hub WebSocket (ESP32 cannot use localhost)."""
+    port = 8000
+    try:
+        port = int(os.environ.get("OMNIBOT_PORT", "8000") or 8000)
+    except ValueError:
+        port = 8000
+    return {"hub_ip": _detect_lan_ipv4(), "hub_port": port}
+
+
 @app.post("/setup/provision")
 async def setup_provision(creds: WifiCredentials):
-    """Connects to the ESP32 via BLE and writes the WiFi SSID/Password."""
-    payload = json.dumps({"ssid": creds.ssid, "password": creds.password}).encode('utf-8')
-    print(f"Provisioning {creds.device_address} with SSID {creds.ssid}...")
+    """Connects to the ESP32 via BLE: Wi‑Fi first, then optional hub IP/port (second write for small stacks / old firmware)."""
+    wifi_payload = json.dumps({"ssid": creds.ssid, "password": creds.password}).encode("utf-8")
+    hub_ip = (creds.hub_ip or "").strip()
+    hp = int(creds.hub_port) if creds.hub_port else 8000
+    if not (1 <= hp <= 65535):
+        hp = 8000
+    hub_payload = (
+        json.dumps({"hub_ip": hub_ip, "hub_port": hp}).encode("utf-8") if hub_ip else None
+    )
+    print(f"Provisioning {creds.device_address} with SSID {creds.ssid} (hub follow-up: {bool(hub_ip)})...")
     
     # Simulate success if using the fake device
     if creds.device_address == "00:00:00:00:00:00":
@@ -799,7 +836,10 @@ async def setup_provision(creds: WifiCredentials):
         
     try:
         async with BleakClient(creds.device_address) as client:
-            await client.write_gatt_char(WIFI_CREDS_CHAR_UUID, payload)
+            await client.write_gatt_char(WIFI_CREDS_CHAR_UUID, wifi_payload)
+            if hub_payload:
+                await asyncio.sleep(0.2)
+                await client.write_gatt_char(WIFI_CREDS_CHAR_UUID, hub_payload)
         return {"status": "success", "message": "Credentials sent successfully."}
     except Exception as e:
         error_msg = str(e)
@@ -865,32 +905,6 @@ async def reset_settings_to_default(device_id: str):
     vision_enabled_by_device[device_id] = row["vision_enabled"]
     await _send_runtime_vision_to_esp32(device_id, row["vision_enabled"])
     return {"status": "success", "settings": get_bot_settings(device_id), "maps_geocode": {"ok": True, "error": None}}
-
-
-@app.delete("/api/settings/{device_id}")
-async def delete_bot_settings(device_id: str):
-    """Remove stored settings for a bot, clear in-memory runtime state, and close its ESP32 stream."""
-    did = (device_id or "").strip()
-    if not did:
-        raise HTTPException(status_code=400, detail="device_id required")
-    settings = get_all_settings()
-    if did in settings:
-        del settings[did]
-        save_all_settings(settings)
-    kb = load_known_bots()
-    if did in kb:
-        del kb[did]
-        save_known_bots(kb)
-    _purge_bot_runtime_state(did)
-    await _disconnect_websockets_for_device(did)
-    await manager.broadcast(
-        {
-            "type": "esp32_disconnected",
-            "device_id": did,
-            "data": "Bot removed from hub",
-        }
-    )
-    return {"status": "success", "device_id": did}
 
 
 # ==========================================

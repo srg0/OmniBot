@@ -42,15 +42,33 @@ export const scanForWifi = async () => {
   };
 };
 
-export const sendProvision = async (ssid, password, device_address) => {
+/** Hub LAN IP/port for Pixel (from the machine running this API). */
+export const fetchSetupHubEndpoint = async () => {
+  const res = await fetch(hubUrl('/setup/hub-endpoint'));
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { hub_ip: null, hub_port: 8000 };
+  }
+  return {
+    hub_ip: data.hub_ip ?? null,
+    hub_port: typeof data.hub_port === 'number' ? data.hub_port : 8000,
+  };
+};
+
+export const sendProvision = async (ssid, password, device_address, hub_ip, hub_port) => {
+  const body = {
+    ssid,
+    password,
+    device_address,
+  };
+  if (hub_ip && String(hub_ip).trim()) {
+    body.hub_ip = String(hub_ip).trim();
+    body.hub_port = hub_port != null && Number.isFinite(Number(hub_port)) ? Number(hub_port) : 8000;
+  }
   const res = await fetch(hubUrl('/setup/provision'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ssid,
-      password,
-      device_address
-    })
+    body: JSON.stringify(body),
   });
   return await res.json();
 };
@@ -75,18 +93,6 @@ export const resetBotSettingsToDefault = async (device_id) => {
     { method: 'POST' }
   );
   return await res.json();
-};
-
-/** Remove stored settings for this bot, clear hub runtime state, and disconnect its stream. */
-export const deleteBot = async (device_id) => {
-  const res = await fetch(hubUrl(`/api/settings/${encodeURIComponent(device_id)}`), {
-    method: 'DELETE',
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.detail || 'Failed to remove bot');
-  }
-  return data;
 };
 
 export const getHubStatus = async () => {
