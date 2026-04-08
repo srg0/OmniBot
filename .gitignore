@@ -1,6 +1,7 @@
 # Python
 __pycache__/
-app/backend/models/
+# User-trained wake word weights (keep README / .gitkeep under models/wake tracked)
+app/backend/models/wake/*.onnx
 *.pyc
 .env
 app/backend/hub_secrets.json

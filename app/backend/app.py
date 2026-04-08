@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import imageio
 import asyncio # Added for non-blocking operations
+from collections import deque
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -50,7 +51,7 @@ from face_matching import (
     list_profiles,
     match_probe_jpeg,
 )
-from wake_listen import WakeListenProcessor
+from wake_listen import MAX_UTTERANCE_SEC, WakeListenProcessor
 
 # ==========================================
 #          LOAD SECRETS & SETUP (see hub_config: OMNIBOT_DATA_DIR, .env, hub_secrets.json)
@@ -85,6 +86,13 @@ CALLING_CARD_ADDRESS_MAX = 120
 CALLING_CARD_CATEGORY_MAX = 48
 CALLING_CARD_JPEG_MAX_BYTES = 14 * 1024
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+# Rolling JPEG buffer from Pixel (0x02) during wake streaming — only the last ~1s before a wake
+# is sent to Gemini / dashboard (10fps × 1s ≈ 10 frames; matches Pixel WAKE_VIDEO_FRAME_MS).
+WAKE_VIDEO_PRE_WAKE_SECONDS = 1.0
+WAKE_VIDEO_STREAM_FPS = 10
+WAKE_VIDEO_FRAME_BUFFER_MAX = max(1, int(WAKE_VIDEO_PRE_WAKE_SECONDS * WAKE_VIDEO_STREAM_FPS))
+# During speech (after wake, until VAD silence): bound JPEG count to max audio utterance length.
+WAKE_VIDEO_UTTERANCE_MAX_FRAMES = max(1, int(MAX_UTTERANCE_SEC * WAKE_VIDEO_STREAM_FPS))
 
 
 def _nominatim_user_agent_header() -> str:
@@ -1989,7 +1997,7 @@ async def _run_gemini_audio_turn(
     video_bytes = b""
     if use_vision:
         print("Assembling video in background...", end=" ", flush=True)
-        video_bytes = await asyncio.to_thread(assemble_video, video_frames, 10)
+        video_bytes = await asyncio.to_thread(assemble_video, video_frames, WAKE_VIDEO_STREAM_FPS)
         print(f"Done! ({len(video_bytes)} bytes)")
 
         if video_bytes:
@@ -2024,6 +2032,7 @@ async def esp32_stream_endpoint(websocket: WebSocket):
     active_streams[websocket] = {
         "device_id": stream_device_id,
         "wake_processor": None,
+        "video_frame_buffer": deque(maxlen=WAKE_VIDEO_FRAME_BUFFER_MAX),
     }
     record_bot_seen(stream_device_id)
     await manager.broadcast(
@@ -2056,6 +2065,31 @@ async def esp32_stream_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"Could not sync runtime settings to ESP32 on connect: {e}")
 
+    def _abort_wake_video() -> None:
+        sess = active_streams.get(websocket)
+        if not sess:
+            return
+        sess["video_pre_roll"] = None
+        sess["video_utterance"] = None
+        sess.pop("video_wake_clip", None)
+
+    async def _on_wake_video_capture_start() -> None:
+        sess = active_streams.get(websocket)
+        if not sess:
+            return
+        sess.pop("video_wake_clip", None)
+        buf = sess.get("video_frame_buffer")
+        sess["video_pre_roll"] = list(buf) if buf else []
+        sess["video_utterance"] = []
+
+    async def _on_wake_video_capture_end() -> None:
+        sess = active_streams.get(websocket)
+        if not sess:
+            return
+        pre = sess.pop("video_pre_roll", None) or []
+        extra = sess.pop("video_utterance", None)
+        sess["video_wake_clip"] = pre + (extra if isinstance(extra, list) else [])
+
     async def _handle_wake_utterance(raw_pcm: bytes) -> None:
         sess = active_streams.get(websocket)
         if not sess:
@@ -2073,7 +2107,8 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                     "data": "Wake utterance captured. Processing via Gemini...",
                 }
             )
-            await _run_gemini_audio_turn(websocket, did, raw_pcm, [])
+            video_frames = sess.pop("video_wake_clip", None) or []
+            await _run_gemini_audio_turn(websocket, did, raw_pcm, video_frames)
         except Exception as e:
             print(f"\nAPI Error (wake): {e}")
             error_msg = str(e)
@@ -2171,13 +2206,29 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                 wp = session.get("wake_processor")
                 if wp is None:
                     try:
-                        session["wake_processor"] = WakeListenProcessor(on_utterance=_handle_wake_utterance)
+                        session["wake_processor"] = WakeListenProcessor(
+                            on_utterance=_handle_wake_utterance,
+                            on_capture_start=_on_wake_video_capture_start,
+                            on_capture_end=_on_wake_video_capture_end,
+                            on_capture_abort=_abort_wake_video,
+                        )
                         wp = session["wake_processor"]
                         print(f"[wake] WakeListenProcessor ready for {session['device_id']!r} (model={getattr(wp, 'model_label', '?')})")
                     except Exception as ex:
                         print(f"[wake] Failed to start wake listener: {ex}")
                         continue
                 await wp.feed_pcm(payload)
+
+            elif packet_type == 0x02:
+                # Idle: rolling ~1s pre-wake buffer. During utterance (wake → VAD end): append until audio stops.
+                if not is_vision_enabled(session["device_id"]):
+                    continue
+                utter = session.get("video_utterance")
+                if utter is not None:
+                    if len(utter) < WAKE_VIDEO_UTTERANCE_MAX_FRAMES:
+                        utter.append(payload)
+                else:
+                    session["video_frame_buffer"].append(payload)
 
             elif packet_type == 0x06:
                 # Presence / face-scan snapshot (not part of record upload)

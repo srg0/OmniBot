@@ -94,6 +94,9 @@ class WakeListenProcessor:
     """Streaming PCM processor: wake detection + VAD tail; calls async callback with raw PCM."""
 
     on_utterance: Callable[[bytes], Coroutine[Any, Any, None]]
+    on_capture_start: Optional[Callable[[], Coroutine[Any, Any, None]]] = None
+    on_capture_end: Optional[Callable[[], Coroutine[Any, Any, None]]] = None
+    on_capture_abort: Optional[Callable[[], None]] = None
     wake_threshold: float = field(default_factory=lambda: _env_float("OMNIBOT_WAKE_THRESHOLD", 0.55))
     silence_ms: int = field(
         default_factory=lambda: int(_env_float("OMNIBOT_WAKE_SILENCE_MS", 550))
@@ -130,6 +133,8 @@ class WakeListenProcessor:
     def set_paused(self, p: bool) -> None:
         self.paused = bool(p)
         if self.paused:
+            if self._capturing and self.on_capture_abort:
+                self.on_capture_abort()
             self._capturing = False
             self._capture_started_at = None
             self._utterance = bytearray()
@@ -200,6 +205,8 @@ class WakeListenProcessor:
             return
 
         if self._max_wake_score(scores) >= self.wake_threshold:
+            if self.on_capture_start:
+                await self.on_capture_start()
             self._capturing = True
             self._capture_started_at = time.monotonic()
             self._utterance = bytearray(self._ring)
@@ -237,6 +244,9 @@ class WakeListenProcessor:
             self.model.reset()
         except Exception:
             pass
+
+        if self.on_capture_end:
+            await self.on_capture_end()
 
         # Minimum audible length (~0.25 s) to avoid noise blips
         if len(raw) < int(0.25 * SAMPLE_RATE * BYTES_PER_SAMPLE):

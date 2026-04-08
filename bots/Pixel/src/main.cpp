@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string>
+#include "freertos/semphr.h"
 
 // ==========================================
 //        USER CONFIGURATION
@@ -82,11 +83,34 @@ RTC_PCF8563 rtc;
 #define SAMPLE_RATE 16000
 /** PCM bytes per wake stream packet body (hub wake + VAD). */
 #define WAKE_STREAM_CHUNK 2048
+/** JPEG frame interval during idle wake streaming when vision is on (matches hub ~10fps clip). */
+#define WAKE_VIDEO_FRAME_MS 100
 
 WebSocketsClient webSocket;
 bool isWsConnected = false;
 /** Set true only after hub `webSocket.begin()` (Wi‑Fi connected path). Used to guard `webSocket.loop()`. */
 bool hubWebSocketEnabled = false;
+
+/** WebSocketsClient is not thread-safe; serialize sendBIN + loop across wake task and Arduino loop(). */
+static SemaphoreHandle_t g_wsSendMutex = nullptr;
+
+static void wsSendMutexInit() {
+    if (!g_wsSendMutex) {
+        g_wsSendMutex = xSemaphoreCreateMutex();
+    }
+}
+
+static void wsLock() {
+    if (g_wsSendMutex) {
+        xSemaphoreTake(g_wsSendMutex, portMAX_DELAY);
+    }
+}
+
+static void wsUnlock() {
+    if (g_wsSendMutex) {
+        xSemaphoreGive(g_wsSendMutex);
+    }
+}
 
 enum RobotState { STATE_IDLE, STATE_SETUP, STATE_UPLOADING, STATE_SETTINGS };
 volatile RobotState currentState = STATE_SETUP;
@@ -1737,7 +1761,10 @@ static bool captureAndSendJpegPacket(uint8_t packetType) {
     esp_camera_fb_return(fb);
     s->set_framesize(s, prevSize);
     s->set_quality(s, prevQ);
+    wsLock();
     webSocket.sendBIN(packet, len + 1);
+    webSocket.loop();
+    wsUnlock();
     if (isFaceHubPacket) {
         const char* why = (packetType == 0x06) ? "presence scan" : "enrollment";
         Serial.printf(
@@ -2171,9 +2198,12 @@ void setupWiFi() {
     hubWebSocketEnabled = true;
 }
 
+// Rolling JPEGs to hub (0x02) while idle + wake + vision on — hub builds MP4 for Gemini + dashboard.
+static unsigned long s_lastWakeVideoFrameMs = 0;
+
 // ==========================================
-//     FREERTOS WAKE MIC STREAM (CORE 0)
-//     Continuous 0x10 PCM for hub openWakeWord + VAD (tap-to-record removed).
+//     FREERTOS WAKE STREAM (CORE 0)
+//     Single task: 0x10 PCM + optional 0x02 JPEG (vision on). Avoids concurrent WebSocket use (disconnect loops).
 // ==========================================
 void wakeStreamTask(void* pvParameters) {
     uint8_t* pkt = (uint8_t*)malloc(WAKE_STREAM_CHUNK + 1);
@@ -2182,6 +2212,7 @@ void wakeStreamTask(void* pvParameters) {
         vTaskDelete(NULL);
         return;
     }
+    (void)pvParameters;
     for (;;) {
         if (
             hubWebSocketEnabled &&
@@ -2195,11 +2226,42 @@ void wakeStreamTask(void* pvParameters) {
         ) {
             size_t n = 0;
             i2s_read(I2S_NUM_0, pkt + 1, WAKE_STREAM_CHUNK, &n, pdMS_TO_TICKS(120));
+
+            uint8_t* videoPacket = nullptr;
+            size_t videoLen = 0;
+            if (deviceVisionCaptureEnabled) {
+                unsigned long now = millis();
+                if (now - s_lastWakeVideoFrameMs >= WAKE_VIDEO_FRAME_MS) {
+                    s_lastWakeVideoFrameMs = now;
+                    camera_fb_t* fb = esp_camera_fb_get();
+                    if (fb && fb->len > 0 && fb->len < 62000) {
+                        videoLen = fb->len;
+                        videoPacket = (uint8_t*)ps_malloc(videoLen + 1);
+                        if (videoPacket) {
+                            videoPacket[0] = 0x02;
+                            memcpy(videoPacket + 1, fb->buf, videoLen);
+                        }
+                    }
+                    if (fb) {
+                        esp_camera_fb_return(fb);
+                    }
+                }
+            }
+
+            wsLock();
             if (n > 0) {
                 pkt[0] = 0x10;
                 webSocket.sendBIN(pkt, n + 1);
-                webSocket.loop();
             }
+            if (videoPacket) {
+                webSocket.sendBIN(videoPacket, videoLen + 1);
+                free(videoPacket);
+                videoPacket = nullptr;
+            }
+            webSocket.loop();
+            wsUnlock();
+
+            vTaskDelay(pdMS_TO_TICKS(2));
         } else {
             vTaskDelay(pdMS_TO_TICKS(25));
         }
@@ -2211,6 +2273,7 @@ void wakeStreamTask(void* pvParameters) {
 // ==========================================
 void setup() {
     Serial.begin(115200);
+    wsSendMutexInit();
     randomSeed((uint32_t)esp_random());
     
     pinMode(TFT_BL, OUTPUT); digitalWrite(TFT_BL, HIGH);
@@ -2255,7 +2318,7 @@ void setup() {
     setupWiFi();
 
     xTaskCreatePinnedToCore(
-        wakeStreamTask, "WakeStream", 8192, NULL, 1, NULL, 0
+        wakeStreamTask, "WakeStream", 16384, NULL, 1, NULL, 0
     );
 }
 
@@ -2366,7 +2429,9 @@ void loop() {
     }
 
     if (hubWebSocketEnabled && currentState != STATE_SETUP) {
+        wsLock();
         webSocket.loop();
+        wsUnlock();
     }
 
     if (hubWebSocketEnabled && isWsConnected && currentState == STATE_IDLE) {

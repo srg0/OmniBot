@@ -25,7 +25,7 @@ When Wi‑Fi works and the hub is reachable, Pixel connects with a WebSocket; th
 - Say your wake phrase (train a **custom** `pixel.onnx` on the hub, or use the hub’s default test model—see hub logs), then your question. Pixel shows **thinking** when the hub starts processing, then the reply on the face.
 - **Voice does not work** if the hub is offline or wake word is turned off in settings (there is no on-device tap-to-record).
 
-**Vision:** optional JPEG bursts with voice may be added later; **Vision** in the web UI / device settings mainly applies to future or hub-side behavior. Presence face scan uses the camera separately.
+**Vision:** With **Vision** on in the dashboard (and on the device), Pixel streams **JPEG frames** to the hub during idle wake listening; the hub keeps a short rolling buffer and builds the clip for Gemini and the **Intelligence Feed** when you finish a voice turn. Turn **Vision** off to save Wi‑Fi bandwidth. Presence face scan uses the camera separately and may occasionally contend with video streaming.
 
 ### On-device settings (swipe down from idle)
 
