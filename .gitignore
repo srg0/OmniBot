@@ -7,6 +7,8 @@ app/backend/models/wake/*.onnx
 app/backend/hub_secrets.json
 app/backend/hub_app_settings.json
 # Runtime hub data (per-machine; do not commit)
+# Persona runtime copies (canonical templates: app/backend/persona_defaults/*.md)
+app/backend/persona/
 app/backend/bot_settings.json
 app/backend/known_bots.json
 app/backend/removed_device_ids.json

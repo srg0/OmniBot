@@ -27,6 +27,214 @@
   gap: 0.75rem;
 }
 
+.feed-soul-btn {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.45rem 0.85rem;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 102, 204, 0.35);
+  background: linear-gradient(135deg, rgba(0, 102, 204, 0.12), rgba(138, 43, 226, 0.08));
+  color: var(--text-main);
+  cursor: pointer;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.feed-soul-btn:hover:not(:disabled) {
+  border-color: rgba(0, 102, 204, 0.55);
+}
+
+.feed-soul-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.feed-tool-log-btn {
+  position: relative;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.45rem 0.75rem;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.feed-tool-log-btn:hover {
+  border-color: rgba(0, 102, 204, 0.35);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.feed-tool-log-btn.active {
+  border-color: rgba(0, 102, 204, 0.45);
+  background: rgba(0, 102, 204, 0.1);
+}
+
+.feed-tool-log-badge {
+  min-width: 1.1rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 10px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(0, 102, 204, 0.2);
+  color: var(--text-main);
+}
+
+.tool-log-panel {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.04);
+  flex-shrink: 0;
+  max-height: min(48vh, 380px);
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-log-section-title {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.tool-log-section-title:first-child {
+  margin-top: 0;
+}
+
+.hub-activity-entry {
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.hub-activity-entry--error {
+  border-color: rgba(200, 60, 60, 0.25);
+  background: rgba(200, 60, 60, 0.06);
+}
+
+.hub-activity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.hub-activity-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.hub-activity-entry--error .hub-activity-label {
+  color: #b83232;
+}
+
+.hub-activity-text {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.tool-log-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.5rem 1.25rem 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.tool-log-hint {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 0.68rem;
+  opacity: 0.85;
+}
+
+.tool-log-scroll {
+  overflow-y: auto;
+  padding: 0 1rem 0.75rem;
+  flex: 1;
+}
+
+.tool-log-empty {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.tool-log-entry {
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.tool-log-entry-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.tool-log-time {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.tool-log-fn {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #6e40c9;
+}
+
+.tool-log-details {
+  margin-top: 0.35rem;
+}
+
+.tool-log-details summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--accent);
+  user-select: none;
+}
+
+.tool-log-args {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.65rem;
+  max-height: 10rem;
+  overflow: auto;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .feed-header h2 {
   font-size: 1.25rem;
   font-weight: 700;

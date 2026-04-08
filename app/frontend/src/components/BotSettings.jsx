@@ -10,16 +10,33 @@ import {
   deleteFaceProfile,
   uploadFaceReference,
   captureFaceFromPixel,
+  getPersonaFile,
+  getPersonaStatus,
+  putPersonaFile,
 } from './setupService';
 
 const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', onBotsChanged }) => {
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
-  const [systemInstruction, setSystemInstruction] = useState('');
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
   const [presenceScanEnabled, setPresenceScanEnabled] = useState(false);
   const [presenceIntervalSec, setPresenceIntervalSec] = useState(5);
   const [greetingCooldownMin, setGreetingCooldownMin] = useState(30);
+  const [heartbeatIntervalMin, setHeartbeatIntervalMin] = useState(30);
+  const [heartbeatEnabled, setHeartbeatEnabled] = useState(true);
+  const [personaTab, setPersonaTab] = useState('soul');
+  const [personaDrafts, setPersonaDrafts] = useState({
+    soul: '',
+    identity: '',
+    user: '',
+    tools: '',
+    memory: '',
+    heartbeat: '',
+    agents: '',
+  });
+  const [personaStatus, setPersonaStatus] = useState(null);
+  const [personaSaving, setPersonaSaving] = useState(false);
+  const [personaMessage, setPersonaMessage] = useState(null);
   const [faceProfiles, setFaceProfiles] = useState([]);
   const [newProfileName, setNewProfileName] = useState('');
   const [faceBusyId, setFaceBusyId] = useState(null);
@@ -37,12 +54,30 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
     }
   }, [deviceId]);
 
+  const loadPersona = useCallback(async () => {
+    setPersonaMessage(null);
+    try {
+      const files = ['soul', 'identity', 'user', 'tools', 'memory', 'heartbeat', 'agents'];
+      const entries = await Promise.all(
+        files.map(async (f) => {
+          const d = await getPersonaFile(deviceId, f);
+          return [f, d.content ?? ''];
+        })
+      );
+      setPersonaDrafts(Object.fromEntries(entries));
+      const st = await getPersonaStatus(deviceId);
+      setPersonaStatus(st);
+    } catch (err) {
+      console.error('Failed to load persona files', err);
+      setPersonaMessage('Could not load persona files (is the hub updated?)');
+    }
+  }, [deviceId]);
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
         const data = await getBotSettings(deviceId);
         setModel(data.model);
-        setSystemInstruction(data.system_instruction);
         setVisionEnabled(Boolean(data.vision_enabled));
         setWakeWordEnabled(data.wake_word_enabled !== false);
         setPresenceScanEnabled(Boolean(data.presence_scan_enabled));
@@ -56,7 +91,14 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
             ? data.greeting_cooldown_minutes
             : 30
         );
+        setHeartbeatIntervalMin(
+          typeof data.heartbeat_interval_minutes === 'number'
+            ? data.heartbeat_interval_minutes
+            : 30
+        );
+        setHeartbeatEnabled(data.heartbeat_enabled !== false);
         await loadProfiles();
+        await loadPersona();
       } catch (err) {
         console.error('Failed to fetch settings', err);
       } finally {
@@ -64,7 +106,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       }
     };
     fetchSettings();
-  }, [deviceId, loadProfiles]);
+  }, [deviceId, loadProfiles, loadPersona]);
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -73,21 +115,23 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
     try {
       const res = await updateBotSettings(deviceId, {
         model,
-        system_instruction: systemInstruction,
         vision_enabled: visionEnabled,
         wake_word_enabled: wakeWordEnabled,
         presence_scan_enabled: presenceScanEnabled,
         presence_scan_interval_sec: Math.min(300, Math.max(3, Number(presenceIntervalSec) || 5)),
         greeting_cooldown_minutes: Math.min(720, Math.max(1, Number(greetingCooldownMin) || 30)),
+        heartbeat_interval_minutes: Math.min(720, Math.max(5, Number(heartbeatIntervalMin) || 30)),
+        heartbeat_enabled: heartbeatEnabled,
       });
       const saved = res.settings || {};
       setModel(saved.model);
-      setSystemInstruction(saved.system_instruction);
       setVisionEnabled(Boolean(saved.vision_enabled));
       setWakeWordEnabled(saved.wake_word_enabled !== false);
       setPresenceScanEnabled(Boolean(saved.presence_scan_enabled));
       setPresenceIntervalSec(saved.presence_scan_interval_sec ?? 5);
       setGreetingCooldownMin(saved.greeting_cooldown_minutes ?? 30);
+      setHeartbeatIntervalMin(saved.heartbeat_interval_minutes ?? 30);
+      setHeartbeatEnabled(saved.heartbeat_enabled !== false);
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err) {
@@ -101,7 +145,8 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const handleResetToDefaults = async () => {
     if (
       !window.confirm(
-        'Reset Pixel model, system instructions, vision, wake word, and presence scan settings to defaults? Hub clock and Maps location are not changed.'
+        'Reset Pixel model, vision, wake word, presence scan, and heartbeat settings to defaults? ' +
+          'SOUL.md, IDENTITY.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, and AGENTS.md will be overwritten with hub templates (your edits are lost). BOOTSTRAP.md is removed if present. Daily logs under logs/daily/ are kept. Hub clock is unchanged.'
       )
     ) {
       return;
@@ -115,12 +160,14 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       }
       const saved = res.settings;
       setModel(saved.model);
-      setSystemInstruction(saved.system_instruction);
       setVisionEnabled(Boolean(saved.vision_enabled));
       setWakeWordEnabled(saved.wake_word_enabled !== false);
       setPresenceScanEnabled(Boolean(saved.presence_scan_enabled));
       setPresenceIntervalSec(saved.presence_scan_interval_sec ?? 5);
       setGreetingCooldownMin(saved.greeting_cooldown_minutes ?? 30);
+      setHeartbeatIntervalMin(saved.heartbeat_interval_minutes ?? 30);
+      setHeartbeatEnabled(saved.heartbeat_enabled !== false);
+      await loadPersona();
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err) {
@@ -188,6 +235,22 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       setFaceMessage(err.message || 'Capture failed — is Pixel online?');
     } finally {
       setFaceBusyId(null);
+    }
+  };
+
+  const handleSavePersonaFile = async () => {
+    setPersonaSaving(true);
+    setPersonaMessage(null);
+    try {
+      await putPersonaFile(deviceId, personaTab, personaDrafts[personaTab] ?? '');
+      const st = await getPersonaStatus(deviceId);
+      setPersonaStatus(st);
+      setPersonaMessage(`Saved ${personaTab}.md`);
+      setTimeout(() => setPersonaMessage(null), 2500);
+    } catch (err) {
+      setPersonaMessage(err.message || 'Save failed');
+    } finally {
+      setPersonaSaving(false);
     }
   };
 
@@ -393,16 +456,89 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
         </div>
       </div>
 
-      <div className="form-group">
-        <label htmlFor="sysInstruction">System instructions</label>
+      <div className="form-group persona-section">
+        <label>Persona (AGENTS / SOUL / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT)</label>
+        <p className="help-text">
+          Markdown files on the hub (OpenClaw-style). <strong>AGENTS.md</strong> is high-level behavior (injected for the
+          model; edit here). <strong>TOOLS.md</strong> documents tools for context. The model can update{' '}
+          <strong>SOUL.md</strong>, <strong>MEMORY.md</strong>, <strong>IDENTITY.md</strong>, <strong>USER.md</strong>, and{' '}
+          <strong>HEARTBEAT.md</strong> via tools when appropriate (dashboard &quot;Give me a soul&quot; runs{' '}
+          <strong>BOOTSTRAP.md</strong>). Heartbeat <em>maintenance</em> only updates MEMORY from daily logs. Wake speech
+          may be transcribed for daily logs when local STT is available. Save model and heartbeat toggles with the form{' '}
+          <strong>Save</strong> button; save markdown with <strong>Save persona file</strong>.
+        </p>
+        <div className="persona-tab-row" role="tablist">
+          {[
+            { id: 'agents', label: 'AGENTS' },
+            { id: 'soul', label: 'SOUL' },
+            { id: 'identity', label: 'IDENTITY' },
+            { id: 'user', label: 'USER' },
+            { id: 'tools', label: 'TOOLS' },
+            { id: 'memory', label: 'MEMORY' },
+            { id: 'heartbeat', label: 'HEARTBEAT' },
+          ].map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              className={`persona-tab-btn ${personaTab === id ? 'active' : ''}`}
+              onClick={() => setPersonaTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <textarea
-          id="sysInstruction"
-          value={systemInstruction}
-          onChange={(e) => setSystemInstruction(e.target.value)}
+          id="personaEditor"
+          aria-label={`Edit ${personaTab}.md`}
+          value={personaDrafts[personaTab] ?? ''}
+          onChange={(e) =>
+            setPersonaDrafts((prev) => ({ ...prev, [personaTab]: e.target.value }))
+          }
           className="holo-textarea"
-          rows="6"
+          rows="12"
         />
-        <p className="help-text">Personality and behavior for this bot.</p>
+        <div className="persona-file-actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleSavePersonaFile}
+            disabled={personaSaving}
+          >
+            {personaSaving ? 'Saving…' : 'Save persona file'}
+          </button>
+        </div>
+        {personaMessage && <p className="help-text persona-inline-msg">{personaMessage}</p>}
+        {personaStatus?.heartbeat?.last_run_utc && (
+          <p className="help-text">
+            Last heartbeat (UTC): {personaStatus.heartbeat.last_run_utc}
+            {personaStatus.heartbeat.last_memory_updated ? ' · MEMORY updated' : ''}
+          </p>
+        )}
+        <div className="form-group" style={{ marginTop: '1rem' }}>
+          <label htmlFor="heartbeatInterval">Heartbeat interval (minutes)</label>
+          <input
+            id="heartbeatInterval"
+            type="number"
+            min={5}
+            max={720}
+            className="holo-input"
+            style={{ maxWidth: '120px' }}
+            value={heartbeatIntervalMin}
+            onChange={(e) => setHeartbeatIntervalMin(Number(e.target.value) || 30)}
+          />
+        </div>
+        <label className="persona-check">
+          <input
+            type="checkbox"
+            checked={heartbeatEnabled}
+            onChange={(e) => setHeartbeatEnabled(e.target.checked)}
+          />
+          Enable heartbeat maintenance
+        </label>
+        <p className="help-text">
+          Hub operators: <code>OMNIBOT_STT=0</code> turns off local STT only if needed; <code>OMNIBOT_WHISPER_MODEL</code>{' '}
+          defaults to <code>tiny</code>.
+        </p>
       </div>
 
       <div className="form-actions">

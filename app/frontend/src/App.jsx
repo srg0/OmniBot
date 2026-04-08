@@ -14,6 +14,7 @@ import {
   fetchSetupHubEndpoint,
   getHubStatus,
   listBots,
+  startBootstrapSoul,
 } from './components/setupService';
 import { hubUrl, getHubWebSocketUrl } from './hubOrigin';
 
@@ -46,6 +47,8 @@ function App() {
   selectedBotIdRef.current = selectedBotId;
 
   const [logs, setLogs] = useState([]);
+  const [toolCalls, setToolCalls] = useState([]);
+  const [hubActivityLog, setHubActivityLog] = useState([]);
   const [wsStatus, setWsStatus] = useState('disconnected');
   const [textMessage, setTextMessage] = useState('');
   const [isSendingText, setIsSendingText] = useState(false);
@@ -59,16 +62,18 @@ function App() {
   };
 
   const addLog = (sender, text, extra = {}) => {
-    setLogs((prevLogs) => [
-      ...prevLogs,
-      {
-        id: Date.now() + Math.random(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        sender,
-        text,
-        ...extra,
-      },
-    ]);
+    const entry = {
+      id: Date.now() + Math.random(),
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      sender,
+      text,
+      ...extra,
+    };
+    if (sender === 'system' || sender === 'error') {
+      setHubActivityLog((prev) => [...prev, entry]);
+      return;
+    }
+    setLogs((prevLogs) => [...prevLogs, entry]);
   };
 
   const appendAiStreamDelta = (stream_id, delta) => {
@@ -242,8 +247,29 @@ function App() {
             addLog('error', message.data);
           } else if (message.type === 'tool_call') {
             const args = message.arguments || {};
-            const argsStr = Object.entries(args).map(([k, v]) => `${k}: ${v}`).join(', ');
-            addLog('tool', `${message.function_name}(${argsStr})`);
+            const did = message.device_id || selectedBotIdRef.current || 'default_bot';
+            setToolCalls((prev) => [
+              ...prev,
+              {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                time: new Date().toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                }),
+                deviceId: did,
+                streamId: message.stream_id || null,
+                functionName: message.function_name || 'unknown',
+                arguments: args,
+              },
+            ]);
+          } else if (message.type === 'persona_file_updated') {
+            const did = message.device_id || '';
+            const f = message.file || 'persona file';
+            addLog(
+              'system',
+              did ? `Persona updated (${did}): ${f}` : `Persona updated: ${f}`
+            );
           }
         } catch {
           console.error('Failed to parse message:', event.data);
@@ -395,6 +421,19 @@ function App() {
     }
   };
 
+  const handleGiveSoul = async () => {
+    if (isSendingText) return;
+    addLog('user', 'Give me a soul — starting bootstrap ritual');
+    setIsSendingText(true);
+    try {
+      await startBootstrapSoul(selectedBotId);
+    } catch (error) {
+      addLog('error', error.message || 'Bootstrap ritual failed');
+    } finally {
+      setIsSendingText(false);
+    }
+  };
+
   const setupSetters = {
     setAppMode: (val) => updateSetup('appMode', val),
     setSetupStep: (val) => updateSetup('setupStep', val),
@@ -458,11 +497,15 @@ function App() {
         {setupState.appMode === 'dashboard' && (
           <IntelligenceFeed
             logs={logs}
+            toolCalls={toolCalls}
+            hubActivityLog={hubActivityLog}
+            selectedBotId={selectedBotId}
             wsStatus={wsStatus}
             textMessage={textMessage}
             setTextMessage={setTextMessage}
             isSendingText={isSendingText}
             onSendTextCommand={handleSendTextCommand}
+            onGiveSoul={handleGiveSoul}
           />
         )}
 

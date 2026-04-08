@@ -77,6 +77,53 @@
   margin: 0;
 }
 
+.persona-tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.persona-tab-btn {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 102, 204, 0.25);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.persona-tab-btn:hover {
+  border-color: rgba(0, 136, 255, 0.45);
+}
+
+.persona-tab-btn.active {
+  background: rgba(0, 136, 255, 0.12);
+  border-color: rgba(0, 136, 255, 0.55);
+}
+
+.persona-file-actions {
+  margin-top: 0.5rem;
+}
+
+.persona-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+  cursor: pointer;
+}
+
+.persona-inline-msg {
+  margin-top: 0.5rem;
+  color: var(--accent);
+}
+
 .holo-select, .holo-textarea, .holo-input {
   width: 100%;
   background: rgba(255,255,255,0.8);

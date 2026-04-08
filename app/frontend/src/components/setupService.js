@@ -95,6 +95,54 @@ export const resetBotSettingsToDefault = async (device_id) => {
   return await res.json();
 };
 
+export const getPersonaStatus = async (device_id) => {
+  const res = await fetch(hubUrl(`/api/persona/${encodeURIComponent(device_id)}/status`));
+  if (!res.ok) throw new Error('Failed to load persona status');
+  return res.json();
+};
+
+export const getPersonaFile = async (device_id, persona_file) => {
+  const res = await fetch(
+    hubUrl(`/api/persona/${encodeURIComponent(device_id)}/${encodeURIComponent(persona_file)}`)
+  );
+  if (!res.ok) throw new Error('Failed to load persona file');
+  return res.json();
+};
+
+export const putPersonaFile = async (device_id, persona_file, content) => {
+  const res = await fetch(
+    hubUrl(`/api/persona/${encodeURIComponent(device_id)}/${encodeURIComponent(persona_file)}`),
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: content ?? '' }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to save persona file');
+  }
+  return res.json();
+};
+
+/** Start OpenClaw-style bootstrap: hub resets chat history, writes BOOTSTRAP.md, streams Gemini with bootstrap tools. */
+export const startBootstrapSoul = async (device_id) => {
+  const res = await fetch(hubUrl('/api/text-command'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: '',
+      device_id: device_id || 'default_bot',
+      bootstrap: true,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Bootstrap ritual failed');
+  }
+  return res.json();
+};
+
 export const listFaceProfiles = async (device_id) => {
   const res = await fetch(hubUrl(`/api/bots/${encodeURIComponent(device_id)}/face-profiles`));
   if (!res.ok) throw new Error('Failed to list face profiles');

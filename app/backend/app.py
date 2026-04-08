@@ -2,6 +2,7 @@ import io
 import os
 import socket
 import uvicorn
+from contextlib import asynccontextmanager
 from pathlib import Path
 import tempfile
 import base64
@@ -53,6 +54,10 @@ from face_matching import (
 )
 from wake_listen import MAX_UTTERANCE_SEC, WakeListenProcessor
 
+import heartbeat_service
+import persona
+import stt_local
+
 # ==========================================
 #          LOAD SECRETS & SETUP (see hub_config: OMNIBOT_DATA_DIR, .env, hub_secrets.json)
 # ==========================================
@@ -65,7 +70,10 @@ DEFAULT_WAKE_WORD_ENABLED = True
 DEFAULT_PRESENCE_SCAN_ENABLED = False
 DEFAULT_PRESENCE_SCAN_INTERVAL_SEC = 5
 DEFAULT_GREETING_COOLDOWN_MINUTES = 30
-DEFAULT_SYSTEM_INSTRUCTION = (
+DEFAULT_HEARTBEAT_INTERVAL_MINUTES = 30
+DEFAULT_HEARTBEAT_ENABLED = True
+# Hub rules always injected; personality lives in persona/SOUL.md (and USER/MEMORY).
+DEFAULT_PIXEL_BASE_RULES = (
     "You control a small desktop robot named Pixel with a round face display.\n\n"
     "Animation tools:\n"
     "- Use the `show_face_animation` / `face_animation` tool for conversational or emotional states only. "
@@ -150,6 +158,10 @@ turn_tool_state_by_device: dict[str, dict[str, bool]] = {}
 map_jpeg_sent_this_turn_by_device: dict[str, bool] = {}
 map_location_override_by_device: dict[str, str] = {}
 map_display_style_by_device: dict[str, str] = {}
+
+# Curated multi-turn history per bot; Gemini turn lock (also used by heartbeat maintenance).
+history_by_device: dict[str, list] = {}
+gemini_turn_locks: dict[str, asyncio.Lock] = {}
 
 def get_all_settings():
     if not os.path.exists(SETTINGS_FILE):
@@ -245,7 +257,6 @@ def get_bot_settings(device_id: str):
     hub = load_hub_app_settings()
     return {
         "model": bot_conf.get("model", DEFAULT_MODEL),
-        "system_instruction": bot_conf.get("system_instruction", DEFAULT_SYSTEM_INSTRUCTION),
         "vision_enabled": bool(bot_conf.get("vision_enabled", DEFAULT_VISION_ENABLED)),
         "timezone_rule": hub.get("timezone_rule", DEFAULT_TIMEZONE_RULE),
         "presence_scan_enabled": bool(bot_conf.get("presence_scan_enabled", DEFAULT_PRESENCE_SCAN_ENABLED)),
@@ -262,19 +273,48 @@ def get_bot_settings(device_id: str):
             720,
         ),
         "wake_word_enabled": bool(bot_conf.get("wake_word_enabled", DEFAULT_WAKE_WORD_ENABLED)),
+        "heartbeat_interval_minutes": _clamp_int(
+            bot_conf.get("heartbeat_interval_minutes"),
+            DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
+            5,
+            720,
+        ),
+        "heartbeat_enabled": bool(bot_conf.get("heartbeat_enabled", DEFAULT_HEARTBEAT_ENABLED)),
     }
 
 
+def resolve_effective_system_instruction(
+    device_id: str, *, extra_system_suffix: str = ""
+) -> str:
+    """Compose OpenClaw-style persona files + hub rules."""
+    return persona.build_composed_system_instruction(
+        device_id,
+        DEFAULT_PIXEL_BASE_RULES,
+        extra_system_suffix=extra_system_suffix,
+    )
+
+
+BOOTSTRAP_MODE_SYSTEM_SUFFIX = (
+    "You are in BOOTSTRAP MODE for this conversation. Follow the BOOTSTRAP.md content in the user message: "
+    "discover name, nature, vibe, and emoji together; update IDENTITY.md and USER.md with persona_replace; "
+    "refine SOUL.md with soul_replace as you align on how to behave; update HEARTBEAT.md if useful. "
+    "Use memory_replace when something should go in long-term MEMORY.md. "
+    "Tell the user clearly whenever you change a file. When the ritual is finished, call bootstrap_complete "
+    "to delete BOOTSTRAP.md from disk."
+)
+
+
 def _default_stored_bot_settings() -> dict:
-    """Persisted row for a bot after reset-to-default (model, system prompt, vision, presence)."""
+    """Persisted row for a bot after reset-to-default (model, vision, presence)."""
     return {
         "model": DEFAULT_MODEL,
-        "system_instruction": DEFAULT_SYSTEM_INSTRUCTION,
         "vision_enabled": DEFAULT_VISION_ENABLED,
         "presence_scan_enabled": DEFAULT_PRESENCE_SCAN_ENABLED,
         "presence_scan_interval_sec": DEFAULT_PRESENCE_SCAN_INTERVAL_SEC,
         "greeting_cooldown_minutes": DEFAULT_GREETING_COOLDOWN_MINUTES,
         "wake_word_enabled": DEFAULT_WAKE_WORD_ENABLED,
+        "heartbeat_interval_minutes": DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
+        "heartbeat_enabled": DEFAULT_HEARTBEAT_ENABLED,
     }
 
 
@@ -347,7 +387,24 @@ def create_wav_header(data_size: int, sample_rate: int = 16000, num_channels: in
     return bytes(header)
 
 
-app = FastAPI(title="ESP32 Gemini Brain Monitor")
+@asynccontextmanager
+async def _omnibot_lifespan(_: FastAPI):
+    hb_task = asyncio.create_task(
+        heartbeat_service.heartbeat_supervisor_loop(
+            default_model=DEFAULT_MODEL,
+            get_bot_settings_fn=get_bot_settings,
+            gemini_turn_locks=gemini_turn_locks,
+        )
+    )
+    yield
+    hb_task.cancel()
+    try:
+        await hb_task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="ESP32 Gemini Brain Monitor", lifespan=_omnibot_lifespan)
 
 if not get_gemini_api_key():
     print(
@@ -374,6 +431,11 @@ def _pixel_chat_generate_config(
     """
     custom_declarations = [
         types.FunctionDeclaration(**FACE_ANIMATION_FUNCTION_DECLARATION),
+        types.FunctionDeclaration(**persona.SOUL_REPLACE_DECLARATION),
+        types.FunctionDeclaration(**heartbeat_service.MEMORY_REPLACE_DECLARATION),
+        types.FunctionDeclaration(**persona.PERSONA_REPLACE_DECLARATION),
+        types.FunctionDeclaration(**persona.DAILY_LOG_APPEND_DECLARATION),
+        types.FunctionDeclaration(**persona.BOOTSTRAP_COMPLETE_DECLARATION),
     ]
     tools = [
         types.Tool(google_search=_google_search_builtin()),
@@ -464,12 +526,15 @@ class BotSettingsSchema(BaseModel):
     """Pixel-only fields stored per device_id in bot_settings.json."""
 
     model: str
-    system_instruction: str
     vision_enabled: bool = DEFAULT_VISION_ENABLED
     wake_word_enabled: bool = DEFAULT_WAKE_WORD_ENABLED
     presence_scan_enabled: bool = DEFAULT_PRESENCE_SCAN_ENABLED
     presence_scan_interval_sec: int = Field(default=DEFAULT_PRESENCE_SCAN_INTERVAL_SEC, ge=3, le=300)
     greeting_cooldown_minutes: int = Field(default=DEFAULT_GREETING_COOLDOWN_MINUTES, ge=1, le=720)
+    heartbeat_interval_minutes: int = Field(
+        default=DEFAULT_HEARTBEAT_INTERVAL_MINUTES, ge=5, le=720
+    )
+    heartbeat_enabled: bool = DEFAULT_HEARTBEAT_ENABLED
 
 
 class HubAppSettingsSchema(BaseModel):
@@ -478,8 +543,9 @@ class HubAppSettingsSchema(BaseModel):
     timezone_rule: str = DEFAULT_TIMEZONE_RULE
 
 class TextCommandRequest(BaseModel):
-    message: str
+    message: str = ""
     device_id: str = "default_bot"
+    bootstrap: bool = False
 
 class VisionToggleRequest(BaseModel):
     enabled: bool
@@ -642,16 +708,17 @@ async def get_settings(device_id: str):
 
 @app.post("/api/settings/{device_id}")
 async def update_settings(device_id: str, new_settings: BotSettingsSchema):
-    """Updates Pixel-only settings (model, system instruction, vision, presence) for a bot."""
+    """Updates Pixel-only settings (model, vision, presence, heartbeat) for a bot."""
     settings = get_all_settings()
     row = {
         "model": new_settings.model,
-        "system_instruction": new_settings.system_instruction,
         "vision_enabled": bool(new_settings.vision_enabled),
         "wake_word_enabled": bool(new_settings.wake_word_enabled),
         "presence_scan_enabled": bool(new_settings.presence_scan_enabled),
         "presence_scan_interval_sec": int(new_settings.presence_scan_interval_sec),
         "greeting_cooldown_minutes": int(new_settings.greeting_cooldown_minutes),
+        "heartbeat_interval_minutes": int(new_settings.heartbeat_interval_minutes),
+        "heartbeat_enabled": bool(new_settings.heartbeat_enabled),
     }
     settings[device_id] = row
     save_all_settings(settings)
@@ -674,7 +741,11 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
 
 @app.post("/api/settings/{device_id}/reset")
 async def reset_settings_to_default(device_id: str):
-    """Restore Pixel-only stored settings to defaults; hub clock/Maps are unchanged."""
+    """Restore Pixel-only stored settings to defaults; hub clock/Maps are unchanged.
+
+    Also resets persona markdown (SOUL, IDENTITY, USER, TOOLS, MEMORY, HEARTBEAT, AGENTS) to hub templates
+    and removes BOOTSTRAP.md if present. In-memory chat history for this bot is cleared. Daily logs on disk are kept.
+    """
     row = _default_stored_bot_settings()
     settings = get_all_settings()
     settings[device_id] = row
@@ -682,6 +753,7 @@ async def reset_settings_to_default(device_id: str):
     history_by_device.pop(device_id, None)
     vision_enabled_by_device[device_id] = row["vision_enabled"]
     wake_word_enabled_by_device[device_id] = row["wake_word_enabled"]
+    persona.reset_persona_markdown_to_templates(device_id)
     await _send_runtime_vision_to_esp32(device_id, row["vision_enabled"])
     await _send_runtime_wake_word_to_esp32(device_id, row["wake_word_enabled"])
     await _send_runtime_presence_scan_to_esp32(device_id)
@@ -761,9 +833,6 @@ async def api_capture_face_reference_from_pixel(device_id: str, profile_id: str)
 # ==========================================
 # Store active streaming sessions by ESP32 WebSocket connection
 active_streams = {}
-# Curated multi-turn history per bot (types.Content list); rebuilt into each one-shot Chat per turn.
-history_by_device: dict[str, list] = {}
-gemini_turn_locks: dict[str, asyncio.Lock] = {}
 vision_enabled_by_device = {}
 wake_word_enabled_by_device = {}
 timezone_rule_by_device = {}
@@ -1691,7 +1760,23 @@ def _schedule_map_jpeg_after_face_animation_map(device_id: str) -> None:
     )
 
 
-async def stream_chat_turn_response(device_id: str, message_content):
+async def _broadcast_persona_file_updated(device_id: str, file_label: str) -> None:
+    await manager.broadcast(
+        {
+            "type": "persona_file_updated",
+            "device_id": device_id,
+            "file": file_label,
+        }
+    )
+
+
+async def stream_chat_turn_response(
+    device_id: str,
+    message_content,
+    *,
+    max_tool_rounds: int = 6,
+    extra_system_suffix: str = "",
+):
     """Streams one Gemini turn using local history and a fresh config each request (one-shot Chat)."""
     global _main_async_loop
     _main_async_loop = asyncio.get_running_loop()
@@ -1714,7 +1799,9 @@ async def stream_chat_turn_response(device_id: str, message_content):
         turn_tool_state_by_device[device_id] = {"face_animation": False}
         bot_settings = get_bot_settings(device_id)
         model = bot_settings["model"]
-        system_instruction = bot_settings["system_instruction"]
+        system_instruction = resolve_effective_system_instruction(
+            device_id, extra_system_suffix=extra_system_suffix
+        )
         prior_history = history_by_device.setdefault(device_id, [])
         if _maps_debug_enabled():
             bs = bot_settings
@@ -1750,10 +1837,10 @@ async def stream_chat_turn_response(device_id: str, message_content):
         )
         
         message_to_send = message_content
-        MAX_TURNS = 3
-        
+        max_turns = max(1, min(int(max_tool_rounds), 20))
+
         try:
-            for turn in range(MAX_TURNS):
+            for turn in range(max_turns):
                 response_stream = chat.send_message_stream(message_to_send)
                 functions_to_execute = []
                 
@@ -1827,9 +1914,10 @@ async def stream_chat_turn_response(device_id: str, message_content):
                     
                     await manager.broadcast({
                         "type": "tool_call",
+                        "device_id": device_id,
                         "stream_id": stream_id,
                         "function_name": fname,
-                        "arguments": args
+                        "arguments": args,
                     })
                     
                     result = {"error": "Unknown function"}
@@ -1838,6 +1926,39 @@ async def stream_chat_turn_response(device_id: str, message_content):
                         result = _make_face_animation_tool(device_id)(
                             animation=str(args.get("animation") or "speaking")
                         )
+                    elif fname == "soul_replace":
+                        md = str(args.get("markdown") or "")
+                        result = persona.replace_soul_markdown(device_id, md)
+                        if result.get("ok"):
+                            await _broadcast_persona_file_updated(device_id, "SOUL.md")
+                    elif fname == "memory_replace":
+                        md = str(args.get("markdown") or "")
+                        result = persona.replace_memory_markdown(device_id, md)
+                        if result.get("ok"):
+                            await _broadcast_persona_file_updated(device_id, "MEMORY.md")
+                    elif fname == "persona_replace":
+                        pf = str(args.get("file") or "")
+                        md = str(args.get("markdown") or "")
+                        result = persona.replace_persona_target_markdown(device_id, pf, md)
+                        if result.get("ok"):
+                            label = {
+                                "identity": "IDENTITY.md",
+                                "user": "USER.md",
+                                "heartbeat": "HEARTBEAT.md",
+                            }.get(pf.lower(), f"{pf}.md")
+                            await _broadcast_persona_file_updated(device_id, label)
+                    elif fname == "daily_log_append":
+                        line = str(args.get("line") or "")
+                        result = persona.append_daily_log_line(device_id, line)
+                        if result.get("ok"):
+                            day = result.get("day") or ""
+                            await _broadcast_persona_file_updated(
+                                device_id, f"logs/daily/{day}.md" if day else "logs/daily"
+                            )
+                    elif fname == "bootstrap_complete":
+                        result = persona.delete_bootstrap_file(device_id)
+                        if result.get("ok") and result.get("deleted"):
+                            await _broadcast_persona_file_updated(device_id, "BOOTSTRAP.md (deleted)")
                     func_responses.append(
                         types.Part(
                             function_response=types.FunctionResponse(
@@ -1965,6 +2086,36 @@ async def _process_enrollment_jpeg(device_id: str, jpeg_bytes: bytes) -> None:
         print(f"[face] enrollment failed (no face or represent error) for {device_id}/{pid}")
 
 
+def _schedule_persona_stt_log(device_id: str, raw_pcm: bytes) -> None:
+    """Fire-and-forget local STT → daily log (does not block Gemini audio)."""
+    if not raw_pcm:
+        return
+
+    async def _run():
+        try:
+            if not persona.stt_environment_enabled():
+                return
+
+            def _transcribe():
+                return stt_local.transcribe_pcm_s16le(raw_pcm)
+
+            r = await asyncio.to_thread(_transcribe)
+            if not r:
+                return
+            text, lp = r
+            line = f"stt text={text!r}"
+            if lp is not None:
+                line += f" avg_logprob={lp:.3f}"
+            persona.append_daily_log_line(device_id, line)
+        except Exception as e:
+            print(f"[Omnibot/stt] log failed: {e}")
+
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass
+
+
 async def _run_gemini_audio_turn(
     websocket: WebSocket,
     device_id: str,
@@ -1972,6 +2123,7 @@ async def _run_gemini_audio_turn(
     video_frames: list,
 ) -> str:
     """Build WAV (+ optional MP4), stream one Gemini turn, send JSON reply on same ESP32 socket."""
+    _schedule_persona_stt_log(device_id, raw_pcm)
     use_vision = is_vision_enabled(device_id) and bool(video_frames)
     wav_header = create_wav_header(len(raw_pcm), sample_rate=16000)
     audio_bytes = wav_header + raw_pcm
@@ -2270,8 +2422,22 @@ async def esp32_stream_endpoint(websocket: WebSocket):
 async def text_command(req: TextCommandRequest):
     """Receives a typed command from dashboard, streams AI reply, and forwards to ESP32."""
     message = (req.message or "").strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    if req.bootstrap:
+        history_by_device.pop(req.device_id, None)
+        persona.ensure_persona_layout(req.device_id)
+        persona.write_bootstrap_markdown(req.device_id, persona.TEMPLATE_BOOTSTRAP)
+        ritual_msg = (
+            "The human started the **Give me a soul** ritual from the hub. "
+            "Follow BOOTSTRAP.md below and your bootstrap instructions in the system prompt.\n\n"
+            "=== BOOTSTRAP.md ===\n"
+            + persona.TEMPLATE_BOOTSTRAP
+        )
+        payload_message = ritual_msg
+    else:
+        if not message:
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+        payload_message = message
+
     if not get_gemini_api_key():
         raise HTTPException(
             status_code=503,
@@ -2281,11 +2447,20 @@ async def text_command(req: TextCommandRequest):
     await manager.broadcast({
         "type": "processing_started",
         "device_id": req.device_id,
-        "data": "Text command received. Processing via Gemini...",
+        "data": (
+            "Soul bootstrap ritual started. Processing via Gemini..."
+            if req.bootstrap
+            else "Text command received. Processing via Gemini..."
+        ),
     })
 
     try:
-        full_text = await stream_chat_turn_response(req.device_id, message)
+        full_text = await stream_chat_turn_response(
+            req.device_id,
+            payload_message,
+            max_tool_rounds=10 if req.bootstrap else 6,
+            extra_system_suffix=BOOTSTRAP_MODE_SYSTEM_SUFFIX if req.bootstrap else "",
+        )
         print(f"\n>>> GEMINI (TEXT) SAYS: {full_text}")
 
         esp32_ws = get_active_esp32_socket(req.device_id)
@@ -2386,6 +2561,44 @@ async def api_hub_settings_post(body: HubSettingsUpdate):
     payload = body.model_dump(exclude_unset=True)
     merge_hub_secrets(payload)
     return {"status": "success", "settings": hub_settings_public_view()}
+
+
+class PersonaMarkdownBody(BaseModel):
+    content: str = ""
+
+
+@app.get("/api/persona/{device_id}/status")
+async def api_persona_status(device_id: str):
+    """Byte sizes, paths, heartbeat state, STT env flag."""
+    return persona.persona_status(device_id)
+
+
+@app.get("/api/persona/{device_id}/{persona_file}")
+async def api_persona_get(device_id: str, persona_file: str):
+    which = persona.parse_persona_api_file(persona_file)
+    if which is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Unknown persona file (use soul, identity, user, tools, memory, heartbeat, agents)",
+        )
+    return {"file": which, "content": persona.read_persona_markdown(device_id, which)}
+
+
+@app.put("/api/persona/{device_id}/{persona_file}")
+async def api_persona_put(device_id: str, persona_file: str, body: PersonaMarkdownBody):
+    which = persona.parse_persona_api_file(persona_file)
+    if which is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Unknown persona file (use soul, identity, user, tools, memory, heartbeat, agents)",
+        )
+    if which == "memory":
+        r = persona.replace_memory_markdown(device_id, body.content)
+        if not r.get("ok"):
+            raise HTTPException(status_code=400, detail=str(r.get("error", "write failed")))
+    else:
+        persona.write_persona_markdown(device_id, which, body.content)
+    return {"status": "success", "file": which}
 
 
 @app.get("/ping")
