@@ -13,12 +13,15 @@ Environment:
   OMNIBOT_WAKE_THRESHOLD    Score 0..1 to trigger wake (default 0.55).
   OMNIBOT_WAKE_SILENCE_MS   Trailing silence to end utterance (default 550).
   OMNIBOT_WAKE_COOLDOWN_S   Seconds after a wake before detecting again (default 1.2).
-  OMNIBOT_FOLLOW_UP_S       After each Gemini reply, seconds of VAD-only listening without
-                            repeating the wake phrase (default 5). Set 0 to disable.
+  OMNIBOT_FOLLOW_UP_S       Fallback when bot settings do not supply post-reply follow-up:
+                            seconds of VAD-only listening after each reply without the wake
+                            phrase (default 5). Set 0 to disable. Hub Pixel settings override
+                            for Live and REST wake when configured.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass, field
@@ -39,6 +42,11 @@ VAD_FRAME_SAMPLES = 320
 VAD_FRAME_BYTES = VAD_FRAME_SAMPLES * BYTES_PER_SAMPLE
 PRE_ROLL_SEC = 1.2
 MAX_UTTERANCE_SEC = 15.0
+
+# Hub → dashboard (Intelligence Feed): how Pixel voice interaction is gated on this stream.
+WAKE_LISTEN_WAKE_REQUIRED = "wake_required"
+WAKE_LISTEN_FOLLOW_UP = "follow_up"
+WAKE_LISTEN_STREAMING = "streaming"
 
 
 def _env_float(name: str, default: float) -> float:
@@ -103,6 +111,10 @@ class WakeListenProcessor:
     use_gemini_live: bool = False
     on_live_pcm: Optional[Callable[[bytes], Coroutine[Any, Any, None]]] = None
     on_live_wake: Optional[Callable[[], Coroutine[Any, Any, None]]] = None
+    # After Gemini Live ends a turn: seconds of VAD-only follow-up (no wake phrase). From bot settings via callable.
+    get_follow_up_window_s: Optional[Callable[[], float]] = None
+    # Optional: async callback(mode) for dashboard — WAKE_LISTEN_* strings.
+    on_wake_listen_state: Optional[Callable[[str], Coroutine[Any, Any, None]]] = None
     wake_threshold: float = field(default_factory=lambda: _env_float("OMNIBOT_WAKE_THRESHOLD", 0.55))
     silence_ms: int = field(
         default_factory=lambda: int(_env_float("OMNIBOT_WAKE_SILENCE_MS", 550))
@@ -140,15 +152,30 @@ class WakeListenProcessor:
         self._pre_roll_bytes = int(PRE_ROLL_SEC * SAMPLE_RATE * BYTES_PER_SAMPLE)
         self._ring = bytearray()
 
+    def _schedule_wake_listen_state(self, mode: str) -> None:
+        if not self.on_wake_listen_state:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self.on_wake_listen_state(mode))
+
+    async def _await_wake_listen_state(self, mode: str) -> None:
+        if self.on_wake_listen_state:
+            await self.on_wake_listen_state(mode)
+
     def begin_follow_up_window(self, seconds: Optional[float] = None) -> None:
         """After a bot reply, listen for more speech without the wake phrase (VAD-only)."""
         raw = _env_float("OMNIBOT_FOLLOW_UP_S", 5.0) if seconds is None else float(seconds)
         if raw <= 0:
             self._follow_up_until = None
             self._followup_scan_carry.clear()
+            self._schedule_wake_listen_state(WAKE_LISTEN_WAKE_REQUIRED)
             return
         self._follow_up_until = time.monotonic() + raw
         self._cooldown_until = 0.0
+        self._schedule_wake_listen_state(WAKE_LISTEN_FOLLOW_UP)
 
     def set_paused(self, p: bool) -> None:
         self.paused = bool(p)
@@ -166,15 +193,24 @@ class WakeListenProcessor:
                 self.model.reset()
             except Exception:
                 pass
+            self._schedule_wake_listen_state(WAKE_LISTEN_WAKE_REQUIRED)
 
-    def end_live_forwarding(self) -> None:
-        """Stop forwarding PCM to Gemini Live; open follow-up window for more speech."""
+    def end_live_forwarding(self, enable_followup: bool = True) -> None:
+        """Stop forwarding PCM to Gemini Live; optionally open VAD-only follow-up window."""
         self._live_forward = False
         try:
             self.model.reset()
         except Exception:
             pass
-        self.begin_follow_up_window()
+        if enable_followup:
+            if self.get_follow_up_window_s is not None:
+                self.begin_follow_up_window(self.get_follow_up_window_s())
+            else:
+                self.begin_follow_up_window()
+        else:
+            self._follow_up_until = None
+            self._followup_scan_carry.clear()
+            self._schedule_wake_listen_state(WAKE_LISTEN_WAKE_REQUIRED)
 
     def _trim_ring(self) -> None:
         if len(self._ring) > self._pre_roll_bytes:
@@ -209,6 +245,7 @@ class WakeListenProcessor:
         if self._follow_up_until is not None and now >= self._follow_up_until:
             self._follow_up_until = None
             self._followup_scan_carry.clear()
+            await self._await_wake_listen_state(WAKE_LISTEN_WAKE_REQUIRED)
 
         if self._capturing:
             self._utterance.extend(pcm)
@@ -250,6 +287,7 @@ class WakeListenProcessor:
                     self._ring.clear()
                     buf.extend(frame)
                     self._live_forward = True
+                    await self._await_wake_listen_state(WAKE_LISTEN_STREAMING)
                     self._followup_scan_carry.clear()
                     if buf:
                         await self.on_live_pcm(bytes(buf))
@@ -260,6 +298,7 @@ class WakeListenProcessor:
                     return
                 if self.on_capture_start:
                     await self.on_capture_start()
+                await self._await_wake_listen_state(WAKE_LISTEN_STREAMING)
                 self._capturing = True
                 self._capture_from_followup = True
                 self._capture_started_at = time.monotonic()
@@ -313,6 +352,7 @@ class WakeListenProcessor:
                 self._ring.clear()
                 self._cooldown_until = time.monotonic() + self.cooldown_s
                 self._live_forward = True
+                await self._await_wake_listen_state(WAKE_LISTEN_STREAMING)
                 if ring:
                     await self.on_live_pcm(ring)
                 try:
@@ -322,6 +362,7 @@ class WakeListenProcessor:
                 return
             if self.on_capture_start:
                 await self.on_capture_start()
+            await self._await_wake_listen_state(WAKE_LISTEN_STREAMING)
             self._capturing = True
             self._capture_from_followup = False
             self._capture_started_at = time.monotonic()

@@ -96,6 +96,8 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [toolCalls, setToolCalls] = useState([]);
   const [hubActivityLog, setHubActivityLog] = useState([]);
+  const [livePreviewByDevice, setLivePreviewByDevice] = useState({});
+  const [wakeListenByDevice, setWakeListenByDevice] = useState({});
   const [wsStatus, setWsStatus] = useState('disconnected');
   const [textMessage, setTextMessage] = useState('');
   const [isSendingText, setIsSendingText] = useState(false);
@@ -303,6 +305,50 @@ function App() {
           } else if (message.type === 'esp32_disconnected') {
             const did = message.device_id || 'default_bot';
             setBotUiStatus((prev) => ({ ...prev, [did]: 'offline' }));
+            setLivePreviewByDevice((prev) => {
+              const next = { ...prev };
+              delete next[did];
+              return next;
+            });
+            setWakeListenByDevice((prev) => {
+              const next = { ...prev };
+              delete next[did];
+              return next;
+            });
+          } else if (message.type === 'wake_listen_state') {
+            const did = message.device_id || 'default_bot';
+            setWakeListenByDevice((prev) => {
+              const next = { ...prev };
+              if (message.mode == null || message.mode === '') {
+                delete next[did];
+              } else {
+                next[did] = message.mode;
+              }
+              return next;
+            });
+          } else if (message.type === 'live_video_frame') {
+            const did = message.device_id || 'default_bot';
+            if (message.clear) {
+              setLivePreviewByDevice((prev) => {
+                const next = { ...prev };
+                delete next[did];
+                return next;
+              });
+            } else if (message.jpeg_base64) {
+              setLivePreviewByDevice((prev) => ({
+                ...prev,
+                [did]: `data:image/jpeg;base64,${message.jpeg_base64}`,
+              }));
+            }
+          } else if (message.type === 'vision_changed') {
+            const did = message.device_id || 'default_bot';
+            if (message.enabled === false) {
+              setLivePreviewByDevice((prev) => {
+                const next = { ...prev };
+                delete next[did];
+                return next;
+              });
+            }
           } else if (message.type === 'processing_started') {
             const did = message.device_id || selectedBotIdRef.current;
             if (did) {
@@ -474,6 +520,8 @@ function App() {
 
       ws.onclose = () => {
         stopHubTtsAudio();
+        setLivePreviewByDevice({});
+        setWakeListenByDevice({});
         setWsStatus('disconnected');
         setBotUiStatus((prev) => {
           const next = { ...prev };
@@ -703,6 +751,21 @@ function App() {
     return <FirstRunSetup onConfigured={() => setGeminiConfigured(true)} />;
   }
 
+  const hubStreamRelevant =
+    wsStatus === 'connected' &&
+    (botUiStatus[selectedBotId] === 'online' || botUiStatus[selectedBotId] === 'working');
+  const wakeListenModeForSelected = hubStreamRelevant
+    ? wakeListenByDevice[selectedBotId] || 'wake_required'
+    : null;
+
+  const soulDeviceId = setupState.walkthroughDeviceId || selectedBotId;
+  const hubStreamRelevantSoul =
+    wsStatus === 'connected' &&
+    (botUiStatus[soulDeviceId] === 'online' || botUiStatus[soulDeviceId] === 'working');
+  const wakeListenModeSoul = hubStreamRelevantSoul
+    ? wakeListenByDevice[soulDeviceId] || 'wake_required'
+    : null;
+
   return (
     <div className="app-container">
       <Sidebar
@@ -726,6 +789,8 @@ function App() {
             toolCalls={toolCalls}
             hubActivityLog={hubActivityLog}
             selectedBotId={selectedBotId}
+            livePreviewSrc={livePreviewByDevice[selectedBotId] || null}
+            wakeListenMode={wakeListenModeForSelected}
             wsStatus={wsStatus}
             textMessage={textMessage}
             setTextMessage={setTextMessage}
@@ -744,6 +809,10 @@ function App() {
                 toolCalls={toolCalls}
                 hubActivityLog={hubActivityLog}
                 selectedBotId={setupState.walkthroughDeviceId || selectedBotId}
+                livePreviewSrc={
+                  livePreviewByDevice[setupState.walkthroughDeviceId || selectedBotId] || null
+                }
+                wakeListenMode={wakeListenModeSoul}
                 wsStatus={wsStatus}
                 textMessage={textMessage}
                 setTextMessage={setTextMessage}

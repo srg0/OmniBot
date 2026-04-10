@@ -68,6 +68,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const [thinkingLevel, setThinkingLevel] = useState('minimal');
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
+  const [postReplyListenSec, setPostReplyListenSec] = useState(10);
   const [presenceScanEnabled, setPresenceScanEnabled] = useState(false);
   const [presenceIntervalSec, setPresenceIntervalSec] = useState(5);
   const [greetingCooldownMin, setGreetingCooldownMin] = useState(30);
@@ -135,6 +136,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
         );
         setVisionEnabled(Boolean(data.vision_enabled));
         setWakeWordEnabled(data.wake_word_enabled !== false);
+        setPostReplyListenSec(
+          typeof data.post_reply_listen_sec === 'number'
+            ? Math.min(120, Math.max(0, data.post_reply_listen_sec))
+            : typeof data.live_listen_timeout_sec === 'number'
+              ? Math.min(120, Math.max(0, data.live_listen_timeout_sec))
+              : 10
+        );
         setPresenceScanEnabled(Boolean(data.presence_scan_enabled));
         setPresenceIntervalSec(
           typeof data.presence_scan_interval_sec === 'number'
@@ -182,6 +190,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
         thinking_level: thinkingLevel,
         vision_enabled: visionEnabled,
         wake_word_enabled: wakeWordEnabled,
+        post_reply_listen_sec: Math.min(120, Math.max(0, Number(postReplyListenSec) || 0)),
         presence_scan_enabled: presenceScanEnabled,
         presence_scan_interval_sec: Math.min(300, Math.max(3, Number(presenceIntervalSec) || 5)),
         greeting_cooldown_minutes: Math.min(720, Math.max(1, Number(greetingCooldownMin) || 30)),
@@ -198,6 +207,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       );
       setVisionEnabled(Boolean(saved.vision_enabled));
       setWakeWordEnabled(saved.wake_word_enabled !== false);
+      setPostReplyListenSec(
+        typeof saved.post_reply_listen_sec === 'number'
+          ? Math.min(120, Math.max(0, saved.post_reply_listen_sec))
+          : typeof saved.live_listen_timeout_sec === 'number'
+            ? Math.min(120, Math.max(0, saved.live_listen_timeout_sec))
+            : 10
+      );
       setPresenceScanEnabled(Boolean(saved.presence_scan_enabled));
       setPresenceIntervalSec(saved.presence_scan_interval_sec ?? 5);
       setGreetingCooldownMin(saved.greeting_cooldown_minutes ?? 30);
@@ -241,6 +257,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       );
       setVisionEnabled(Boolean(saved.vision_enabled));
       setWakeWordEnabled(saved.wake_word_enabled !== false);
+      setPostReplyListenSec(
+        typeof saved.post_reply_listen_sec === 'number'
+          ? Math.min(120, Math.max(0, saved.post_reply_listen_sec))
+          : typeof saved.live_listen_timeout_sec === 'number'
+            ? Math.min(120, Math.max(0, saved.live_listen_timeout_sec))
+            : 10
+      );
       setPresenceScanEnabled(Boolean(saved.presence_scan_enabled));
       setPresenceIntervalSec(saved.presence_scan_interval_sec ?? 5);
       setGreetingCooldownMin(saved.greeting_cooldown_minutes ?? 30);
@@ -377,8 +400,8 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           </select>
         </div>
         <p className="help-text">
-          When on, video can be sent to Gemini with voice turns (wake path is audio-only; tap recording removed). Stored
-          per bot.
+          When on, Pixel captures and sends frames while idle (Gemini Live). When off, the camera sensor is powered down
+          on the device whenever presence scan is also off, to save battery. Stored per bot.
         </p>
       </div>
 
@@ -399,6 +422,28 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           When on, Pixel streams the microphone to the hub for wake-word detection and end-of-speech (requires hub on
           your LAN). Train or place a custom model as <code>pixel.onnx</code> on the hub, or use the default test model
           (see hub logs).
+        </p>
+      </div>
+
+      <div className="form-group">
+        <label htmlFor="postReplyListen">After the bot replies, keep listening (seconds)</label>
+        <input
+          id="postReplyListen"
+          type="number"
+          min={0}
+          max={120}
+          step={1}
+          value={postReplyListenSec}
+          onChange={(e) =>
+            setPostReplyListenSec(Math.min(120, Math.max(0, Number(e.target.value) || 0)))
+          }
+          className="holo-select"
+          style={{ maxWidth: '7rem' }}
+        />
+        <p className="help-text">
+          How long the hub watches for more speech using VAD only (no wake phrase) after Gemini finishes. Default 10. If
+          you do not speak within this window, say the wake phrase again. Use 0 to require the wake phrase every turn.
+          Applies to Gemini Live and REST wake. Save to apply.
         </p>
       </div>
 

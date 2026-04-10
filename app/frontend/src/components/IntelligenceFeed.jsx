@@ -41,11 +41,28 @@ function formatToolArguments(args) {
   }
 }
 
+const WAKE_LISTEN_UI = {
+  wake_required: {
+    label: 'Wake phrase',
+    hint: 'Hub is waiting for your wake phrase (e.g. hey_jarvis).',
+  },
+  follow_up: {
+    label: 'Just speak',
+    hint: 'After the last reply: you can talk without the wake phrase until this window ends (hub VAD).',
+  },
+  streaming: {
+    label: 'Live mic',
+    hint: 'Your voice is being streamed to the model for this turn.',
+  },
+};
+
 const IntelligenceFeed = ({
   logs,
   toolCalls = [],
   hubActivityLog = [],
   selectedBotId = 'default_bot',
+  livePreviewSrc = null,
+  wakeListenMode = null,
   wsStatus,
   textMessage,
   setTextMessage,
@@ -107,12 +124,33 @@ const IntelligenceFeed = ({
               Give me a soul
             </button>
           )}
+          {wakeListenMode && WAKE_LISTEN_UI[wakeListenMode] ? (
+            <div
+              className={`wake-listen-pill wake-listen-pill--${wakeListenMode}`}
+              title={WAKE_LISTEN_UI[wakeListenMode].hint}
+            >
+              <span className="wake-listen-pill-dot" aria-hidden />
+              {WAKE_LISTEN_UI[wakeListenMode].label}
+            </div>
+          ) : null}
           <div className={`ws-badge ${wsStatus}`}>
             <div className="status-dot"></div>
             {wsStatus === 'connected' ? 'Core Connected' : 'Core Disconnected'}
           </div>
         </div>
       </header>
+
+      {livePreviewSrc ? (
+        <div className="live-model-preview" aria-label="Video frames sent to the model">
+          <div className="live-model-preview-head">
+            <span>Live to model</span>
+            <span className="live-model-preview-hint">JPEG mirrors Gemini Live input (~1/s)</span>
+          </div>
+          <div className="live-model-preview-frame">
+            <img src={livePreviewSrc} alt="Latest frame sent to the model" />
+          </div>
+        </div>
+      ) : null}
 
       {hubLogOpen && (
         <div className="tool-log-panel" aria-label="Hub activity log">

@@ -1913,11 +1913,14 @@ static void loadRuntimeVisionFromPrefs() {
     preferences.end();
 }
 
+static void syncEspCameraPowerState();
+
 static void setDeviceVisionCaptureEnabled(bool en) {
     deviceVisionCaptureEnabled = en;
     preferences.begin("pixel_prefs", false);
     preferences.putBool("vision_cap", en);
     preferences.end();
+    syncEspCameraPowerState();
 }
 
 static void loadTimezoneRuleFromPrefs() {
@@ -2013,6 +2016,7 @@ static void applyRuntimePresenceScan(bool en, uint32_t intervalSec, uint32_t coo
     preferences.putUInt("presence_cd", greetingCooldownMinutes);
     preferences.end();
     lastPresenceScanMs = 0;
+    syncEspCameraPowerState();
 }
 
 static void applyRuntimeSleepTimeout(uint32_t timeoutSec) {
@@ -2029,6 +2033,67 @@ static void applyRuntimeSleepTimeout(uint32_t timeoutSec) {
     markActivity("runtime_sleep_timeout");
 }
 
+static camera_config_t g_camConfig;
+static bool g_espCameraPowered = false;
+
+static void fillDefaultCameraConfig(camera_config_t* c) {
+    c->ledc_channel = LEDC_CHANNEL_0;
+    c->ledc_timer = LEDC_TIMER_0;
+    c->pin_d0 = 15;
+    c->pin_d1 = 17;
+    c->pin_d2 = 18;
+    c->pin_d3 = 16;
+    c->pin_d4 = 14;
+    c->pin_d5 = 12;
+    c->pin_d6 = 11;
+    c->pin_d7 = 48;
+    c->pin_xclk = 10;
+    c->pin_pclk = 13;
+    c->pin_vsync = 38;
+    c->pin_href = 47;
+    c->pin_sccb_sda = 40;
+    c->pin_sccb_scl = 39;
+    c->pin_pwdn = -1;
+    c->pin_reset = -1;
+    c->xclk_freq_hz = 20000000;
+    c->frame_size = FRAMESIZE_VGA;
+    c->pixel_format = PIXFORMAT_JPEG;
+    c->grab_mode = CAMERA_GRAB_LATEST;
+    c->fb_location = CAMERA_FB_IN_PSRAM;
+    c->jpeg_quality = 20;
+    c->fb_count = 2;
+}
+
+static bool ensureEspCameraPowered() {
+    if (g_espCameraPowered && esp_camera_sensor_get() != nullptr) {
+        return true;
+    }
+    fillDefaultCameraConfig(&g_camConfig);
+    esp_err_t err = esp_camera_init(&g_camConfig);
+    if (err != ESP_OK) {
+        Serial.printf("[Cam] esp_camera_init failed: %d\n", (int)err);
+        g_espCameraPowered = false;
+        return false;
+    }
+    g_espCameraPowered = true;
+    return true;
+}
+
+static void syncEspCameraPowerState() {
+    const bool needCam =
+        deviceVisionCaptureEnabled || presenceScanEnabled || pendingEnrollmentCapture;
+    if (needCam) {
+        (void)ensureEspCameraPowered();
+    } else {
+        if (!g_espCameraPowered) {
+            return;
+        }
+        esp_camera_deinit();
+        g_espCameraPowered = false;
+        Serial.println("[Cam] powered down (vision & presence off, no enrollment)");
+    }
+}
+
 /**
  * Face presence (0x06) and enrollment (0x07) snapshots.
  * Uses VGA + low jpeg_quality value (ESP: lower number = better JPEG). Requires
@@ -2043,6 +2108,12 @@ static bool captureAndSendJpegPacket(uint8_t packetType) {
     if (!hubWebSocketEnabled || !isWsConnected) {
         if (isFaceHubPacket) {
             Serial.println("[Face] snapshot skipped (hub WebSocket not connected)");
+        }
+        return false;
+    }
+    if (!ensureEspCameraPowered()) {
+        if (isFaceHubPacket) {
+            Serial.println("[Face] snapshot skipped (camera not available)");
         }
         return false;
     }
@@ -2440,8 +2511,11 @@ void setupWiFi() {
                         if (strcmp(msgType, "gemini_first_token") == 0) {
                             geminiFirstTokenReceived = true;
                         } else if (strcmp(msgType, "runtime_vision") == 0) {
-                            bool en = doc["enabled"] | true;
-                            setDeviceVisionCaptureEnabled(en);
+                            // Only apply when hub sends explicit "enabled" (avoid default-on if key is missing).
+                            JsonVariant ven = doc["enabled"];
+                            if (!ven.isNull()) {
+                                setDeviceVisionCaptureEnabled(ven.as<bool>());
+                            }
                         } else if (strcmp(msgType, "runtime_wake_word") == 0) {
                             bool en = doc["enabled"] | true;
                             setDeviceWakeWordEnabled(en);
@@ -2473,6 +2547,7 @@ void setupWiFi() {
                             markActivity(src);
                         } else if (strcmp(msgType, "request_reference_capture") == 0) {
                             pendingEnrollmentCapture = true;
+                            syncEspCameraPowerState();
                         } else if (strcmp(msgType, "face_animation") == 0) {
                             const char* anim = doc["animation"] | "speaking";
                             const char* w = doc["words"] | "";
@@ -2567,17 +2642,19 @@ void wakeStreamTask(void* pvParameters) {
                 unsigned long now = millis();
                 if (now - s_lastWakeVideoFrameMs >= WAKE_VIDEO_FRAME_MS) {
                     s_lastWakeVideoFrameMs = now;
-                    camera_fb_t* fb = esp_camera_fb_get();
-                    if (fb && fb->len > 0 && fb->len < 62000) {
-                        videoLen = fb->len;
-                        videoPacket = (uint8_t*)ps_malloc(videoLen + 1);
-                        if (videoPacket) {
-                            videoPacket[0] = 0x02;
-                            memcpy(videoPacket + 1, fb->buf, videoLen);
+                    if (ensureEspCameraPowered()) {
+                        camera_fb_t* fb = esp_camera_fb_get();
+                        if (fb && fb->len > 0 && fb->len < 62000) {
+                            videoLen = fb->len;
+                            videoPacket = (uint8_t*)ps_malloc(videoLen + 1);
+                            if (videoPacket) {
+                                videoPacket[0] = 0x02;
+                                memcpy(videoPacket + 1, fb->buf, videoLen);
+                            }
                         }
-                    }
-                    if (fb) {
-                        esp_camera_fb_return(fb);
+                        if (fb) {
+                            esp_camera_fb_return(fb);
+                        }
                     }
                 }
             }
@@ -2631,26 +2708,15 @@ void setup() {
     }
 
     setupMicrophone();
-    
-    camera_config_t config;
-    config.ledc_channel = LEDC_CHANNEL_0; config.ledc_timer = LEDC_TIMER_0;
-    config.pin_d0 = 15; config.pin_d1 = 17; config.pin_d2 = 18; config.pin_d3 = 16;
-    config.pin_d4 = 14; config.pin_d5 = 12; config.pin_d6 = 11; config.pin_d7 = 48;
-    config.pin_xclk = 10; config.pin_pclk = 13; config.pin_vsync = 38; config.pin_href = 47;
-    config.pin_sccb_sda = 40; config.pin_sccb_scl = 39; config.pin_pwdn = -1; config.pin_reset = -1;
-    config.xclk_freq_hz = 20000000; config.frame_size = FRAMESIZE_VGA; 
-    config.pixel_format = PIXFORMAT_JPEG; config.grab_mode = CAMERA_GRAB_LATEST;
-    config.fb_location = CAMERA_FB_IN_PSRAM; 
-    config.jpeg_quality = 20; 
-    config.fb_count = 2;
-    esp_camera_init(&config);
 
     loadTimezoneRuleFromPrefs();
     loadWakeWordFromPrefs();
     loadPresenceFromPrefs();
     loadSleepTimeoutFromPrefs();
+    loadRuntimeVisionFromPrefs();
     lastPresenceScanMs = millis();
     lastActivityMs = millis();
+    syncEspCameraPowerState();
     setupWiFi();
 
     xTaskCreatePinnedToCore(
@@ -2807,6 +2873,7 @@ void loop() {
             if (captureAndSendJpegPacket(0x07)) {
                 pendingEnrollmentCapture = false;
                 lastPresenceScanMs = millis();
+                syncEspCameraPowerState();
             }
         } else if (
             presenceScanEnabled &&

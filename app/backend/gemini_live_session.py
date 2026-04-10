@@ -80,6 +80,7 @@ class GeminiLiveCoordinator:
         notify_esp32_first_token: Callable[[str], Awaitable[None]],
         notify_esp32_reply: Callable[[str, str], Awaitable[None]],
         on_wake_processor_live_turn_done: Callable[[str], None],
+        on_video_frame: Optional[Callable[[str, bytes], Awaitable[None]]] = None,
     ) -> None:
         self.device_id = device_id
         self._get_bot_settings = get_bot_settings
@@ -91,6 +92,7 @@ class GeminiLiveCoordinator:
         self._notify_esp32_first_token = notify_esp32_first_token
         self._notify_esp32_reply = notify_esp32_reply
         self._on_wake_live_turn_done = on_wake_processor_live_turn_done
+        self._on_video_frame = on_video_frame
 
         self._lock = asyncio.Lock()
         self._session_cm: Any = None
@@ -235,6 +237,8 @@ class GeminiLiveCoordinator:
             await self._session.send_realtime_input(
                 video=types.Blob(data=jpeg_bytes, mime_type="image/jpeg")
             )
+            if self._on_video_frame:
+                await self._on_video_frame(self.device_id, jpeg_bytes)
         except Exception as e:
             logger.warning("[live] video frame send failed: %s", e)
 
@@ -401,7 +405,14 @@ class GeminiLiveCoordinator:
                 }
             )
 
-        if sc.turn_complete and not self._closed_this_turn:
+        # Live often sets generation_complete when the model finishes; turn_complete may be absent,
+        # which left wake forwarding and the dashboard stuck on "streaming".
+        turn_done = (
+            bool(sc.turn_complete)
+            or bool(sc.generation_complete)
+            or bool(sc.interrupted)
+        )
+        if turn_done and not self._closed_this_turn:
             self._closed_this_turn = True
             out = (self._last_output_text or "").strip()
             if out:

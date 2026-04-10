@@ -55,7 +55,11 @@ from face_matching import (
     list_profiles,
     match_probe_jpeg,
 )
-from wake_listen import MAX_UTTERANCE_SEC, WakeListenProcessor
+from wake_listen import (
+    MAX_UTTERANCE_SEC,
+    WAKE_LISTEN_WAKE_REQUIRED,
+    WakeListenProcessor,
+)
 
 import heartbeat_service
 import persona
@@ -75,6 +79,7 @@ DEFAULT_PRESENCE_SCAN_ENABLED = False
 DEFAULT_PRESENCE_SCAN_INTERVAL_SEC = 5
 DEFAULT_GREETING_COOLDOWN_MINUTES = 30
 DEFAULT_SLEEP_TIMEOUT_SEC = 300
+DEFAULT_POST_REPLY_LISTEN_SEC = 10
 DEFAULT_HEARTBEAT_INTERVAL_MINUTES = 30
 DEFAULT_HEARTBEAT_ENABLED = True
 DEFAULT_HUB_TTS_ENABLED = True
@@ -274,6 +279,14 @@ def get_bot_settings(device_id: str):
             1800,
         ),
         "wake_word_enabled": bool(bot_conf.get("wake_word_enabled", DEFAULT_WAKE_WORD_ENABLED)),
+        "post_reply_listen_sec": _clamp_int(
+            bot_conf.get("post_reply_listen_sec")
+            if bot_conf.get("post_reply_listen_sec") is not None
+            else bot_conf.get("live_listen_timeout_sec"),
+            DEFAULT_POST_REPLY_LISTEN_SEC,
+            0,
+            120,
+        ),
         "heartbeat_interval_minutes": _clamp_int(
             bot_conf.get("heartbeat_interval_minutes"),
             DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
@@ -320,6 +333,7 @@ def _default_stored_bot_settings() -> dict:
         "greeting_cooldown_minutes": DEFAULT_GREETING_COOLDOWN_MINUTES,
         "sleep_timeout_sec": DEFAULT_SLEEP_TIMEOUT_SEC,
         "wake_word_enabled": DEFAULT_WAKE_WORD_ENABLED,
+        "post_reply_listen_sec": DEFAULT_POST_REPLY_LISTEN_SEC,
         "heartbeat_interval_minutes": DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
         "heartbeat_enabled": DEFAULT_HEARTBEAT_ENABLED,
         "thinking_level": DEFAULT_GEMINI_THINKING_LEVEL,
@@ -495,6 +509,25 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+
+async def _broadcast_live_video_clear(device_id: str) -> None:
+    await manager.broadcast(
+        {"type": "live_video_frame", "device_id": device_id, "clear": True}
+    )
+
+
+async def _broadcast_live_video_preview(device_id: str, jpeg_bytes: bytes) -> None:
+    if not jpeg_bytes:
+        return
+    await manager.broadcast(
+        {
+            "type": "live_video_frame",
+            "device_id": device_id,
+            "jpeg_base64": base64.b64encode(jpeg_bytes).decode("ascii"),
+        }
+    )
+
+
 @app.websocket("/ws/monitor")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -546,6 +579,7 @@ class BotSettingsSchema(BaseModel):
     model: str
     vision_enabled: bool = DEFAULT_VISION_ENABLED
     wake_word_enabled: bool = DEFAULT_WAKE_WORD_ENABLED
+    post_reply_listen_sec: int = Field(default=DEFAULT_POST_REPLY_LISTEN_SEC, ge=0, le=120)
     presence_scan_enabled: bool = DEFAULT_PRESENCE_SCAN_ENABLED
     presence_scan_interval_sec: int = Field(default=DEFAULT_PRESENCE_SCAN_INTERVAL_SEC, ge=3, le=300)
     greeting_cooldown_minutes: int = Field(default=DEFAULT_GREETING_COOLDOWN_MINUTES, ge=1, le=720)
@@ -736,6 +770,7 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
         "model": new_settings.model,
         "vision_enabled": bool(new_settings.vision_enabled),
         "wake_word_enabled": bool(new_settings.wake_word_enabled),
+        "post_reply_listen_sec": int(new_settings.post_reply_listen_sec),
         "presence_scan_enabled": bool(new_settings.presence_scan_enabled),
         "presence_scan_interval_sec": int(new_settings.presence_scan_interval_sec),
         "greeting_cooldown_minutes": int(new_settings.greeting_cooldown_minutes),
@@ -755,6 +790,8 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
     await _send_runtime_wake_word_to_esp32(device_id, row["wake_word_enabled"])
     await _send_runtime_presence_scan_to_esp32(device_id)
     await _send_runtime_sleep_timeout_to_esp32(device_id)
+    if not row["vision_enabled"]:
+        await _broadcast_live_video_clear(device_id)
     if _maps_debug_enabled():
         _maps_debug(
             f"pixel_settings_saved device_id={device_id!r} in_memory_history_cleared=True"
@@ -785,6 +822,8 @@ async def reset_settings_to_default(device_id: str):
     await _send_runtime_wake_word_to_esp32(device_id, row["wake_word_enabled"])
     await _send_runtime_presence_scan_to_esp32(device_id)
     await _send_runtime_sleep_timeout_to_esp32(device_id)
+    if not row["vision_enabled"]:
+        await _broadcast_live_video_clear(device_id)
     return {"status": "success", "settings": get_bot_settings(device_id)}
 
 
@@ -985,6 +1024,7 @@ async def _send_runtime_vision_to_esp32(device_id: str, enabled: bool) -> None:
     ws = get_active_esp32_socket(device_id)
     if not ws:
         return
+    bind_esp32_stream_to_device(ws, device_id)
     try:
         await ws.send_text(json.dumps({"type": "runtime_vision", "enabled": bool(enabled)}))
     except Exception as e:
@@ -996,6 +1036,7 @@ async def _send_runtime_wake_word_to_esp32(device_id: str, enabled: bool) -> Non
     ws = get_active_esp32_socket(device_id)
     if not ws:
         return
+    bind_esp32_stream_to_device(ws, device_id)
     try:
         await ws.send_text(json.dumps({"type": "runtime_wake_word", "enabled": bool(enabled)}))
     except Exception as e:
@@ -1013,6 +1054,7 @@ async def _send_runtime_timezone_to_esp32(device_id: str, timezone_rule: str) ->
     ws = get_active_esp32_socket(device_id)
     if not ws:
         return
+    bind_esp32_stream_to_device(ws, device_id)
     try:
         await ws.send_text(
             json.dumps(
@@ -1031,6 +1073,7 @@ async def _send_runtime_presence_scan_to_esp32(device_id: str) -> None:
     ws = get_active_esp32_socket(device_id)
     if not ws:
         return
+    bind_esp32_stream_to_device(ws, device_id)
     bs = get_bot_settings(device_id)
     try:
         await ws.send_text(
@@ -1052,6 +1095,7 @@ async def _send_runtime_sleep_timeout_to_esp32(device_id: str) -> None:
     ws = get_active_esp32_socket(device_id)
     if not ws:
         return
+    bind_esp32_stream_to_device(ws, device_id)
     bs = get_bot_settings(device_id)
     try:
         await ws.send_text(
@@ -1962,6 +2006,7 @@ def _build_live_coordinator(device_id: str) -> gemini_live_session.GeminiLiveCoo
         notify_esp32_first_token=_notify_esp32_live_first_token,
         notify_esp32_reply=_notify_esp32_live_reply,
         on_wake_processor_live_turn_done=_on_wake_live_turn_done,
+        on_video_frame=_broadcast_live_video_preview,
     )
 
 
@@ -2160,6 +2205,35 @@ def get_active_esp32_socket(device_id: str):
     return next(iter(active_streams), None)
 
 
+def infer_stream_device_id_for_new_connection() -> str:
+    """If only one Pixel is online, use the sole non-default_bot entry in settings (typical home setup)."""
+    if len(active_streams) != 1:
+        return "default_bot"
+    non_default = [d for d in get_all_settings().keys() if d != "default_bot"]
+    if len(non_default) == 1:
+        return non_default[0]
+    return "default_bot"
+
+
+def bind_esp32_stream_to_device(websocket: WebSocket, device_id: str) -> None:
+    """Keep /ws/stream session.device_id aligned with dashboard bot id so vision/wake gates use the right row."""
+    sess = active_streams.get(websocket)
+    if not sess:
+        return
+    did = (device_id or "").strip() or "default_bot"
+    old_id = sess.get("device_id", "default_bot")
+    if old_id == did:
+        return
+    sess["device_id"] = did
+    coord = sess.get("live_coordinator")
+    if coord is None or len(active_streams) > 1:
+        return
+    if gemini_live_session.live_coordinator_for(old_id) is coord:
+        gemini_live_session.unregister_live_coordinator(old_id)
+    coord.device_id = did
+    gemini_live_session.register_live_coordinator(did, coord)
+
+
 async def _process_presence_jpeg(device_id: str, jpeg_bytes: bytes) -> None:
     """Match face on hub; optionally run a short Gemini greeting (cooldown + lock aware)."""
     bs = get_bot_settings(device_id)
@@ -2334,17 +2408,20 @@ async def _run_gemini_audio_turn(
 @app.websocket("/ws/stream")
 async def esp32_stream_endpoint(websocket: WebSocket):
     await websocket.accept()
-    stream_device_id = "default_bot"
 
     print("ESP32 connected to streaming endpoint!")
 
     # Initialize session (wake streaming + face enrollment / presence binary packets)
     active_streams[websocket] = {
-        "device_id": stream_device_id,
+        "device_id": "default_bot",
         "wake_processor": None,
         "video_frame_buffer": deque(maxlen=WAKE_VIDEO_FRAME_BUFFER_MAX),
         "live_coordinator": None,
     }
+    stream_device_id = infer_stream_device_id_for_new_connection()
+    active_streams[websocket]["device_id"] = stream_device_id
+    if stream_device_id != "default_bot":
+        print(f"[stream] Inferred device_id={stream_device_id!r} (single Pixel + one named bot in settings)")
     live_coord = None
     if USE_GEMINI_LIVE and get_gemini_api_key():
         live_coord = gemini_live_session.live_coordinator_for(stream_device_id)
@@ -2472,7 +2549,13 @@ async def esp32_stream_endpoint(websocket: WebSocket):
             await _run_gemini_audio_turn(websocket, did, raw_pcm, video_frames)
             wp_open = sess.get("wake_processor")
             if wp_open:
-                wp_open.begin_follow_up_window()
+                wp_open.begin_follow_up_window(
+                    float(
+                        get_bot_settings(did).get(
+                            "post_reply_listen_sec", DEFAULT_POST_REPLY_LISTEN_SEC
+                        )
+                    )
+                )
         except Exception as e:
             print(f"\nAPI Error (wake): {e}")
             error_msg = str(e)
@@ -2515,6 +2598,8 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                         settings[dev_id] = bot_conf
                         save_all_settings(settings)
                         await manager.broadcast({"type": "vision_changed", "device_id": dev_id, "enabled": enabled})
+                        if not enabled:
+                            await _broadcast_live_video_clear(dev_id)
                     elif msg_type == "timezone_changed":
                         tz = str(j.get("timezone_rule", DEFAULT_TIMEZONE_RULE) or DEFAULT_TIMEZONE_RULE)
                         timezone_rule_by_device[dev_id] = tz
@@ -2570,11 +2655,34 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                 wp = session.get("wake_processor")
                 if wp is None:
                     try:
+
+                        async def _noop_utterance(_raw: bytes) -> None:
+                            return None
+
+                        def _post_reply_listen_sec() -> float:
+                            did = active_streams.get(websocket, {}).get(
+                                "device_id", "default_bot"
+                            )
+                            return float(
+                                get_bot_settings(did).get(
+                                    "post_reply_listen_sec",
+                                    DEFAULT_POST_REPLY_LISTEN_SEC,
+                                )
+                            )
+
+                        async def _notify_wake_listen_state(mode: str) -> None:
+                            did = active_streams.get(websocket, {}).get(
+                                "device_id", "default_bot"
+                            )
+                            await manager.broadcast(
+                                {
+                                    "type": "wake_listen_state",
+                                    "device_id": did,
+                                    "mode": mode,
+                                }
+                            )
+
                         if USE_GEMINI_LIVE and session.get("live_coordinator") is not None:
-
-                            async def _noop_utterance(_raw: bytes) -> None:
-                                return None
-
                             session["wake_processor"] = WakeListenProcessor(
                                 on_utterance=_noop_utterance,
                                 on_capture_start=_on_wake_video_capture_start,
@@ -2583,6 +2691,8 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                                 use_gemini_live=True,
                                 on_live_pcm=_forward_live_pcm_chunk,
                                 on_live_wake=_on_live_wake_started,
+                                get_follow_up_window_s=_post_reply_listen_sec,
+                                on_wake_listen_state=_notify_wake_listen_state,
                             )
                         else:
                             session["wake_processor"] = WakeListenProcessor(
@@ -2590,9 +2700,14 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                                 on_capture_start=_on_wake_video_capture_start,
                                 on_capture_end=_on_wake_video_capture_end,
                                 on_capture_abort=_abort_wake_video,
+                                get_follow_up_window_s=_post_reply_listen_sec,
+                                on_wake_listen_state=_notify_wake_listen_state,
                             )
                         wp = session["wake_processor"]
                         print(f"[wake] WakeListenProcessor ready for {session['device_id']!r} (model={getattr(wp, 'model_label', '?')})")
+                        asyncio.create_task(
+                            _notify_wake_listen_state(WAKE_LISTEN_WAKE_REQUIRED)
+                        )
                     except Exception as ex:
                         print(f"[wake] Failed to start wake listener: {ex}")
                         continue
@@ -2638,6 +2753,7 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                     await coord.stop()
                 except Exception as ex:
                     print(f"[live] stop on disconnect: {ex}")
+            await _broadcast_live_video_clear(dev_id)
             pending_reference_capture.pop(dev_id, None)
             del active_streams[websocket]
             # Early map send may have ACK'd on the server while Pixel never decoded it.
@@ -2646,6 +2762,9 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                 map_jpeg_sent_this_turn_by_device.clear()
             else:
                 map_jpeg_sent_this_turn_by_device.pop(dev_id, None)
+            await manager.broadcast(
+                {"type": "wake_listen_state", "device_id": dev_id, "mode": None}
+            )
             await manager.broadcast(
                 {
                     "type": "esp32_disconnected",
@@ -2667,12 +2786,16 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                     await coord.stop()
                 except Exception as ex:
                     print(f"[live] stop on stream error: {ex}")
+            await _broadcast_live_video_clear(dev_id)
             pending_reference_capture.pop(dev_id, None)
             del active_streams[websocket]
             if not active_streams:
                 map_jpeg_sent_this_turn_by_device.clear()
             else:
                 map_jpeg_sent_this_turn_by_device.pop(dev_id, None)
+            await manager.broadcast(
+                {"type": "wake_listen_state", "device_id": dev_id, "mode": None}
+            )
             await manager.broadcast(
                 {
                     "type": "esp32_disconnected",
@@ -2780,6 +2903,8 @@ async def set_vision_setting(device_id: str, payload: VisionToggleRequest):  # n
     settings[device_id] = bot_conf
     save_all_settings(settings)
     await _send_runtime_vision_to_esp32(device_id, payload.enabled)
+    if not payload.enabled:
+        await _broadcast_live_video_clear(device_id)
     return {"status": "success", "device_id": device_id, "enabled": payload.enabled}
 
 

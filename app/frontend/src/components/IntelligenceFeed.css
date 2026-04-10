@@ -11,6 +11,53 @@
   position: relative;
 }
 
+.live-model-preview {
+  padding: 0.75rem 1.25rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 40, 80, 0.06);
+}
+
+.live-model-preview-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #5a6b7a);
+}
+
+.live-model-preview-hint {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.68rem;
+  opacity: 0.85;
+}
+
+.live-model-preview-frame {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 102, 204, 0.2);
+  background: #0a0e12;
+  max-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-model-preview-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: 200px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
 .feed-header {
   padding: 1.5rem 2rem;
   border-bottom: 1px solid rgba(255,255,255,0.4);
@@ -25,6 +72,55 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.wake-listen-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--text-main, #1a2b3c);
+  max-width: 11rem;
+  white-space: nowrap;
+}
+
+.wake-listen-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.wake-listen-pill--wake_required .wake-listen-pill-dot {
+  background: #6b7280;
+}
+
+.wake-listen-pill--follow_up .wake-listen-pill-dot {
+  background: #059669;
+  box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.25);
+}
+
+.wake-listen-pill--streaming .wake-listen-pill-dot {
+  background: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3);
+  animation: wake-listen-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes wake-listen-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .feed-soul-btn {
