@@ -88,7 +88,10 @@ async def run_heartbeat_tick(
         if interval < 1:
             return
 
+        # Heartbeat uses REST Chat, not Live; avoid live-preview model ids from bot settings.
         model = bs.get("model") or default_model
+        if model and "live" in str(model).lower():
+            model = default_model
         hb_text = read_heartbeat_instructions(device_id)
         logs_tail = tail_recent_daily_logs(device_id)
         memory_current = read_persona_markdown(device_id, "memory")

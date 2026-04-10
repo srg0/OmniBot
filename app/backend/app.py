@@ -60,6 +60,7 @@ from wake_listen import MAX_UTTERANCE_SEC, WakeListenProcessor
 import heartbeat_service
 import persona
 import gemini_hub_tts
+import gemini_live_session
 
 # ==========================================
 #          LOAD SECRETS & SETUP (see hub_config: OMNIBOT_DATA_DIR, .env, hub_secrets.json)
@@ -78,6 +79,14 @@ DEFAULT_HEARTBEAT_INTERVAL_MINUTES = 30
 DEFAULT_HEARTBEAT_ENABLED = True
 DEFAULT_HUB_TTS_ENABLED = True
 DEFAULT_HUB_TTS_VOICE = gemini_hub_tts.DEFAULT_HUB_TTS_VOICE
+
+# Gemini Live (3.1 Flash Live): streaming audio/video + native audio. Disable with OMNIBOT_USE_GEMINI_LIVE=0.
+USE_GEMINI_LIVE = (os.environ.get("OMNIBOT_USE_GEMINI_LIVE", "1") or "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 # Hub rules always injected; personality lives in persona/SOUL.md (and USER/MEMORY).
 DEFAULT_PIXEL_BASE_RULES = (
     "You control a small desktop robot named Pixel with a round face display.\n\n"
@@ -136,28 +145,8 @@ def _route_debug(msg: str) -> None:
 # Event loop used to push WebSocket messages from sync Gemini tool invocations (worker threads).
 _main_async_loop: Optional[asyncio.AbstractEventLoop] = None
 
-# OpenAPI-style declarations matching Gemini function-calling docs
-# (https://ai.google.dev/gemini-api/docs/function-calling — combine with Google Search).
-# The executable implementations are `_make_face_animation_tool`
-# (automatic function calling).
-FACE_ANIMATION_FUNCTION_DECLARATION = {
-    "name": "face_animation",
-    "description": (
-        "Animates Pixel's face on the round display for conversational or emotional states only. "
-        "Pass only which face to show: speaking, happy, or mad."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "animation": {
-                "type": "string",
-                "enum": ["speaking", "happy", "mad"],
-                "description": "Which face animation to display: speaking, happy, or mad.",
-            },
-        },
-        "required": ["animation"],
-    },
-}
+# OpenAPI-style declarations: https://ai.google.dev/gemini-api/docs/function-calling
+from pixel_tool_declarations import FACE_ANIMATION_FUNCTION_DECLARATION
 
 # Per-device, per-turn tool usage guardrails.
 turn_tool_state_by_device: dict[str, dict[str, bool]] = {}
@@ -1840,6 +1829,142 @@ async def _broadcast_persona_file_updated(device_id: str, file_label: str) -> No
     )
 
 
+async def run_pixel_gemini_tool(
+    device_id: str,
+    stream_id: Optional[str],
+    fname: str,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute one Pixel tool (persona, face_animation, etc.); optional tool_call broadcast when stream_id set."""
+    if stream_id is not None:
+        await manager.broadcast(
+            {
+                "type": "tool_call",
+                "device_id": device_id,
+                "stream_id": stream_id,
+                "function_name": fname,
+                "arguments": args,
+            }
+        )
+
+    result: dict[str, Any] = {"error": "Unknown function"}
+
+    if fname == "face_animation":
+        result = _make_face_animation_tool(device_id)(
+            animation=str(args.get("animation") or "speaking")
+        )
+    elif fname == "soul_replace":
+        md = str(args.get("markdown") or "")
+        result = persona.replace_soul_markdown(device_id, md)
+        if result.get("ok"):
+            await _broadcast_persona_file_updated(device_id, "SOUL.md")
+    elif fname == "memory_replace":
+        md = str(args.get("markdown") or "")
+        result = persona.replace_memory_markdown(device_id, md)
+        if result.get("ok"):
+            await _broadcast_persona_file_updated(device_id, "MEMORY.md")
+    elif fname == "persona_replace":
+        pf = str(args.get("file") or "")
+        md = str(args.get("markdown") or "")
+        result = persona.replace_persona_target_markdown(device_id, pf, md)
+        if result.get("ok"):
+            label = {
+                "identity": "IDENTITY.md",
+                "user": "USER.md",
+                "heartbeat": "HEARTBEAT.md",
+            }.get(pf.lower(), f"{pf}.md")
+            await _broadcast_persona_file_updated(device_id, label)
+    elif fname == "daily_log_append":
+        line = str(args.get("line") or "")
+        result = persona.append_daily_log_line(device_id, line)
+        if result.get("ok"):
+            day = result.get("day") or ""
+            await _broadcast_persona_file_updated(
+                device_id, f"logs/daily/{day}.md" if day else "logs/daily"
+            )
+    elif fname == "bootstrap_complete":
+        result = persona.delete_bootstrap_file(device_id)
+        if result.get("ok") and result.get("deleted"):
+            await _broadcast_persona_file_updated(device_id, "BOOTSTRAP.md (deleted)")
+    return result
+
+
+async def execute_live_pixel_tool_calls(
+    device_id: str, stream_id: str, function_calls: list[Any]
+) -> list[types.FunctionResponse]:
+    """Live API tool round-trip: FunctionResponse list for send_tool_response."""
+    out: list[types.FunctionResponse] = []
+    for fc in function_calls:
+        args = dict(fc.args) if getattr(fc, "args", None) else {}
+        fname = fc.name
+        fc_id = getattr(fc, "id", None)
+        result = await run_pixel_gemini_tool(device_id, stream_id, fname, args)
+        out.append(
+            types.FunctionResponse(
+                name=fname,
+                response={"result": result},
+                id=fc_id,
+            )
+        )
+    return out
+
+
+def _append_live_history_content(device_id: str, content: types.Content) -> None:
+    history_by_device.setdefault(device_id, []).append(content)
+
+
+def _on_wake_live_turn_done(device_id: str) -> None:
+    for _ws, sess in active_streams.items():
+        if sess.get("device_id") != device_id:
+            continue
+        wp = sess.get("wake_processor")
+        if wp and getattr(wp, "use_gemini_live", False):
+            wp.end_live_forwarding()
+        break
+
+
+async def _notify_esp32_live_first_token(device_id: str) -> None:
+    esp32_ws = get_active_esp32_socket(device_id)
+    if esp32_ws:
+        try:
+            await esp32_ws.send_text(json.dumps({"type": "gemini_first_token"}))
+        except Exception as e:
+            print(f"Failed to notify ESP32 first token (live): {e}")
+
+
+async def _notify_esp32_live_reply(device_id: str, text: str) -> None:
+    esp32_ws = get_active_esp32_socket(device_id)
+    if esp32_ws:
+        try:
+            await esp32_ws.send_text(
+                json.dumps({"status": "success", "reply": text or ""})
+            )
+        except Exception as e:
+            print(f"Failed to send live reply to ESP32: {e}")
+
+
+async def _live_tool_executor_with_turn_state(
+    device_id: str, stream_id: str, function_calls: list[Any]
+) -> list[types.FunctionResponse]:
+    turn_tool_state_by_device[device_id] = {"face_animation": False}
+    return await execute_live_pixel_tool_calls(device_id, stream_id, function_calls)
+
+
+def _build_live_coordinator(device_id: str) -> gemini_live_session.GeminiLiveCoordinator:
+    return gemini_live_session.GeminiLiveCoordinator(
+        device_id=device_id,
+        get_bot_settings=get_bot_settings,
+        resolve_system_instruction=lambda did: resolve_effective_system_instruction(did),
+        get_history=lambda did: list(history_by_device.get(did) or []),
+        append_history_content=_append_live_history_content,
+        broadcast=manager.broadcast,
+        tool_executor=_live_tool_executor_with_turn_state,
+        notify_esp32_first_token=_notify_esp32_live_first_token,
+        notify_esp32_reply=_notify_esp32_live_reply,
+        on_wake_processor_live_turn_done=_on_wake_live_turn_done,
+    )
+
+
 async def stream_chat_turn_response(
     device_id: str,
     message_content,
@@ -1980,65 +2105,17 @@ async def stream_chat_turn_response(
                 if not functions_to_execute:
                     break
                     
-                # Execute manually
                 func_responses = []
                 for fc in functions_to_execute:
                     args = dict(fc.args) if fc.args else {}
                     fname = fc.name
-                    
-                    await manager.broadcast({
-                        "type": "tool_call",
-                        "device_id": device_id,
-                        "stream_id": stream_id,
-                        "function_name": fname,
-                        "arguments": args,
-                    })
-                    
-                    result = {"error": "Unknown function"}
-                    
-                    if fname == "face_animation":
-                        result = _make_face_animation_tool(device_id)(
-                            animation=str(args.get("animation") or "speaking")
-                        )
-                    elif fname == "soul_replace":
-                        md = str(args.get("markdown") or "")
-                        result = persona.replace_soul_markdown(device_id, md)
-                        if result.get("ok"):
-                            await _broadcast_persona_file_updated(device_id, "SOUL.md")
-                    elif fname == "memory_replace":
-                        md = str(args.get("markdown") or "")
-                        result = persona.replace_memory_markdown(device_id, md)
-                        if result.get("ok"):
-                            await _broadcast_persona_file_updated(device_id, "MEMORY.md")
-                    elif fname == "persona_replace":
-                        pf = str(args.get("file") or "")
-                        md = str(args.get("markdown") or "")
-                        result = persona.replace_persona_target_markdown(device_id, pf, md)
-                        if result.get("ok"):
-                            label = {
-                                "identity": "IDENTITY.md",
-                                "user": "USER.md",
-                                "heartbeat": "HEARTBEAT.md",
-                            }.get(pf.lower(), f"{pf}.md")
-                            await _broadcast_persona_file_updated(device_id, label)
-                    elif fname == "daily_log_append":
-                        line = str(args.get("line") or "")
-                        result = persona.append_daily_log_line(device_id, line)
-                        if result.get("ok"):
-                            day = result.get("day") or ""
-                            await _broadcast_persona_file_updated(
-                                device_id, f"logs/daily/{day}.md" if day else "logs/daily"
-                            )
-                    elif fname == "bootstrap_complete":
-                        result = persona.delete_bootstrap_file(device_id)
-                        if result.get("ok") and result.get("deleted"):
-                            await _broadcast_persona_file_updated(device_id, "BOOTSTRAP.md (deleted)")
+                    result = await run_pixel_gemini_tool(device_id, stream_id, fname, args)
                     func_responses.append(
                         types.Part(
                             function_response=types.FunctionResponse(
                                 name=fname,
                                 response={"result": result},
-                                id=fc.id
+                                id=fc.id,
                             )
                         )
                     )
@@ -2266,7 +2343,19 @@ async def esp32_stream_endpoint(websocket: WebSocket):
         "device_id": stream_device_id,
         "wake_processor": None,
         "video_frame_buffer": deque(maxlen=WAKE_VIDEO_FRAME_BUFFER_MAX),
+        "live_coordinator": None,
     }
+    live_coord = None
+    if USE_GEMINI_LIVE and get_gemini_api_key():
+        live_coord = gemini_live_session.live_coordinator_for(stream_device_id)
+        if live_coord is None:
+            live_coord = _build_live_coordinator(stream_device_id)
+            gemini_live_session.register_live_coordinator(stream_device_id, live_coord)
+        active_streams[websocket]["live_coordinator"] = live_coord
+        try:
+            await live_coord.ensure_started()
+        except Exception as ex:
+            print(f"[live] ensure_started on connect failed: {ex}")
     record_bot_seen(stream_device_id)
     await manager.broadcast(
         {
@@ -2296,8 +2385,45 @@ async def esp32_stream_endpoint(websocket: WebSocket):
         await _send_runtime_presence_scan_to_esp32(stream_device_id)
         await _send_runtime_sleep_timeout_to_esp32(stream_device_id)
         await _send_runtime_wake_word_to_esp32(stream_device_id, is_wake_word_enabled(stream_device_id))
+        if USE_GEMINI_LIVE and live_coord is not None:
+            await websocket.send_text(
+                json.dumps({"type": "runtime_live_voice", "enabled": True})
+            )
     except Exception as e:
         print(f"Could not sync runtime settings to ESP32 on connect: {e}")
+
+    async def _forward_live_pcm_chunk(chunk: bytes) -> None:
+        sess = active_streams.get(websocket)
+        if not sess:
+            return
+        coord = sess.get("live_coordinator")
+        if coord:
+            await coord.enqueue_pcm(chunk)
+
+    async def _on_live_wake_started() -> None:
+        sess = active_streams.get(websocket)
+        if not sess:
+            return
+        did = sess["device_id"]
+        coord = sess.get("live_coordinator")
+        if not coord:
+            return
+        coord.begin_user_turn()
+        try:
+            await coord.ensure_started()
+        except Exception as ex:
+            print(f"[live] wake ensure_started failed: {ex}")
+            return
+        turn_tool_state_by_device[did] = {"face_animation": False}
+        await _send_activity_event_to_esp32(did, "wake_word")
+        await websocket.send_text(json.dumps({"type": "wake_processing"}))
+        await manager.broadcast(
+            {
+                "type": "processing_started",
+                "device_id": did,
+                "data": "Streaming voice to Gemini Live...",
+            }
+        )
 
     def _abort_wake_video() -> None:
         sess = active_streams.get(websocket)
@@ -2444,12 +2570,27 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                 wp = session.get("wake_processor")
                 if wp is None:
                     try:
-                        session["wake_processor"] = WakeListenProcessor(
-                            on_utterance=_handle_wake_utterance,
-                            on_capture_start=_on_wake_video_capture_start,
-                            on_capture_end=_on_wake_video_capture_end,
-                            on_capture_abort=_abort_wake_video,
-                        )
+                        if USE_GEMINI_LIVE and session.get("live_coordinator") is not None:
+
+                            async def _noop_utterance(_raw: bytes) -> None:
+                                return None
+
+                            session["wake_processor"] = WakeListenProcessor(
+                                on_utterance=_noop_utterance,
+                                on_capture_start=_on_wake_video_capture_start,
+                                on_capture_end=_on_wake_video_capture_end,
+                                on_capture_abort=_abort_wake_video,
+                                use_gemini_live=True,
+                                on_live_pcm=_forward_live_pcm_chunk,
+                                on_live_wake=_on_live_wake_started,
+                            )
+                        else:
+                            session["wake_processor"] = WakeListenProcessor(
+                                on_utterance=_handle_wake_utterance,
+                                on_capture_start=_on_wake_video_capture_start,
+                                on_capture_end=_on_wake_video_capture_end,
+                                on_capture_abort=_abort_wake_video,
+                            )
                         wp = session["wake_processor"]
                         print(f"[wake] WakeListenProcessor ready for {session['device_id']!r} (model={getattr(wp, 'model_label', '?')})")
                     except Exception as ex:
@@ -2459,7 +2600,12 @@ async def esp32_stream_endpoint(websocket: WebSocket):
 
             elif packet_type == 0x02:
                 # Idle: rolling ~1s pre-wake buffer. During utterance (wake → VAD end): append until audio stops.
-                if not is_vision_enabled(session["device_id"]):
+                did = session["device_id"]
+                if not is_vision_enabled(did):
+                    continue
+                coord = session.get("live_coordinator")
+                if USE_GEMINI_LIVE and coord is not None:
+                    asyncio.create_task(coord.send_video_jpeg(payload))
                     continue
                 utter = session.get("video_utterance")
                 if utter is not None:
@@ -2482,6 +2628,16 @@ async def esp32_stream_endpoint(websocket: WebSocket):
         print("ESP32 disconnected from streaming endpoint.")
         if websocket in active_streams:
             dev_id = active_streams[websocket].get("device_id", "default_bot")
+            coord = active_streams[websocket].get("live_coordinator")
+            other = any(
+                ws is not websocket and s.get("device_id") == dev_id
+                for ws, s in active_streams.items()
+            )
+            if coord is not None and not other:
+                try:
+                    await coord.stop()
+                except Exception as ex:
+                    print(f"[live] stop on disconnect: {ex}")
             pending_reference_capture.pop(dev_id, None)
             del active_streams[websocket]
             # Early map send may have ACK'd on the server while Pixel never decoded it.
@@ -2501,6 +2657,16 @@ async def esp32_stream_endpoint(websocket: WebSocket):
         print(f"Stream error: {e}")
         if websocket in active_streams:
             dev_id = active_streams[websocket].get("device_id", "default_bot")
+            coord = active_streams[websocket].get("live_coordinator")
+            other = any(
+                ws is not websocket and s.get("device_id") == dev_id
+                for ws, s in active_streams.items()
+            )
+            if coord is not None and not other:
+                try:
+                    await coord.stop()
+                except Exception as ex:
+                    print(f"[live] stop on stream error: {ex}")
             pending_reference_capture.pop(dev_id, None)
             del active_streams[websocket]
             if not active_streams:
@@ -2553,6 +2719,17 @@ async def text_command(req: TextCommandRequest):
 
     try:
         await _send_activity_event_to_esp32(req.device_id, "text_command")
+        live_coord = gemini_live_session.live_coordinator_for(req.device_id)
+        if (
+            USE_GEMINI_LIVE
+            and live_coord is not None
+            and not req.bootstrap
+        ):
+            turn_tool_state_by_device[req.device_id] = {"face_animation": False}
+            await live_coord.send_text(payload_message)
+            print("\n>>> GEMINI (TEXT) sent via Live session")
+            return {"status": "success", "reply": "", "live": True}
+
         full_text, _stream_id = await stream_chat_turn_response(
             req.device_id,
             payload_message,

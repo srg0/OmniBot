@@ -59,6 +59,25 @@ function App() {
   const hubTtsSampleRateRef = useRef(24000);
   const hubTtsStreamIdRef = useRef(null);
 
+  const liveAudioCtxRef = useRef(null);
+  const liveAudioNextTimeRef = useRef(0);
+  const liveAudioSrRef = useRef(24000);
+  const liveAudioStreamIdRef = useRef(null);
+
+  const stopLiveAudio = useCallback(() => {
+    const ctx = liveAudioCtxRef.current;
+    liveAudioCtxRef.current = null;
+    liveAudioStreamIdRef.current = null;
+    liveAudioNextTimeRef.current = 0;
+    if (ctx) {
+      try {
+        ctx.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
   const stopHubTtsAudio = useCallback(() => {
     const ctx = hubTtsCtxRef.current;
     hubTtsCtxRef.current = null;
@@ -71,7 +90,8 @@ function App() {
         /* ignore */
       }
     }
-  }, []);
+    stopLiveAudio();
+  }, [stopLiveAudio]);
 
   const [logs, setLogs] = useState([]);
   const [toolCalls, setToolCalls] = useState([]);
@@ -116,13 +136,50 @@ function App() {
   const appendAiStreamDelta = (stream_id, delta) => {
     setLogs((prevLogs) =>
       prevLogs.map((log) => {
-        if (log.sender === 'ai' && log.streamId === stream_id) {
+        if (log.sender === 'ai' && log.streamId === stream_id && !log.liveTranscript) {
           return { ...log, text: (log.text || '') + delta };
         }
         return log;
       })
     );
   };
+
+  const appendLiveTranscription = useCallback((device_id, role, stream_id, text) => {
+    const did = device_id || selectedBotIdRef.current;
+    if (did !== selectedBotIdRef.current) return;
+    const sender = role === 'user' ? 'user' : 'ai';
+    setLogs((prevLogs) => {
+      let idx = -1;
+      for (let i = prevLogs.length - 1; i >= 0; i--) {
+        const l = prevLogs[i];
+        if (l.liveTranscript && l.streamId === stream_id && l.sender === sender) {
+          idx = i;
+          break;
+        }
+      }
+      if (idx >= 0) {
+        const next = [...prevLogs];
+        const cur = next[idx];
+        next[idx] = { ...cur, text: (cur.text || '') + (text || '') };
+        return next;
+      }
+      return [
+        ...prevLogs,
+        {
+          id: Date.now() + Math.random(),
+          time: new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+          sender,
+          text: text || '',
+          streamId: stream_id,
+          liveTranscript: true,
+        },
+      ];
+    });
+  }, []);
 
   const mergeBotList = useCallback((rows) => {
     const bots = rows || [];
@@ -371,6 +428,44 @@ function App() {
             if (message.error) {
               console.warn('Hub TTS:', message.error);
             }
+          } else if (message.type === 'live_transcription') {
+            appendLiveTranscription(
+              message.device_id,
+              message.role,
+              message.stream_id,
+              message.text
+            );
+          } else if (message.type === 'live_audio_chunk') {
+            const did = message.device_id || selectedBotIdRef.current;
+            if (did !== selectedBotIdRef.current) return;
+            if (message.stream_id && message.stream_id !== liveAudioStreamIdRef.current) {
+              stopLiveAudio();
+              liveAudioStreamIdRef.current = message.stream_id;
+              const rate = Number(message.sample_rate) || 24000;
+              liveAudioSrRef.current = rate;
+              const ctx = new AudioContext();
+              liveAudioCtxRef.current = ctx;
+              liveAudioNextTimeRef.current = ctx.currentTime + 0.08;
+              void ctx.resume().catch(() => {});
+            }
+            const ctx = liveAudioCtxRef.current;
+            if (!ctx || !message.b64) return;
+            try {
+              const int16 = base64ToInt16PCM(message.b64);
+              if (!int16.length) return;
+              const sr = liveAudioSrRef.current;
+              const buffer = ctx.createBuffer(1, int16.length, sr);
+              const ch = buffer.getChannelData(0);
+              for (let i = 0; i < int16.length; i++) ch[i] = int16[i] / 32768.0;
+              const src = ctx.createBufferSource();
+              src.buffer = buffer;
+              src.connect(ctx.destination);
+              const startAt = Math.max(ctx.currentTime, liveAudioNextTimeRef.current);
+              src.start(startAt);
+              liveAudioNextTimeRef.current = startAt + buffer.duration;
+            } catch (e) {
+              console.error('Live audio chunk playback failed', e);
+            }
           }
         } catch {
           console.error('Failed to parse message:', event.data);
@@ -400,7 +495,7 @@ function App() {
       stopHubTtsAudio();
       if (ws) ws.close();
     };
-  }, [geminiConfigured, mergeBotList, refreshBotList, stopHubTtsAudio]);
+  }, [geminiConfigured, mergeBotList, refreshBotList, stopHubTtsAudio, appendLiveTranscription, stopLiveAudio]);
 
   useEffect(
     () => () => {

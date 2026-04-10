@@ -142,6 +142,8 @@ volatile bool geminiFirstTokenReceived = false;
 bool deviceVisionCaptureEnabled = true;
 /** Hub pushes wake streaming on/off (mic upload for openWakeWord + VAD). */
 bool deviceWakeWordEnabled = true;
+/** When true, hub uses Gemini Live: keep mic PCM streaming during UPLOADING (thinking) state. */
+bool deviceLiveVoiceStream = false;
 
 // Hub presence face scan (0x06) + prefs mirrored from hub runtime JSON
 bool presenceScanEnabled = false;
@@ -2443,6 +2445,8 @@ void setupWiFi() {
                         } else if (strcmp(msgType, "runtime_wake_word") == 0) {
                             bool en = doc["enabled"] | true;
                             setDeviceWakeWordEnabled(en);
+                        } else if (strcmp(msgType, "runtime_live_voice") == 0) {
+                            deviceLiveVoiceStream = doc["enabled"] | false;
                         } else if (strcmp(msgType, "wake_processing") == 0) {
                             if (currentState == STATE_IDLE) {
                                 currentState = STATE_UPLOADING;
@@ -2546,7 +2550,8 @@ void wakeStreamTask(void* pvParameters) {
         if (
             hubWebSocketEnabled &&
             isWsConnected &&
-            currentState == STATE_IDLE &&
+            (currentState == STATE_IDLE
+                || (deviceLiveVoiceStream && currentState == STATE_UPLOADING)) &&
             deviceWakeWordEnabled &&
             !timeScreenActive &&
             !mapOverlayActive &&

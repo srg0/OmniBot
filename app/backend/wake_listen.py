@@ -99,6 +99,10 @@ class WakeListenProcessor:
     on_capture_start: Optional[Callable[[], Coroutine[Any, Any, None]]] = None
     on_capture_end: Optional[Callable[[], Coroutine[Any, Any, None]]] = None
     on_capture_abort: Optional[Callable[[], None]] = None
+    # When True, after wake (or follow-up VAD) PCM goes to on_live_pcm; hub VAD does not cut utterances.
+    use_gemini_live: bool = False
+    on_live_pcm: Optional[Callable[[bytes], Coroutine[Any, Any, None]]] = None
+    on_live_wake: Optional[Callable[[], Coroutine[Any, Any, None]]] = None
     wake_threshold: float = field(default_factory=lambda: _env_float("OMNIBOT_WAKE_THRESHOLD", 0.55))
     silence_ms: int = field(
         default_factory=lambda: int(_env_float("OMNIBOT_WAKE_SILENCE_MS", 550))
@@ -121,6 +125,7 @@ class WakeListenProcessor:
     _follow_up_until: Optional[float] = field(init=False, default=None)
     _followup_scan_carry: bytearray = field(init=False, default_factory=bytearray)
     _capture_from_followup: bool = field(init=False, default=False)
+    _live_forward: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self.model, self.model_label = build_openwakeword_model()
@@ -156,10 +161,20 @@ class WakeListenProcessor:
             self._vad_carry = bytearray()
             self._silence_ms_acc = 0.0
             self._followup_scan_carry.clear()
+            self._live_forward = False
             try:
                 self.model.reset()
             except Exception:
                 pass
+
+    def end_live_forwarding(self) -> None:
+        """Stop forwarding PCM to Gemini Live; open follow-up window for more speech."""
+        self._live_forward = False
+        try:
+            self.model.reset()
+        except Exception:
+            pass
+        self.begin_follow_up_window()
 
     def _trim_ring(self) -> None:
         if len(self._ring) > self._pre_roll_bytes:
@@ -185,6 +200,10 @@ class WakeListenProcessor:
         now = time.monotonic()
 
         if self.paused:
+            return
+
+        if self._live_forward and self.on_live_pcm:
+            await self.on_live_pcm(pcm)
             return
 
         if self._follow_up_until is not None and now >= self._follow_up_until:
@@ -222,6 +241,23 @@ class WakeListenProcessor:
                 del self._followup_scan_carry[:VAD_FRAME_BYTES]
                 if not self.vad.is_speech(frame, SAMPLE_RATE):
                     continue
+                if self.use_gemini_live and self.on_live_pcm:
+                    if self.on_capture_start:
+                        await self.on_capture_start()
+                    if self.on_live_wake:
+                        await self.on_live_wake()
+                    buf = bytearray(self._ring)
+                    self._ring.clear()
+                    buf.extend(frame)
+                    self._live_forward = True
+                    self._followup_scan_carry.clear()
+                    if buf:
+                        await self.on_live_pcm(bytes(buf))
+                    try:
+                        self.model.reset()
+                    except Exception:
+                        pass
+                    return
                 if self.on_capture_start:
                     await self.on_capture_start()
                 self._capturing = True
@@ -268,6 +304,22 @@ class WakeListenProcessor:
 
         if self._max_wake_score(scores) >= self.wake_threshold:
             self._followup_scan_carry.clear()
+            if self.use_gemini_live and self.on_live_pcm:
+                if self.on_capture_start:
+                    await self.on_capture_start()
+                if self.on_live_wake:
+                    await self.on_live_wake()
+                ring = bytes(self._ring)
+                self._ring.clear()
+                self._cooldown_until = time.monotonic() + self.cooldown_s
+                self._live_forward = True
+                if ring:
+                    await self.on_live_pcm(ring)
+                try:
+                    self.model.reset()
+                except Exception:
+                    pass
+                return
             if self.on_capture_start:
                 await self.on_capture_start()
             self._capturing = True
