@@ -17,6 +17,51 @@ import {
 
 /** Matches hub `normalize_gemini_thinking_level` / Gemini 3 docs thinking levels. */
 const GEMINI_THINKING_LEVELS = ['auto', 'minimal', 'low', 'medium', 'high'];
+/** Matches hub `gemini_hub_tts.ALLOWED_TTS_VOICES` (Gemini 2.5 Flash Preview TTS). */
+const GEMINI_TTS_VOICES = [
+  'Achernar',
+  'Achird',
+  'Algenib',
+  'Algieba',
+  'Alnilam',
+  'Aoede',
+  'Autonoe',
+  'Callirrhoe',
+  'Charon',
+  'Despina',
+  'Enceladus',
+  'Erinome',
+  'Fenrir',
+  'Gacrux',
+  'Iapetus',
+  'Kore',
+  'Laomedeia',
+  'Leda',
+  'Orus',
+  'Puck',
+  'Pulcherrima',
+  'Rasalgethi',
+  'Sadachbia',
+  'Sadaltager',
+  'Schedar',
+  'Sulafat',
+  'Umbriel',
+  'Vindemiatrix',
+  'Zephyr',
+  'Zubenelgenubi',
+];
+
+const SLEEP_TIMEOUT_OPTIONS = [
+  { value: 30, label: '30 seconds' },
+  { value: 60, label: '1 minute' },
+  { value: 120, label: '2 minutes' },
+  { value: 180, label: '3 minutes' },
+  { value: 300, label: '5 minutes' },
+  { value: 600, label: '10 minutes' },
+  { value: 900, label: '15 minutes' },
+  { value: 1200, label: '20 minutes' },
+  { value: 1800, label: '30 minutes' },
+];
 
 const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', onBotsChanged }) => {
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
@@ -26,8 +71,11 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const [presenceScanEnabled, setPresenceScanEnabled] = useState(false);
   const [presenceIntervalSec, setPresenceIntervalSec] = useState(5);
   const [greetingCooldownMin, setGreetingCooldownMin] = useState(30);
+  const [sleepTimeoutSec, setSleepTimeoutSec] = useState(300);
   const [heartbeatIntervalMin, setHeartbeatIntervalMin] = useState(30);
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(true);
+  const [hubTtsEnabled, setHubTtsEnabled] = useState(true);
+  const [hubTtsVoice, setHubTtsVoice] = useState('Kore');
   const [personaTab, setPersonaTab] = useState('soul');
   const [personaDrafts, setPersonaDrafts] = useState({
     soul: '',
@@ -98,12 +146,21 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
             ? data.greeting_cooldown_minutes
             : 30
         );
+        setSleepTimeoutSec(
+          typeof data.sleep_timeout_sec === 'number'
+            ? Math.min(1800, Math.max(30, data.sleep_timeout_sec))
+            : 300
+        );
         setHeartbeatIntervalMin(
           typeof data.heartbeat_interval_minutes === 'number'
             ? data.heartbeat_interval_minutes
             : 30
         );
         setHeartbeatEnabled(data.heartbeat_enabled !== false);
+        setHubTtsEnabled(data.hub_tts_enabled !== false);
+        setHubTtsVoice(
+          GEMINI_TTS_VOICES.includes(data.hub_tts_voice) ? data.hub_tts_voice : 'Kore'
+        );
         await loadProfiles();
         await loadPersona();
       } catch (err) {
@@ -128,8 +185,11 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
         presence_scan_enabled: presenceScanEnabled,
         presence_scan_interval_sec: Math.min(300, Math.max(3, Number(presenceIntervalSec) || 5)),
         greeting_cooldown_minutes: Math.min(720, Math.max(1, Number(greetingCooldownMin) || 30)),
+        sleep_timeout_sec: Math.min(1800, Math.max(30, Number(sleepTimeoutSec) || 300)),
         heartbeat_interval_minutes: Math.min(720, Math.max(5, Number(heartbeatIntervalMin) || 30)),
         heartbeat_enabled: heartbeatEnabled,
+        hub_tts_enabled: hubTtsEnabled,
+        hub_tts_voice: hubTtsVoice,
       });
       const saved = res.settings || {};
       setModel(saved.model);
@@ -141,8 +201,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       setPresenceScanEnabled(Boolean(saved.presence_scan_enabled));
       setPresenceIntervalSec(saved.presence_scan_interval_sec ?? 5);
       setGreetingCooldownMin(saved.greeting_cooldown_minutes ?? 30);
+      setSleepTimeoutSec(saved.sleep_timeout_sec ?? 300);
       setHeartbeatIntervalMin(saved.heartbeat_interval_minutes ?? 30);
       setHeartbeatEnabled(saved.heartbeat_enabled !== false);
+      setHubTtsEnabled(saved.hub_tts_enabled !== false);
+      setHubTtsVoice(
+        GEMINI_TTS_VOICES.includes(saved.hub_tts_voice) ? saved.hub_tts_voice : 'Kore'
+      );
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err) {
@@ -179,8 +244,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       setPresenceScanEnabled(Boolean(saved.presence_scan_enabled));
       setPresenceIntervalSec(saved.presence_scan_interval_sec ?? 5);
       setGreetingCooldownMin(saved.greeting_cooldown_minutes ?? 30);
+      setSleepTimeoutSec(saved.sleep_timeout_sec ?? 300);
       setHeartbeatIntervalMin(saved.heartbeat_interval_minutes ?? 30);
       setHeartbeatEnabled(saved.heartbeat_enabled !== false);
+      setHubTtsEnabled(saved.hub_tts_enabled !== false);
+      setHubTtsVoice(
+        GEMINI_TTS_VOICES.includes(saved.hub_tts_voice) ? saved.hub_tts_voice : 'Kore'
+      );
       await loadPersona();
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000);
@@ -333,6 +403,46 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       </div>
 
       <div className="form-group">
+        <label htmlFor="hubTtsSelect">Hub speaker (TTS after voice)</label>
+        <div className="select-wrapper">
+          <select
+            id="hubTtsSelect"
+            value={hubTtsEnabled ? 'on' : 'off'}
+            onChange={(e) => setHubTtsEnabled(e.target.value === 'on')}
+            className="holo-select"
+          >
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </div>
+        <p className="help-text">
+          When on, after you speak to the bot (wake path), the hub reads the assistant reply aloud through this
+          computer&apos;s speakers using Gemini 2.5 Flash TTS. Typed hub messages are never spoken.
+        </p>
+      </div>
+
+      {hubTtsEnabled ? (
+        <div className="form-group">
+          <label htmlFor="hubTtsVoice">TTS voice</label>
+          <div className="select-wrapper">
+            <select
+              id="hubTtsVoice"
+              value={hubTtsVoice}
+              onChange={(e) => setHubTtsVoice(e.target.value)}
+              className="holo-select"
+            >
+              {GEMINI_TTS_VOICES.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="help-text">Prebuilt Gemini TTS voice (preview model).</p>
+        </div>
+      ) : null}
+
+      <div className="form-group">
         <label htmlFor="presenceScan">Presence face scan (hub)</label>
         <div className="select-wrapper">
           <select
@@ -379,6 +489,28 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           style={{ maxWidth: '120px', minHeight: 'unset', height: '40px' }}
         />
         <p className="help-text">Minimum time between automated greetings for the same person (1–720).</p>
+      </div>
+
+      <div className="form-group">
+        <label htmlFor="sleepTimeoutSelect">Sleep after inactivity</label>
+        <div className="select-wrapper">
+          <select
+            id="sleepTimeoutSelect"
+            value={String(sleepTimeoutSec)}
+            onChange={(e) => setSleepTimeoutSec(Number(e.target.value))}
+            className="holo-select"
+          >
+            {SLEEP_TIMEOUT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={String(opt.value)}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="help-text">
+          Pixel switches to a sleep animation after this long without activity. Wakes on wake-word, known face,
+          text command, or face animation trigger.
+        </p>
       </div>
 
       <div className="form-group">

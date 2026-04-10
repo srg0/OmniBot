@@ -59,6 +59,7 @@ from wake_listen import MAX_UTTERANCE_SEC, WakeListenProcessor
 
 import heartbeat_service
 import persona
+import gemini_hub_tts
 
 # ==========================================
 #          LOAD SECRETS & SETUP (see hub_config: OMNIBOT_DATA_DIR, .env, hub_secrets.json)
@@ -72,8 +73,11 @@ DEFAULT_WAKE_WORD_ENABLED = True
 DEFAULT_PRESENCE_SCAN_ENABLED = False
 DEFAULT_PRESENCE_SCAN_INTERVAL_SEC = 5
 DEFAULT_GREETING_COOLDOWN_MINUTES = 30
+DEFAULT_SLEEP_TIMEOUT_SEC = 300
 DEFAULT_HEARTBEAT_INTERVAL_MINUTES = 30
 DEFAULT_HEARTBEAT_ENABLED = True
+DEFAULT_HUB_TTS_ENABLED = True
+DEFAULT_HUB_TTS_VOICE = gemini_hub_tts.DEFAULT_HUB_TTS_VOICE
 # Hub rules always injected; personality lives in persona/SOUL.md (and USER/MEMORY).
 DEFAULT_PIXEL_BASE_RULES = (
     "You control a small desktop robot named Pixel with a round face display.\n\n"
@@ -274,6 +278,12 @@ def get_bot_settings(device_id: str):
             1,
             720,
         ),
+        "sleep_timeout_sec": _clamp_int(
+            bot_conf.get("sleep_timeout_sec"),
+            DEFAULT_SLEEP_TIMEOUT_SEC,
+            30,
+            1800,
+        ),
         "wake_word_enabled": bool(bot_conf.get("wake_word_enabled", DEFAULT_WAKE_WORD_ENABLED)),
         "heartbeat_interval_minutes": _clamp_int(
             bot_conf.get("heartbeat_interval_minutes"),
@@ -283,6 +293,10 @@ def get_bot_settings(device_id: str):
         ),
         "heartbeat_enabled": bool(bot_conf.get("heartbeat_enabled", DEFAULT_HEARTBEAT_ENABLED)),
         "thinking_level": normalize_gemini_thinking_level(bot_conf.get("thinking_level")),
+        "hub_tts_enabled": bool(bot_conf.get("hub_tts_enabled", DEFAULT_HUB_TTS_ENABLED)),
+        "hub_tts_voice": gemini_hub_tts.normalize_hub_tts_voice(
+            str(bot_conf.get("hub_tts_voice") or DEFAULT_HUB_TTS_VOICE)
+        ),
     }
 
 
@@ -315,10 +329,13 @@ def _default_stored_bot_settings() -> dict:
         "presence_scan_enabled": DEFAULT_PRESENCE_SCAN_ENABLED,
         "presence_scan_interval_sec": DEFAULT_PRESENCE_SCAN_INTERVAL_SEC,
         "greeting_cooldown_minutes": DEFAULT_GREETING_COOLDOWN_MINUTES,
+        "sleep_timeout_sec": DEFAULT_SLEEP_TIMEOUT_SEC,
         "wake_word_enabled": DEFAULT_WAKE_WORD_ENABLED,
         "heartbeat_interval_minutes": DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
         "heartbeat_enabled": DEFAULT_HEARTBEAT_ENABLED,
         "thinking_level": DEFAULT_GEMINI_THINKING_LEVEL,
+        "hub_tts_enabled": DEFAULT_HUB_TTS_ENABLED,
+        "hub_tts_voice": DEFAULT_HUB_TTS_VOICE,
     }
 
 
@@ -543,11 +560,14 @@ class BotSettingsSchema(BaseModel):
     presence_scan_enabled: bool = DEFAULT_PRESENCE_SCAN_ENABLED
     presence_scan_interval_sec: int = Field(default=DEFAULT_PRESENCE_SCAN_INTERVAL_SEC, ge=3, le=300)
     greeting_cooldown_minutes: int = Field(default=DEFAULT_GREETING_COOLDOWN_MINUTES, ge=1, le=720)
+    sleep_timeout_sec: int = Field(default=DEFAULT_SLEEP_TIMEOUT_SEC, ge=30, le=1800)
     heartbeat_interval_minutes: int = Field(
         default=DEFAULT_HEARTBEAT_INTERVAL_MINUTES, ge=5, le=720
     )
     heartbeat_enabled: bool = DEFAULT_HEARTBEAT_ENABLED
     thinking_level: GeminiThinkingLevel = DEFAULT_GEMINI_THINKING_LEVEL
+    hub_tts_enabled: bool = DEFAULT_HUB_TTS_ENABLED
+    hub_tts_voice: str = DEFAULT_HUB_TTS_VOICE
 
 
 class HubAppSettingsSchema(BaseModel):
@@ -730,9 +750,12 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
         "presence_scan_enabled": bool(new_settings.presence_scan_enabled),
         "presence_scan_interval_sec": int(new_settings.presence_scan_interval_sec),
         "greeting_cooldown_minutes": int(new_settings.greeting_cooldown_minutes),
+        "sleep_timeout_sec": int(new_settings.sleep_timeout_sec),
         "heartbeat_interval_minutes": int(new_settings.heartbeat_interval_minutes),
         "heartbeat_enabled": bool(new_settings.heartbeat_enabled),
         "thinking_level": normalize_gemini_thinking_level(new_settings.thinking_level),
+        "hub_tts_enabled": bool(new_settings.hub_tts_enabled),
+        "hub_tts_voice": gemini_hub_tts.normalize_hub_tts_voice(new_settings.hub_tts_voice),
     }
     settings[device_id] = row
     save_all_settings(settings)
@@ -742,6 +765,7 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
     await _send_runtime_vision_to_esp32(device_id, row["vision_enabled"])
     await _send_runtime_wake_word_to_esp32(device_id, row["wake_word_enabled"])
     await _send_runtime_presence_scan_to_esp32(device_id)
+    await _send_runtime_sleep_timeout_to_esp32(device_id)
     if _maps_debug_enabled():
         _maps_debug(
             f"pixel_settings_saved device_id={device_id!r} in_memory_history_cleared=True"
@@ -771,6 +795,7 @@ async def reset_settings_to_default(device_id: str):
     await _send_runtime_vision_to_esp32(device_id, row["vision_enabled"])
     await _send_runtime_wake_word_to_esp32(device_id, row["wake_word_enabled"])
     await _send_runtime_presence_scan_to_esp32(device_id)
+    await _send_runtime_sleep_timeout_to_esp32(device_id)
     return {"status": "success", "settings": get_bot_settings(device_id)}
 
 
@@ -931,6 +956,7 @@ async def _send_face_animation_json_to_esp32(device_id: str, animation: str) -> 
     if not ws:
         return
     dur = FACE_ANIMATION_DISPLAY_MS
+    await _send_activity_event_to_esp32(device_id, "face_animation")
     payload = {
         "type": "face_animation",
         "animation": animation,
@@ -1030,6 +1056,36 @@ async def _send_runtime_presence_scan_to_esp32(device_id: str) -> None:
         )
     except Exception as e:
         print(f"Failed to send runtime_presence_scan to ESP32: {e}")
+
+
+async def _send_runtime_sleep_timeout_to_esp32(device_id: str) -> None:
+    """Pushes inactivity sleep timeout to Pixel firmware."""
+    ws = get_active_esp32_socket(device_id)
+    if not ws:
+        return
+    bs = get_bot_settings(device_id)
+    try:
+        await ws.send_text(
+            json.dumps(
+                {
+                    "type": "runtime_sleep_timeout",
+                    "timeout_sec": int(bs.get("sleep_timeout_sec", DEFAULT_SLEEP_TIMEOUT_SEC)),
+                }
+            )
+        )
+    except Exception as e:
+        print(f"Failed to send runtime_sleep_timeout to ESP32: {e}")
+
+
+async def _send_activity_event_to_esp32(device_id: str, source: str) -> None:
+    """Nudges Pixel activity timer and wakes sleep animation if active."""
+    ws = get_active_esp32_socket(device_id)
+    if not ws:
+        return
+    try:
+        await ws.send_text(json.dumps({"type": "activity_event", "source": str(source or "unknown")}))
+    except Exception as e:
+        print(f"Failed to send activity_event to ESP32: {e}")
 
 
 
@@ -1791,7 +1847,10 @@ async def stream_chat_turn_response(
     max_tool_rounds: int = 6,
     extra_system_suffix: str = "",
 ):
-    """Streams one Gemini turn using local history and a fresh config each request (one-shot Chat)."""
+    """Streams one Gemini turn using local history and a fresh config each request (one-shot Chat).
+
+    Returns (full_assistant_text, stream_id) for correlating follow-ups such as hub TTS.
+    """
     global _main_async_loop
     _main_async_loop = asyncio.get_running_loop()
 
@@ -2007,7 +2066,8 @@ async def stream_chat_turn_response(
     end_msg["device_stream_connected"] = device_stream_is_live(device_id)
     await manager.broadcast(end_msg)
 
-    return full_text
+    return full_text, stream_id
+
 
 def device_stream_is_live(device_id: str) -> bool:
     """True if this device_id has an active /ws/stream session."""
@@ -2040,6 +2100,7 @@ async def _process_presence_jpeg(device_id: str, jpeg_bytes: bytes) -> None:
         return
     if not match:
         return
+    await _send_activity_event_to_esp32(device_id, "face_recognition")
     profile_id, display_name, _score = match
     cool_min = int(bs.get("greeting_cooldown_minutes", DEFAULT_GREETING_COOLDOWN_MINUTES))
     key = (device_id, profile_id)
@@ -2064,7 +2125,7 @@ async def _process_presence_jpeg(device_id: str, jpeg_bytes: bytes) -> None:
         msg,
     ]
     try:
-        full_text = await stream_chat_turn_response(device_id, turn_content)
+        full_text, _stream_id = await stream_chat_turn_response(device_id, turn_content)
         esp32_ws = get_active_esp32_socket(device_id)
         if esp32_ws:
             try:
@@ -2106,6 +2167,45 @@ async def _process_enrollment_jpeg(device_id: str, jpeg_bytes: bytes) -> None:
         print(f"[face] enrollment failed (no face or represent error) for {device_id}/{pid}")
 
 
+async def _broadcast_hub_tts(
+    device_id: str, stream_id: str, text: str, voice_name: str
+) -> None:
+    """Send Gemini TTS audio to dashboard WebSockets for PC speaker playback."""
+    try:
+        await manager.broadcast(
+            {
+                "type": "hub_tts_start",
+                "device_id": device_id,
+                "stream_id": stream_id,
+                "sample_rate": gemini_hub_tts.TTS_SAMPLE_RATE,
+                "channels": gemini_hub_tts.TTS_CHANNELS,
+                "encoding": "pcm_s16le",
+            }
+        )
+        async for pcm in gemini_hub_tts.async_iter_tts_pcm(text, voice_name):
+            for piece in gemini_hub_tts.split_pcm_for_ws(pcm):
+                await manager.broadcast(
+                    {
+                        "type": "hub_tts_chunk",
+                        "stream_id": stream_id,
+                        "b64": base64.b64encode(piece).decode("ascii"),
+                    }
+                )
+        await manager.broadcast({"type": "hub_tts_end", "stream_id": stream_id})
+    except Exception as e:
+        print(f"[hub_tts] broadcast error: {e}")
+        try:
+            await manager.broadcast(
+                {
+                    "type": "hub_tts_end",
+                    "stream_id": stream_id,
+                    "error": str(e),
+                }
+            )
+        except Exception as send_e:
+            print(f"[hub_tts] failed to send hub_tts_end: {send_e}")
+
+
 async def _run_gemini_audio_turn(
     websocket: WebSocket,
     device_id: str,
@@ -2141,10 +2241,16 @@ async def _run_gemini_audio_turn(
         turn_content[0] = "Listen to the audio and watch the video. Answer the user's question."
         turn_content.append(types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"))
 
-    full_text = await stream_chat_turn_response(device_id, turn_content)
+    full_text, reply_stream_id = await stream_chat_turn_response(device_id, turn_content)
     print(f"\n>>> GEMINI SAYS: {full_text}")
 
     await websocket.send_text(json.dumps({"status": "success", "reply": full_text}))
+    bs = get_bot_settings(device_id)
+    if bs.get("hub_tts_enabled", DEFAULT_HUB_TTS_ENABLED) and (full_text or "").strip():
+        voice = bs.get("hub_tts_voice") or DEFAULT_HUB_TTS_VOICE
+        asyncio.create_task(
+            _broadcast_hub_tts(device_id, reply_stream_id, full_text.strip(), voice)
+        )
     return full_text
 
 
@@ -2188,6 +2294,7 @@ async def esp32_stream_endpoint(websocket: WebSocket):
             )
         )
         await _send_runtime_presence_scan_to_esp32(stream_device_id)
+        await _send_runtime_sleep_timeout_to_esp32(stream_device_id)
         await _send_runtime_wake_word_to_esp32(stream_device_id, is_wake_word_enabled(stream_device_id))
     except Exception as e:
         print(f"Could not sync runtime settings to ESP32 on connect: {e}")
@@ -2226,6 +2333,7 @@ async def esp32_stream_endpoint(websocket: WebSocket):
         if wp:
             wp.set_paused(True)
         try:
+            await _send_activity_event_to_esp32(did, "wake_word")
             await websocket.send_text(json.dumps({"type": "wake_processing"}))
             await manager.broadcast(
                 {
@@ -2444,7 +2552,8 @@ async def text_command(req: TextCommandRequest):
     })
 
     try:
-        full_text = await stream_chat_turn_response(
+        await _send_activity_event_to_esp32(req.device_id, "text_command")
+        full_text, _stream_id = await stream_chat_turn_response(
             req.device_id,
             payload_message,
             max_tool_rounds=10 if req.bootstrap else 6,

@@ -18,6 +18,14 @@ import {
 } from './components/setupService';
 import { hubUrl, getHubWebSocketUrl } from './hubOrigin';
 
+/** Decode base64 to Int16Array (little-endian PCM s16le). */
+function base64ToInt16PCM(b64) {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Int16Array(u8.buffer, u8.byteOffset, u8.byteLength / 2);
+}
+
 function App() {
   /** null = checking, false = show first-run key screen, true = hub has Gemini configured */
   const [geminiConfigured, setGeminiConfigured] = useState(null);
@@ -45,6 +53,25 @@ function App() {
   const [selectedBotId, setSelectedBotId] = useState('default_bot');
   const selectedBotIdRef = useRef(selectedBotId);
   selectedBotIdRef.current = selectedBotId;
+
+  const hubTtsCtxRef = useRef(null);
+  const hubTtsNextTimeRef = useRef(0);
+  const hubTtsSampleRateRef = useRef(24000);
+  const hubTtsStreamIdRef = useRef(null);
+
+  const stopHubTtsAudio = useCallback(() => {
+    const ctx = hubTtsCtxRef.current;
+    hubTtsCtxRef.current = null;
+    hubTtsStreamIdRef.current = null;
+    hubTtsNextTimeRef.current = 0;
+    if (ctx) {
+      try {
+        ctx.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
 
   const [logs, setLogs] = useState([]);
   const [toolCalls, setToolCalls] = useState([]);
@@ -309,6 +336,41 @@ function App() {
                   : prev
               );
             }
+          } else if (message.type === 'hub_tts_start') {
+            stopHubTtsAudio();
+            const rate = Number(message.sample_rate) || 24000;
+            hubTtsSampleRateRef.current = rate;
+            hubTtsStreamIdRef.current = message.stream_id || null;
+            const ctx = new AudioContext();
+            hubTtsCtxRef.current = ctx;
+            hubTtsNextTimeRef.current = ctx.currentTime + 0.08;
+            void ctx.resume().catch(() => {});
+          } else if (message.type === 'hub_tts_chunk') {
+            if (message.stream_id !== hubTtsStreamIdRef.current) return;
+            const ctx = hubTtsCtxRef.current;
+            if (!ctx || !message.b64) return;
+            try {
+              const int16 = base64ToInt16PCM(message.b64);
+              if (!int16.length) return;
+              const sr = hubTtsSampleRateRef.current;
+              const buffer = ctx.createBuffer(1, int16.length, sr);
+              const ch = buffer.getChannelData(0);
+              for (let i = 0; i < int16.length; i++) ch[i] = int16[i] / 32768.0;
+              const src = ctx.createBufferSource();
+              src.buffer = buffer;
+              src.connect(ctx.destination);
+              const startAt = Math.max(ctx.currentTime, hubTtsNextTimeRef.current);
+              src.start(startAt);
+              hubTtsNextTimeRef.current = startAt + buffer.duration;
+            } catch (e) {
+              console.error('Hub TTS chunk playback failed', e);
+            }
+          } else if (message.type === 'hub_tts_end') {
+            if (message.stream_id !== hubTtsStreamIdRef.current) return;
+            hubTtsStreamIdRef.current = null;
+            if (message.error) {
+              console.warn('Hub TTS:', message.error);
+            }
           }
         } catch {
           console.error('Failed to parse message:', event.data);
@@ -316,6 +378,7 @@ function App() {
       };
 
       ws.onclose = () => {
+        stopHubTtsAudio();
         setWsStatus('disconnected');
         setBotUiStatus((prev) => {
           const next = { ...prev };
@@ -334,9 +397,10 @@ function App() {
 
     return () => {
       cancelled = true;
+      stopHubTtsAudio();
       if (ws) ws.close();
     };
-  }, [geminiConfigured, mergeBotList, refreshBotList]);
+  }, [geminiConfigured, mergeBotList, refreshBotList, stopHubTtsAudio]);
 
   useEffect(
     () => () => {

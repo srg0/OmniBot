@@ -147,8 +147,40 @@ bool deviceWakeWordEnabled = true;
 bool presenceScanEnabled = false;
 uint32_t presenceScanIntervalSec = 5;
 uint32_t greetingCooldownMinutes = 30;
+uint32_t sleepTimeoutSec = 300;
 unsigned long lastPresenceScanMs = 0;
+unsigned long lastActivityMs = 0;
 volatile bool pendingEnrollmentCapture = false;
+bool sleepAnimActive = false;
+bool wakeUpAnimActive = false;
+uint32_t wakeUpAnimStartMs = 0;
+bool sleepAnimHasPrevFrame = false;
+int16_t sleepAnimPrevY = 120;
+/** "zzz" above right eye during sleep; cleared when eyes bob. */
+static bool s_sleepZzzHavePrev = false;
+static int16_t s_sleepZzzClearX = 0;
+static int16_t s_sleepZzzClearY = 0;
+/** Bounding box for comic Z cluster (cleared each frame; includes float margin). */
+static const int16_t kSleepZzzBoxW = 78;
+static const int16_t kSleepZzzBoxH = 48;
+static const uint16_t kSleepZzzFill = 0x05FF;
+static const int16_t kSleepWakeEyeCenterLeftX = 68;
+static const int16_t kSleepWakeEyeCenterRightX = 172;
+static const int16_t kSleepWakeEyeCenterY = 160;
+
+enum WakeScanPhase {
+    WAKE_SCAN_PHASE_A = 0,
+    WAKE_SCAN_PHASE_B = 1,
+    WAKE_SCAN_PHASE_C = 2,
+};
+WakeScanPhase wakeScanPhase = WAKE_SCAN_PHASE_A;
+uint32_t wakeScanPhaseStartMs = 0;
+bool wakeScanHasPrevFrame = false;
+int16_t wakeScanPrevBarX = 0;
+int16_t wakeScanPrevBarW = 0;
+int16_t wakeScanPrevEyeW = 0;
+int16_t wakeScanPrevSlitY = 0;
+int16_t wakeScanPrevSlitH = 0;
 
 // Settings screen
 bool settingsScreenNeedsRedraw = true;
@@ -1085,9 +1117,7 @@ static int16_t triPulse(uint32_t elapsed, uint16_t durationMs, int16_t amplitude
     return (int16_t)(tri * (float)amplitude);
 }
 
-void showIdleEyes() {
-    gfx->fillScreen(BLACK);
-
+static void resetIdleAnimStateForShow() {
     idleAnim.lookX = 0;
     idleAnim.lookY = 0;
     idleAnim.targetLookX = 0;
@@ -1110,8 +1140,275 @@ void showIdleEyes() {
     idleAnim.prevEyeRyL = 66;
     idleAnim.prevEyeRyR = 66;
     idleAnim.hasPrevFrame = true;
+}
 
+void showIdleEyes() {
+    gfx->fillScreen(BLACK);
+    resetIdleAnimStateForShow();
     drawEyes(0, 0, 66, 66, CYAN);
+}
+
+/** After wake phase C, the framebuffer already shows full idle ovals — reset state without a black flash. */
+static void resumeIdleAfterWakeAnimation() {
+    resetIdleAnimStateForShow();
+}
+
+static void markActivity(const char* source) {
+    (void)source;
+    lastActivityMs = millis();
+    bool wasSleeping = sleepAnimActive;
+    sleepAnimActive = false;
+    if (wasSleeping) {
+        wakeUpAnimActive = true;
+        wakeUpAnimStartMs = millis();
+        wakeScanPhase = WAKE_SCAN_PHASE_A;
+        wakeScanPhaseStartMs = wakeUpAnimStartMs;
+        wakeScanHasPrevFrame = false;
+        idleAnim.hasPrevFrame = false;
+        sleepAnimHasPrevFrame = false;
+        s_sleepZzzHavePrev = false;
+        gfx->fillScreen(BLACK);
+    }
+}
+
+/** Thick comic-book Z: cyan fill, black outline (reference art style). hMul = letter height in u units. */
+static void drawComicZ(int16_t x, int16_t y, int16_t u, int16_t hMul, uint16_t fill, uint16_t ol) {
+    if (u < 2) {
+        u = 2;
+    }
+    if (hMul < 4) {
+        hMul = 4;
+    }
+    const int16_t w = 6 * u;
+    const int16_t h = (int16_t)(hMul * u);
+    const int16_t t = u;
+    gfx->fillRect((int16_t)(x - 1), (int16_t)(y - 1), (int16_t)(w + 2), (int16_t)(t + 2), ol);
+    gfx->fillRect((int16_t)(x - 1), (int16_t)(y + h - t), (int16_t)(w + 2), (int16_t)(t + 2), ol);
+    const int16_t x0 = (int16_t)(x + w - t);
+    const int16_t y0 = (int16_t)(y + t);
+    const int16_t x1 = (int16_t)(x + t);
+    const int16_t y1 = (int16_t)(y + h - t);
+    int16_t steps = (int16_t)(max(w, h) / 2);
+    if (steps < 5) {
+        steps = 5;
+    }
+    for (int16_t s = 0; s <= steps; s++) {
+        int16_t px = (int16_t)(x0 + (int16_t)(((int32_t)(x1 - x0) * s) / steps));
+        int16_t py = (int16_t)(y0 + (int16_t)(((int32_t)(y1 - y0) * s) / steps));
+        gfx->fillRect((int16_t)(px - 1), (int16_t)(py - 1), (int16_t)(t + 2), (int16_t)(t + 2), ol);
+    }
+    gfx->fillRect(x, y, w, t, fill);
+    gfx->fillRect(x, (int16_t)(y + h - t), w, t, fill);
+    for (int16_t s = 0; s <= steps; s++) {
+        int16_t px = (int16_t)(x0 + (int16_t)(((int32_t)(x1 - x0) * s) / steps));
+        int16_t py = (int16_t)(y0 + (int16_t)(((int32_t)(y1 - y0) * s) / steps));
+        gfx->fillRect(px, py, t, t, fill);
+    }
+}
+
+static void drawSleepZzzOverlay(int16_t eyeTopY, uint32_t nowMs) {
+    if (s_sleepZzzHavePrev) {
+        gfx->fillRect(s_sleepZzzClearX, s_sleepZzzClearY, kSleepZzzBoxW, kSleepZzzBoxH, BLACK);
+    }
+    const uint16_t fill = kSleepZzzFill;
+    const uint16_t ol = BLACK;
+    const int16_t baseX = 180;
+    const int16_t baseY = (int16_t)(eyeTopY - 52);
+
+    // Gentle drift + slight per-letter wobble (ms-based so it keeps moving while eyes are still).
+    const uint32_t t = nowMs % 4000U;
+    const float ph = (float)t / 4000.0f * 6.2831853f;
+    const int16_t gx = (int16_t)(sinf(ph) * 3.0f);
+    const int16_t gy = (int16_t)(sinf(ph * 1.27f + 0.4f) * 2.5f);
+
+    drawComicZ((int16_t)(baseX + 2 + gx + (int16_t)(sinf(ph * 2.1f) * 1.2f)),
+               (int16_t)(baseY + gy + (int16_t)(sinf(ph * 1.9f + 0.2f) * 1.0f)),
+               3,
+               5,
+               fill,
+               ol);
+    drawComicZ((int16_t)(baseX + 30 + gx + (int16_t)(sinf(ph * 2.4f + 1.1f) * 1.2f)),
+               (int16_t)(baseY + 8 + gy + (int16_t)(sinf(ph * 2.0f + 2.0f) * 1.0f)),
+               2,
+               5,
+               fill,
+               ol);
+    drawComicZ((int16_t)(baseX + 8 + gx + (int16_t)(sinf(ph * 2.7f + 0.5f) * 1.2f)),
+               (int16_t)(baseY + 26 + gy + (int16_t)(sinf(ph * 2.2f + 1.7f) * 1.0f)),
+               2,
+               4,
+               fill,
+               ol);
+
+    s_sleepZzzClearX = (int16_t)(baseX - 4);
+    s_sleepZzzClearY = (int16_t)(baseY - 4);
+    s_sleepZzzHavePrev = true;
+}
+
+static void updateSleepEyesAnimation() {
+    const uint32_t now = millis();
+    if (now - lastIdleEyesUpdate < 80) return;
+    lastIdleEyesUpdate = now;
+
+    // Sleep = thin rectangular lids with a gentle vertical "breathing" bob.
+    const uint32_t cycleMs = 2600;
+    const float phase = (float)(now % cycleMs) / (float)cycleMs;  // 0..1
+    const float wave = sinf(phase * 6.2831853f);                  // -1..1
+    const int16_t breathOffsetY = (int16_t)(wave * 3.0f);         // subtle rise/fall
+
+    const int16_t eyeW = 74;
+    const int16_t eyeH = 10;
+    const int16_t leftX = kSleepWakeEyeCenterLeftX - (eyeW / 2);
+    const int16_t rightX = kSleepWakeEyeCenterRightX - (eyeW / 2);
+    const int16_t y = (kSleepWakeEyeCenterY - (eyeH / 2)) + breathOffsetY;
+
+    if (!sleepAnimHasPrevFrame) {
+        gfx->fillRect(leftX, y, eyeW, eyeH, CYAN);
+        gfx->fillRect(rightX, y, eyeW, eyeH, CYAN);
+        drawSleepZzzOverlay(y, now);
+        sleepAnimHasPrevFrame = true;
+        sleepAnimPrevY = y;
+        return;
+    }
+
+    if (y == sleepAnimPrevY) {
+        drawSleepZzzOverlay(y, now);
+        return;
+    }
+
+    // Differential redraw to avoid full-screen flicker during sleep bobbing.
+    gfx->fillRect(leftX, sleepAnimPrevY, eyeW, eyeH, BLACK);
+    gfx->fillRect(rightX, sleepAnimPrevY, eyeW, eyeH, BLACK);
+    gfx->fillRect(leftX, y, eyeW, eyeH, CYAN);
+    gfx->fillRect(rightX, y, eyeW, eyeH, CYAN);
+    drawSleepZzzOverlay(y, now);
+    sleepAnimPrevY = y;
+}
+
+static void updateWakeUpAnimation() {
+    const uint32_t now = millis();
+    // Failsafe: never stay stuck in wake (should complete via phase C).
+    if (now - wakeUpAnimStartMs > 8000u) {
+        wakeUpAnimActive = false;
+        wakeScanHasPrevFrame = false;
+        wakeScanPrevBarX = 0;
+        wakeScanPrevBarW = 0;
+        wakeScanPrevEyeW = 0;
+        wakeScanPrevSlitY = 0;
+        wakeScanPrevSlitH = 0;
+        idleAnim.hasPrevFrame = false;
+        showIdleEyes();
+        return;
+    }
+
+    const uint32_t phaseElapsed = now - wakeScanPhaseStartMs;
+    const uint32_t phaseADurationMs = 500;
+    const uint32_t phaseBDurationMs = 1000;
+
+    if (wakeScanPhase == WAKE_SCAN_PHASE_A && phaseElapsed >= phaseADurationMs) {
+        wakeScanPhase = WAKE_SCAN_PHASE_B;
+        wakeScanPhaseStartMs = now;
+        wakeScanHasPrevFrame = false;
+    } else if (wakeScanPhase == WAKE_SCAN_PHASE_B && phaseElapsed >= phaseBDurationMs) {
+        wakeScanPhase = WAKE_SCAN_PHASE_C;
+        wakeScanPhaseStartMs = now;
+        wakeScanHasPrevFrame = false;
+        gfx->fillScreen(BLACK);
+    }
+
+    if (wakeScanPhase == WAKE_SCAN_PHASE_C) {
+        // Ease from slit-sized ovals to full idle geometry, then hand off without a flash.
+        const uint32_t cElapsed = now - wakeScanPhaseStartMs;
+        const uint32_t cDuration = 400;
+        float t = (cDuration > 0) ? (float)cElapsed / (float)cDuration : 1.0f;
+        if (t > 1.0f) {
+            t = 1.0f;
+        }
+        int16_t ry = (int16_t)(20 + (46.0f * t));
+        int16_t yOffset = (int16_t)(8.0f * (1.0f - t));
+        if (ry < 14) {
+            ry = 14;
+        }
+        if (ry > 66) {
+            ry = 66;
+        }
+        drawEyes(0, yOffset, ry, ry, CYAN);
+
+        if (cElapsed >= cDuration) {
+            wakeUpAnimActive = false;
+            wakeScanHasPrevFrame = false;
+            wakeScanPrevBarX = 0;
+            wakeScanPrevBarW = 0;
+            wakeScanPrevEyeW = 0;
+            wakeScanPrevSlitY = 0;
+            wakeScanPrevSlitH = 0;
+            resumeIdleAfterWakeAnimation();
+        }
+        return;
+    }
+
+    // Phase A/B: slit + moving scan bar with differential redraw.
+    const int16_t eyeW = (wakeScanPhase == WAKE_SCAN_PHASE_A) ? 62 : 74;
+    const int16_t eyeH = (wakeScanPhase == WAKE_SCAN_PHASE_A) ? 8 : 10;
+    const int16_t leftX = kSleepWakeEyeCenterLeftX - (eyeW / 2);
+    const int16_t rightX = kSleepWakeEyeCenterRightX - (eyeW / 2);
+    const int16_t slitY = kSleepWakeEyeCenterY - (eyeH / 2);
+    const uint32_t curPhaseElapsed = now - wakeScanPhaseStartMs;
+    const uint32_t curPhaseDuration = (wakeScanPhase == WAKE_SCAN_PHASE_A) ? phaseADurationMs : phaseBDurationMs;
+    float p = (curPhaseDuration > 0) ? (float)curPhaseElapsed / (float)curPhaseDuration : 1.0f;
+    if (p > 1.0f) p = 1.0f;
+
+    const int16_t barW = 8;
+    const int16_t barXMin = leftX - 4;
+    const int16_t barTravel = eyeW + 8;
+    float barProgress = p;
+    if (wakeScanPhase == WAKE_SCAN_PHASE_B) {
+        // Red phase sweeps back-and-forth for one second.
+        float twoWay = p * 2.0f;
+        barProgress = (twoWay <= 1.0f) ? twoWay : (2.0f - twoWay);
+    }
+    const int16_t barX = (int16_t)(barXMin + (barProgress * barTravel));
+    const uint16_t scanColor = (wakeScanPhase == WAKE_SCAN_PHASE_A) ? WHITE : RED;
+
+    if (!wakeScanHasPrevFrame) {
+        // First frame in a phase: draw base slit + scan bar.
+        gfx->fillRect(leftX, slitY, eyeW, eyeH, CYAN);
+        gfx->fillRect(rightX, slitY, eyeW, eyeH, CYAN);
+        gfx->fillRect(barX, slitY, barW, eyeH, scanColor);
+        gfx->fillRect(barX + (rightX - leftX), slitY, barW, eyeH, scanColor);
+        wakeScanHasPrevFrame = true;
+        wakeScanPrevBarX = barX;
+        wakeScanPrevBarW = barW;
+        wakeScanPrevEyeW = eyeW;
+        wakeScanPrevSlitY = slitY;
+        wakeScanPrevSlitH = eyeH;
+        return;
+    }
+
+    // If slit geometry changed between phases, clear old and repaint current slit once.
+    if (wakeScanPrevSlitY != slitY || wakeScanPrevSlitH != eyeH || wakeScanPrevEyeW != eyeW) {
+        int16_t prevLeftX = kSleepWakeEyeCenterLeftX - (wakeScanPrevEyeW / 2);
+        int16_t prevRightX = kSleepWakeEyeCenterRightX - (wakeScanPrevEyeW / 2);
+        gfx->fillRect(prevLeftX, wakeScanPrevSlitY, wakeScanPrevEyeW, wakeScanPrevSlitH, BLACK);
+        gfx->fillRect(prevRightX, wakeScanPrevSlitY, wakeScanPrevEyeW, wakeScanPrevSlitH, BLACK);
+        gfx->fillRect(leftX, slitY, eyeW, eyeH, CYAN);
+        gfx->fillRect(rightX, slitY, eyeW, eyeH, CYAN);
+    }
+
+    if (barX != wakeScanPrevBarX) {
+        // Erase previous bar segment, restore slit beneath, then draw new bar.
+        gfx->fillRect(wakeScanPrevBarX, slitY, wakeScanPrevBarW, eyeH, CYAN);
+        gfx->fillRect(
+            wakeScanPrevBarX + (rightX - leftX), slitY, wakeScanPrevBarW, eyeH, CYAN
+        );
+        gfx->fillRect(barX, slitY, barW, eyeH, scanColor);
+        gfx->fillRect(barX + (rightX - leftX), slitY, barW, eyeH, scanColor);
+        wakeScanPrevBarX = barX;
+    }
+    wakeScanPrevBarW = barW;
+    wakeScanPrevEyeW = eyeW;
+    wakeScanPrevSlitY = slitY;
+    wakeScanPrevSlitH = eyeH;
 }
 
 void updateIdleEyesAnimation() {
@@ -1680,6 +1977,18 @@ static void loadPresenceFromPrefs() {
     }
 }
 
+static void loadSleepTimeoutFromPrefs() {
+    preferences.begin("pixel_prefs", true);
+    sleepTimeoutSec = preferences.getUInt("sleep_to", 300);
+    preferences.end();
+    if (sleepTimeoutSec < 30u) {
+        sleepTimeoutSec = 30u;
+    }
+    if (sleepTimeoutSec > 1800u) {
+        sleepTimeoutSec = 1800u;
+    }
+}
+
 static void applyRuntimePresenceScan(bool en, uint32_t intervalSec, uint32_t cooldownMin) {
     presenceScanEnabled = en;
     presenceScanIntervalSec = intervalSec;
@@ -1702,6 +2011,20 @@ static void applyRuntimePresenceScan(bool en, uint32_t intervalSec, uint32_t coo
     preferences.putUInt("presence_cd", greetingCooldownMinutes);
     preferences.end();
     lastPresenceScanMs = 0;
+}
+
+static void applyRuntimeSleepTimeout(uint32_t timeoutSec) {
+    sleepTimeoutSec = timeoutSec;
+    if (sleepTimeoutSec < 30u) {
+        sleepTimeoutSec = 30u;
+    }
+    if (sleepTimeoutSec > 1800u) {
+        sleepTimeoutSec = 1800u;
+    }
+    preferences.begin("pixel_prefs", false);
+    preferences.putUInt("sleep_to", sleepTimeoutSec);
+    preferences.end();
+    markActivity("runtime_sleep_timeout");
 }
 
 /**
@@ -2138,6 +2461,12 @@ void setupWiFi() {
                             uint32_t iv = (uint32_t)(doc["interval_sec"] | 5);
                             uint32_t cd = (uint32_t)(doc["cooldown_minutes"] | 30);
                             applyRuntimePresenceScan(en, iv, cd);
+                        } else if (strcmp(msgType, "runtime_sleep_timeout") == 0) {
+                            uint32_t toSec = (uint32_t)(doc["timeout_sec"] | 300);
+                            applyRuntimeSleepTimeout(toSec);
+                        } else if (strcmp(msgType, "activity_event") == 0) {
+                            const char* src = doc["source"] | "hub";
+                            markActivity(src);
                         } else if (strcmp(msgType, "request_reference_capture") == 0) {
                             pendingEnrollmentCapture = true;
                         } else if (strcmp(msgType, "face_animation") == 0) {
@@ -2314,7 +2643,9 @@ void setup() {
     loadTimezoneRuleFromPrefs();
     loadWakeWordFromPrefs();
     loadPresenceFromPrefs();
+    loadSleepTimeoutFromPrefs();
     lastPresenceScanMs = millis();
+    lastActivityMs = millis();
     setupWiFi();
 
     xTaskCreatePinnedToCore(
@@ -2434,6 +2765,38 @@ void loop() {
         wsUnlock();
     }
 
+    if (
+        currentState == STATE_IDLE &&
+        !timeScreenActive &&
+        !mapOverlayActive &&
+        !callingCardOverlayActive &&
+        !faceAnimActive &&
+        !wakeUpAnimActive
+    ) {
+        uint32_t timeoutMs = sleepTimeoutSec * 1000UL;
+        if (timeoutMs < 30000UL) {
+            timeoutMs = 30000UL;
+        }
+        unsigned long nowMs = millis();
+        if (!sleepAnimActive && (nowMs - lastActivityMs >= timeoutMs)) {
+            sleepAnimActive = true;
+            sleepAnimHasPrevFrame = false;
+            s_sleepZzzHavePrev = false;
+            idleAnim.hasPrevFrame = false;
+            gfx->fillScreen(BLACK);
+        }
+    } else if (sleepAnimActive) {
+        sleepAnimActive = false;
+        sleepAnimHasPrevFrame = false;
+        s_sleepZzzHavePrev = false;
+        wakeScanHasPrevFrame = false;
+        wakeScanPrevBarX = 0;
+        wakeScanPrevBarW = 0;
+        wakeScanPrevEyeW = 0;
+        wakeScanPrevSlitY = 0;
+        wakeScanPrevSlitH = 0;
+    }
+
     if (hubWebSocketEnabled && isWsConnected && currentState == STATE_IDLE) {
         if (pendingEnrollmentCapture) {
             if (captureAndSendJpegPacket(0x07)) {
@@ -2521,6 +2884,7 @@ void loop() {
         int deltaX = endX - startX;
         int deltaY = endY - startY;
         unsigned long touchDuration = millis() - touchStartTime;
+        markActivity("touch");
         
         int absX = abs(deltaX);
         int absY = abs(deltaY);
@@ -2661,6 +3025,10 @@ void loop() {
             drawSettingsScreen();
             settingsScreenNeedsRedraw = false;
         }
+    } else if (wakeUpAnimActive && currentState == STATE_IDLE && !timeScreenActive) {
+        updateWakeUpAnimation();
+    } else if (sleepAnimActive && currentState == STATE_IDLE && !timeScreenActive) {
+        updateSleepEyesAnimation();
     } else if (currentState == STATE_IDLE && !timeScreenActive) {
         updateIdleEyesAnimation();
     }
