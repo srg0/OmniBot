@@ -25,7 +25,9 @@ When Wi‑Fi works and the hub is reachable, Pixel connects with a WebSocket; th
 - Say your wake phrase (train a **custom** `pixel.onnx` on the hub, or use the hub’s default test model—see hub logs), then your question. Pixel shows **thinking** when the hub starts processing, then the reply on the face.
 - **Voice does not work** if the hub is offline or wake word is turned off in settings (there is no on-device tap-to-record).
 
-**Vision:** With **Vision** on in the dashboard (and on the device), Pixel streams **JPEG frames** to the hub during idle wake listening; the hub keeps a short rolling buffer and builds the clip for Gemini and the **Intelligence Feed** when you finish a voice turn. Turn **Vision** off to save Wi‑Fi bandwidth. Presence face scan uses the camera separately and may occasionally contend with video streaming.
+**Vision:** With **Vision** on in the dashboard (and on the device), Pixel streams **JPEG frames** to the hub during idle wake listening; the hub keeps a short rolling buffer and builds the clip for **Gemini Live** and the **Intelligence Feed** when you finish a voice turn. Turn **Vision** off to save Wi‑Fi bandwidth. Presence face scan uses the camera separately and may occasionally contend with video streaming.
+
+**Persona, memory, and hub voice:** The hub does not rely on a single “system instructions” text field. Each bot has **markdown persona files** (SOUL, MEMORY, etc.) and optional **heartbeat** maintenance; you can edit them in **Pixel bot** settings or start a guided reset via **Hub settings → Give me a soul**. After voice turns, the PC can **read replies aloud** (**hub TTS**) if enabled. If **Hub settings** uses **browser** as the live voice source, wake audio comes from the PC mic instead of Pixel (see [main README](../../README.md)).
 
 ### On-device settings (swipe down from idle)
 
@@ -95,4 +97,6 @@ Declared in `platformio.ini` (e.g. `esp32-camera`, WebSockets, ArduinoJson, disp
 
 ## Related docs
 
-- **OmniBot hub + dashboard:** [`../../README.md`](../../README.md)
+- **OmniBot hub + dashboard:** [`../../README.md`](../../README.md) (persona framework, Gemini Live, browser live voice, env vars)
+- **Default persona templates (repo):** [`../../app/backend/persona_defaults/README.md`](../../app/backend/persona_defaults/README.md)
+- **Custom wake word model:** [`../../app/backend/models/wake/README.md`](../../app/backend/models/wake/README.md)

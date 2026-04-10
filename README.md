@@ -1,6 +1,6 @@
 # OmniBot
 
-Run the **hub** (API + dashboard) on your PC and connect **ESP32** robots such as **Pixel** over Wi‑Fi. You chat with **Google Gemini** from the browser, provision Wi‑Fi over Bluetooth, and tune hub and bot behavior from the UI.
+Run the **hub** (API + dashboard) on your PC and connect **ESP32** robots such as **Pixel** over Wi‑Fi. You chat with **Google Gemini** from the browser (including **Gemini Live** for voice and optional video), provision Wi‑Fi over Bluetooth, and tune hub and bot behavior from the UI. Each bot gets an **OpenClaw-style persona**: markdown files on disk (voice, identity, memory, tools, heartbeat rules) that the model can update through declared tools, plus optional **heartbeat maintenance** that merges daily logs into long-term memory.
 
 Licensed under the [MIT License](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
@@ -95,13 +95,44 @@ Optional: set `GEMINI_API_KEY` in [`app/backend/.env`](app/backend/.env.example)
 ### Sidebar
 
 - **Bots** — Each connected or configured bot appears as a card. **Click a card** to open the **Dashboard** (Intelligence Feed) for that bot. **Offline** / **Ready** / **Processing** reflect connection and activity.
-- **Gear on a bot card** — Opens **Settings** with the **Pixel bot** tab selected for that device (model, instructions, vision, etc.).
-- **Hub settings** — API keys, timezone, and optional location (postal + country) for local/geo answers when you use those features.
+- **Gear on a bot card** — Opens **Settings** with the **Pixel bot** tab for that device (model, vision, wake word, persona markdown, face profiles, heartbeat, hub TTS, and more).
+- **Hub settings** — API keys, timezone, optional location (postal + country), **browser live voice** (mic/speakers vs Pixel), and **Give me a soul** (persona bootstrap ritual).
 - **Add New Bot** — Opens **Setup**: scan for a device over **Bluetooth**, pick a Wi‑Fi network, and send credentials so the bot can join your LAN and reach the hub.
 
 ### Dashboard (Intelligence Feed)
 
-After you select a bot, the main view shows **live activity**: connection status, streamed Gemini replies, logs, and optional previews when a bot is connected. Use the **text box** to send messages to Gemini through the hub (works even without hardware once the key is configured).
+After you select a bot, the main view shows **live activity**: connection status, streamed Gemini replies, logs, live transcription when using voice, and an optional **~1 fps JPEG preview** of frames sent to the model when vision is on. Use the **text box** to send messages through the hub (works without hardware once the key is configured).
+
+### Persona framework (per bot)
+
+The hub composes the model’s **system instruction** from hub rules plus markdown files stored under **`DATA_DIR/persona/<device_id>/`** (default: `app/backend/persona/<device_id>/` when `OMNIBOT_DATA_DIR` is unset). That directory is **gitignored**; committed **templates** live in [`app/backend/persona_defaults/`](app/backend/persona_defaults/) (see [`app/backend/persona_defaults/README.md`](app/backend/persona_defaults/README.md)).
+
+| File | Role |
+|------|------|
+| **AGENTS.md** | High-level behavior guide (injected; edit in **Pixel bot** settings). |
+| **SOUL.md** | Voice, tone, boundaries. |
+| **IDENTITY.md** | Who the bot is (name, nature, emoji, etc.). |
+| **USER.md** | Profile of the human. |
+| **TOOLS.md** | Reference for what tools exist (context for the model). |
+| **MEMORY.md** | Curated long-term memory (trimmed if very large). |
+| **HEARTBEAT.md** | Instructions for periodic **heartbeat** maintenance passes. |
+| **BOOTSTRAP.md** | Written only during **Give me a soul**; the model follows it once, then calls **`bootstrap_complete`** to remove it. |
+| **`logs/daily/YYYY-MM-DD.md`** | Raw daily notes; the model can append with **`daily_log_append`**. |
+
+During chat, Gemini can call tools such as **`soul_replace`**, **`memory_replace`**, **`persona_replace`** (IDENTITY / USER / HEARTBEAT), **`daily_log_append`**, and **`bootstrap_complete`**, subject to the rules injected with the persona. **Heartbeat maintenance** (optional, on an interval you set) runs a separate pass that may update **MEMORY.md** only from recent daily logs and **HEARTBEAT.md** guidance.
+
+**Give me a soul** (under **Hub settings**): resets persona markdown to the hub templates, clears that bot’s hub chat history, wipes daily logs and heartbeat state, writes **BOOTSTRAP.md**, and starts a streamed bootstrap conversation—follow it in the Intelligence Feed for the chosen bot.
+
+**Reset to defaults** (in **Pixel bot** settings): restores numeric/boolean bot settings and **overwrites** the persona markdown files from templates; daily logs are kept unless you use the soul flow (which clears logs for a clean ritual).
+
+### Other hub features worth knowing
+
+- **Gemini Live** — Voice (and optional vision) turns use the Live API when enabled (default). Set environment variable **`OMNIBOT_USE_GEMINI_LIVE=0`** to disable Live and fall back to the non-Live path. REST/chat and heartbeat avoid “live” model IDs automatically where needed.
+- **Browser live voice** — In **Hub settings**, set voice source to **browser** to use the PC microphone and speakers (OpenWakeWord on the hub + `/ws/voice-bridge`) instead of streaming from Pixel. Pixel wake streaming is suppressed in that mode so only one path is active.
+- **Hub TTS** — After a **voice** turn, the hub can speak the assistant reply on the PC using **Gemini TTS** (voice selectable per bot). Typed chat messages are not spoken.
+- **Wake word & follow-up** — OpenWakeWord on the hub; optional custom model as **`pixel.onnx`** under [`app/backend/models/wake/`](app/backend/models/wake/README.md). **Post-reply listen** seconds control VAD-only follow-up without repeating the wake phrase (`0` = wake required every turn).
+- **Presence face scan** — Optional periodic snapshots from Pixel for on-LAN face matching and greetings; enroll people under **Pixel bot** settings.
+- **Thinking level** — Per-bot **Gemini 3** thinking levels (including **minimal** and **auto**) map to the API’s thinking config; see the in-UI help link if a model rejects a level.
 
 ### Settings
 
@@ -109,8 +140,8 @@ Two tabs:
 
 | Tab | Purpose |
 |-----|--------|
-| **Pixel bot** | Per-bot options: model, system instructions, vision, and related behavior for the selected bot. |
-| **Hub / application** | Hub-wide secrets and preferences (Gemini key, timezone, optional Maps-related settings). |
+| **Pixel bot** | Per-bot model & thinking, vision, wake word, post-reply listen, hub TTS, presence scan, sleep timeout, **persona editor** (AGENTS / SOUL / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT), face profiles, heartbeat interval and enable flag. |
+| **Hub / application** | Hub-wide secrets and preferences (Gemini key, timezone, optional Maps-related settings), **browser live voice** devices, **Give me a soul** (bootstrap) per bot. |
 
 Open **Hub settings** from the sidebar, or **Pixel bot** via the gear on a bot card.
 
@@ -148,7 +179,11 @@ Build and flash from [`bots/Pixel`](bots/Pixel) with **PlatformIO**. Set `backen
 
 ## Optional configuration
 
-Extra environment variables (Nominatim user-agent, Maps keys, data directory, debug) are listed in [`app/backend/.env.example`](app/backend/.env.example). Values set in the environment override file-based settings at runtime where applicable.
+Extra environment variables (Nominatim user-agent, Maps keys, data directory, debug, bind host/port, static root) are listed in [`app/backend/.env.example`](app/backend/.env.example). Values set in the environment override file-based settings at runtime where applicable.
+
+- **`OMNIBOT_DATA_DIR`** — Moves all hub JSON and the **`persona/`** tree to another directory (useful for backups or Docker volumes).
+- **`OMNIBOT_USE_GEMINI_LIVE`** — Set to **`0`** to disable Gemini Live for voice/video on the hub (see **Persona framework** above).
+- **Wake tuning** — **`OMNIBOT_WAKE_WORD_MODEL`**, **`OMNIBOT_WAKE_THRESHOLD`**, **`OMNIBOT_WAKE_SILENCE_MS`** (see [`app/backend/models/wake/README.md`](app/backend/models/wake/README.md)).
 
 ---
 

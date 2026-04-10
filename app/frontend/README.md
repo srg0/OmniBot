@@ -15,9 +15,11 @@ Then open **[http://127.0.0.1:5173](http://127.0.0.1:5173)**.
 
 - **First visit:** Paste your Gemini API key if prompted.
 - **Sidebar:** Pick a **bot**, open **Hub settings**, or **Add New Bot** for Bluetooth Wi‑Fi setup.
-- **Main area:** **Intelligence Feed** (chat and live activity) or **Setup** / **Settings** depending on what you chose.
+- **Main area:** **Intelligence Feed** (text chat, streamed replies, live transcription and optional video preview when the bot streams to the hub) or **Setup** / **Settings** depending on what you chose.
+- **Pixel bot settings (gear on a card):** Model, Gemini thinking level, vision, wake word, post-reply listen window, hub TTS voice, presence face scan, sleep timeout, **tabbed persona editor** (AGENTS, SOUL, IDENTITY, USER, TOOLS, MEMORY, HEARTBEAT with **Save persona file**), enrolled faces, and heartbeat interval. **Reset to defaults** restores bot toggles and overwrites persona markdown from hub templates (daily logs kept).
+- **Hub settings:** Secrets, timezone, **browser live voice** (ESP32 vs browser mic/speakers; enumerates devices after mic permission), and **Give me a soul** — resets persona files, clears chat + daily logs for that bot, writes BOOTSTRAP, and starts the bootstrap stream (watch the Intelligence Feed).
 
-See the [root README](../../README.md) for full usage.
+See the [root README](../../README.md) for the full persona model, environment variables, and hardware notes.
 
 ## Development without the repo scripts
 

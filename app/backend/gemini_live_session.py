@@ -56,9 +56,12 @@ def build_pixel_live_tools() -> list[types.Tool]:
         types.FunctionDeclaration(**persona.DAILY_LOG_APPEND_DECLARATION),
         types.FunctionDeclaration(**persona.BOOTSTRAP_COMPLETE_DECLARATION),
     ]
+    # One Tool with both surfaces: Live AFC warns when google_search is a separate tool index.
     return [
-        types.Tool(google_search=google_search_tool),
-        types.Tool(function_declarations=custom_declarations),
+        types.Tool(
+            google_search=google_search_tool,
+            function_declarations=custom_declarations,
+        ),
     ]
 
 
@@ -109,6 +112,7 @@ class GeminiLiveCoordinator:
         self._reconnecting = False
         self._reconnect_task: Optional[asyncio.Task] = None
         self._go_away_reconnect_scheduled = False
+        self._clear_resumption_on_next_reconnect = False
 
         self._current_stream_id: Optional[str] = None
         self._first_token_sent_for_stream = False
@@ -300,9 +304,18 @@ class GeminiLiveCoordinator:
                 if self._stop.is_set():
                     break
                 logger.warning("[live] receive error device=%s: %s", self.device_id, e)
+                self._clear_resumption_on_next_reconnect = True
                 await self._schedule_reconnect()
-                # Avoid hammering logs while reconnect task is taking over.
-                await asyncio.sleep(0.25)
+                # Do not call receive() again on the dead session; wait until reconnect
+                # finishes or this task is cancelled during shutdown.
+                wait_cancelled = False
+                try:
+                    while self._reconnecting and not self._stop.is_set():
+                        await asyncio.sleep(0.05)
+                except asyncio.CancelledError:
+                    wait_cancelled = True
+                if wait_cancelled:
+                    break
 
     async def _dispatch_message(self, msg: types.LiveServerMessage) -> None:
         if msg.go_away is not None and not self._go_away_reconnect_scheduled:
@@ -463,6 +476,9 @@ class GeminiLiveCoordinator:
     async def _reconnect_with_backoff(self) -> None:
         if self._stop.is_set():
             return
+        if self._clear_resumption_on_next_reconnect:
+            self.resumption_handle = None
+            self._clear_resumption_on_next_reconnect = False
         delay = 0.5
         try:
             async with self._lock:
