@@ -17,7 +17,7 @@ For production or shared networks:
 - Put the hub behind a **reverse proxy** with authentication, or
 - Inject secrets with **environment variables** (they override file-based secrets) and restrict network access with firewalls.
 
-Secrets on disk live under the hub data directory as `hub_secrets.json` (see `OMNIBOT_DATA_DIR` in the README). Clock and Maps location live in `hub_app_settings.json` (not secret, but sensitive). Restrict file permissions on the host.
+Secrets on disk live under the hub data directory as `hub_secrets.json` (see `OMNIBOT_DATA_DIR` in the README), including optional **ElevenLabs** and **Gemini** API keys. Clock and Maps location live in `hub_app_settings.json` (not secret, but sensitive). Restrict file permissions on the host.
 
 ## Before making the repository public
 

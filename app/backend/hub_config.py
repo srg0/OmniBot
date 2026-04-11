@@ -106,6 +106,7 @@ def merge_hub_secrets(updates: dict[str, Any]) -> dict[str, Any]:
             continue
         if isinstance(v, str) and v.strip() == "" and k in {
             "gemini_api_key",
+            "elevenlabs_api_key",
             "nominatim_user_agent",
         }:
             current.pop(k, None)
@@ -125,6 +126,10 @@ def _env_first(env_name: str, file_key: str) -> str:
 
 def get_gemini_api_key() -> str:
     return _env_first("GEMINI_API_KEY", "gemini_api_key")
+
+
+def get_elevenlabs_api_key() -> str:
+    return _env_first("ELEVENLABS_API_KEY", "elevenlabs_api_key")
 
 
 def get_nominatim_user_agent_raw() -> str:
@@ -229,11 +234,14 @@ def hub_public_status() -> dict[str, Any]:
 def hub_settings_public_view() -> dict[str, Any]:
     """Non-secret hub settings for GET /api/hub/settings (keys are masked)."""
     gk = get_gemini_api_key()
+    ek = get_elevenlabs_api_key()
     env_nomi = bool((os.getenv("NOMINATIM_USER_AGENT") or "").strip())
     stored_nomi = (str(_secrets_from_file().get("nominatim_user_agent") or "")).strip()
     return {
         "gemini_api_key_configured": bool(gk),
         "gemini_api_key_masked": mask_secret(gk) if gk else None,
+        "elevenlabs_api_key_configured": bool(ek),
+        "elevenlabs_api_key_masked": mask_secret(ek) if ek else None,
         "nominatim_user_agent": stored_nomi,
         "nominatim_user_agent_from_env": env_nomi,
         "data_dir": str(DATA_DIR),

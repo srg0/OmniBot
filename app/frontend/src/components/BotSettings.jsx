@@ -3,6 +3,7 @@ import './BotSettings.css';
 import './SettingsShell.css';
 import {
   getBotSettings,
+  getHubSettings,
   updateBotSettings,
   resetBotSettingsToDefault,
   listFaceProfiles,
@@ -18,6 +19,12 @@ import {
 /** Hub REST/text paths still persist these; Gemini Live uses the fixed Live model in the backend. */
 const HIDDEN_REST_MODEL = 'gemini-3-flash-preview';
 const HIDDEN_THINKING_LEVEL = 'minimal';
+
+const PIXEL_TTS_OPTIONS = [
+  { value: 'gemini', label: 'Default (Gemini Live)' },
+  { value: 'elevenlabs_pixel_male', label: 'Pixel — male (ElevenLabs)' },
+  { value: 'elevenlabs_pixel_female', label: 'Pixel — female (ElevenLabs)' },
+];
 
 const SLEEP_TIMEOUT_OPTIONS = [
   { value: 30, label: '30 seconds' },
@@ -44,7 +51,6 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const [personaTab, setPersonaTab] = useState('soul');
   const [personaDrafts, setPersonaDrafts] = useState({
     soul: '',
-    voice: '',
     identity: '',
     user: '',
     tools: '',
@@ -62,6 +68,8 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
   const [faceMessage, setFaceMessage] = useState(null);
+  const [pixelTtsVoice, setPixelTtsVoice] = useState('gemini');
+  const [hubElevenlabsConfigured, setHubElevenlabsConfigured] = useState(false);
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -75,7 +83,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const loadPersona = useCallback(async () => {
     setPersonaMessage(null);
     try {
-      const files = ['soul', 'voice', 'identity', 'user', 'tools', 'memory', 'heartbeat', 'agents'];
+      const files = ['soul', 'identity', 'user', 'tools', 'memory', 'heartbeat', 'agents'];
       const entries = await Promise.all(
         files.map(async (f) => {
           const d = await getPersonaFile(deviceId, f);
@@ -94,7 +102,15 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const data = await getBotSettings(deviceId);
+        const [data, hubView] = await Promise.all([
+          getBotSettings(deviceId),
+          getHubSettings().catch(() => ({})),
+        ]);
+        setHubElevenlabsConfigured(Boolean(hubView.elevenlabs_api_key_configured));
+        const ptv = data.pixel_tts_voice;
+        setPixelTtsVoice(
+          ptv === 'elevenlabs_pixel_male' || ptv === 'elevenlabs_pixel_female' ? ptv : 'gemini'
+        );
         setVisionEnabled(Boolean(data.vision_enabled));
         setWakeWordEnabled(data.wake_word_enabled !== false);
         setPostReplyListenSec(
@@ -154,6 +170,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
         sleep_timeout_sec: Math.min(1800, Math.max(30, Number(sleepTimeoutSec) || 300)),
         heartbeat_interval_minutes: Math.min(720, Math.max(5, Number(heartbeatIntervalMin) || 30)),
         heartbeat_enabled: heartbeatEnabled,
+        pixel_tts_voice: pixelTtsVoice,
       });
       const saved = res.settings || {};
       setVisionEnabled(Boolean(saved.vision_enabled));
@@ -171,6 +188,10 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       setSleepTimeoutSec(saved.sleep_timeout_sec ?? 300);
       setHeartbeatIntervalMin(saved.heartbeat_interval_minutes ?? 30);
       setHeartbeatEnabled(saved.heartbeat_enabled !== false);
+      const sptv = saved.pixel_tts_voice;
+      setPixelTtsVoice(
+        sptv === 'elevenlabs_pixel_male' || sptv === 'elevenlabs_pixel_female' ? sptv : 'gemini'
+      );
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err) {
@@ -185,7 +206,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
     if (
       !window.confirm(
         'Reset Pixel vision, wake word, presence scan, and heartbeat settings to defaults? ' +
-          'SOUL.md, VOICE.md, IDENTITY.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, and AGENTS.md will be overwritten with hub templates (your edits are lost). BOOTSTRAP.md is removed if present. Daily logs under logs/daily/ are kept. Hub clock is unchanged.'
+          'SOUL.md, IDENTITY.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, and AGENTS.md will be overwritten with hub templates (your edits are lost). BOOTSTRAP.md is removed if present. Daily logs under logs/daily/ are kept. Hub clock is unchanged.'
       )
     ) {
       return;
@@ -213,6 +234,10 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       setSleepTimeoutSec(saved.sleep_timeout_sec ?? 300);
       setHeartbeatIntervalMin(saved.heartbeat_interval_minutes ?? 30);
       setHeartbeatEnabled(saved.heartbeat_enabled !== false);
+      const sptv = saved.pixel_tts_voice;
+      setPixelTtsVoice(
+        sptv === 'elevenlabs_pixel_male' || sptv === 'elevenlabs_pixel_female' ? sptv : 'gemini'
+      );
       await loadPersona();
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000);
@@ -458,6 +483,36 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       </div>
 
       <div className="form-group">
+        <label htmlFor="pixelTtsVoice">Spoken voice (TTS)</label>
+        <div className="select-wrapper">
+          <select
+            id="pixelTtsVoice"
+            value={pixelTtsVoice}
+            onChange={(e) => setPixelTtsVoice(e.target.value)}
+            className="holo-select"
+          >
+            {PIXEL_TTS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        {(pixelTtsVoice === 'elevenlabs_pixel_male' ||
+          pixelTtsVoice === 'elevenlabs_pixel_female') &&
+          !hubElevenlabsConfigured && (
+            <p className="help-text" style={{ color: '#fa0' }}>
+              Add an ElevenLabs API key in Hub settings to use these voices. Until then, the hub falls back to Gemini
+              Live audio.
+            </p>
+          )}
+        <p className="help-text">
+          Default uses native Gemini Live speech. Pixel male/female use ElevenLabs (same text as Gemini’s output
+          transcription). The ElevenLabs API key is stored in Hub settings, not here.
+        </p>
+      </div>
+
+      <div className="form-group">
         <label>Face recognition — enrolled people</label>
         <p className="help-text">
           Add a person, then upload a clear frontal photo or use Capture from Pixel while the bot is connected.
@@ -531,22 +586,21 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       </div>
 
       <div className="form-group persona-section">
-        <label>Persona (AGENTS / SOUL / VOICE / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT)</label>
+        <label>Persona (AGENTS / SOUL / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT)</label>
         <p className="help-text">
           Markdown files on the hub (OpenClaw-style). <strong>AGENTS.md</strong> is high-level behavior (injected for the
-          model; edit here). <strong>VOICE.md</strong> is how you sound when speaking (TTS / live). <strong>TOOLS.md</strong>{' '}
-          documents tools for context. The model can update <strong>SOUL.md</strong>, <strong>VOICE.md</strong>,{' '}
-          <strong>MEMORY.md</strong>, <strong>IDENTITY.md</strong>, <strong>USER.md</strong>, and <strong>HEARTBEAT.md</strong>{' '}
-          via tools when appropriate (Hub settings → <strong>Give me a soul</strong> runs{' '}
-          <strong>BOOTSTRAP.md</strong>). Heartbeat <em>maintenance</em> can merge daily logs into MEMORY. Voice turns use
-          Gemini Live on the hub; add explicit daily-log lines with the <code>daily_log_append</code> tool if you want raw
-          notes on disk. Save Pixel options with <strong>Save</strong>; save markdown with <strong>Save persona file</strong>.
+          model; edit here). <strong>TOOLS.md</strong> documents tools for context. The model can update{' '}
+          <strong>SOUL.md</strong>, <strong>MEMORY.md</strong>,{' '}
+          <strong>IDENTITY.md</strong>, <strong>USER.md</strong>, and <strong>HEARTBEAT.md</strong> via tools when appropriate
+          (Hub settings → <strong>Give me a soul</strong> runs <strong>BOOTSTRAP.md</strong>). Heartbeat <em>maintenance</em>{' '}
+          can merge daily logs into MEMORY. Voice turns use Gemini Live on the hub; add explicit daily-log lines with the{' '}
+          <code>daily_log_append</code> tool if you want raw notes on disk. Save Pixel options with <strong>Save</strong>; save
+          markdown with <strong>Save persona file</strong>.
         </p>
         <div className="persona-tab-row" role="tablist">
           {[
             { id: 'agents', label: 'AGENTS' },
             { id: 'soul', label: 'SOUL' },
-            { id: 'voice', label: 'VOICE' },
             { id: 'identity', label: 'IDENTITY' },
             { id: 'user', label: 'USER' },
             { id: 'tools', label: 'TOOLS' },

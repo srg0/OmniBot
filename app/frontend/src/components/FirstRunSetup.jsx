@@ -20,6 +20,7 @@ export default function FirstRunSetup({ onConfigured }) {
   const [step, setStep] = useState(0);
   const [geminiSaved, setGeminiSaved] = useState(false);
   const [geminiKey, setGeminiKey] = useState('');
+  const [elevenlabsKey, setElevenlabsKey] = useState('');
   const [timezoneRule, setTimezoneRule] = useState(TIMEZONE_OPTIONS[0].value);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -34,10 +35,19 @@ export default function FirstRunSetup({ onConfigured }) {
     setSaving(true);
     setError(null);
     try {
+      const hubPayload = {};
       if (trimmed) {
-        await postHubSettings({ gemini_api_key: trimmed });
+        hubPayload.gemini_api_key = trimmed;
         setGeminiSaved(true);
         setGeminiKey('');
+      }
+      const el = elevenlabsKey.trim();
+      if (el) {
+        hubPayload.elevenlabs_api_key = el;
+        setElevenlabsKey('');
+      }
+      if (Object.keys(hubPayload).length > 0) {
+        await postHubSettings(hubPayload);
       }
       setStep(1);
     } catch (err) {
@@ -106,6 +116,19 @@ export default function FirstRunSetup({ onConfigured }) {
                   A key is already saved. Leave blank and click Next to continue, or enter a new key to replace it.
                 </p>
               )}
+              <label className="first-run-label" htmlFor="first-run-elevenlabs" style={{ marginTop: '1rem' }}>
+                ElevenLabs API key (optional)
+              </label>
+              <input
+                id="first-run-elevenlabs"
+                type="password"
+                autoComplete="off"
+                className="first-run-input"
+                value={elevenlabsKey}
+                onChange={(e) => setElevenlabsKey(e.target.value)}
+                placeholder="Optional — for Pixel ElevenLabs voices"
+                disabled={saving}
+              />
               {error && <p className="first-run-error">{error}</p>}
               <button type="submit" className="first-run-submit" disabled={saving}>
                 {saving ? 'Saving…' : 'Next'}

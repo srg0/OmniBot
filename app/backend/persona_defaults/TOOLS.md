@@ -19,10 +19,6 @@ Human-editable notes; this text is injected into your context. **It does not tur
 - Replaces the **entire** `SOUL.md` file (personality, tone, boundaries in text).
 - **Parameter:** `markdown` — full new file body.
 
-### Spoken voice
-
-- **`VOICE.md`** — how you should **sound** when speaking (TTS / live voice). Injected into context; update with **`persona_replace`** (`file`: `voice`).
-
 ### `memory_replace`
 
 - Replaces the **entire** `MEMORY.md` file (curated long-term facts).
@@ -30,8 +26,8 @@ Human-editable notes; this text is injected into your context. **It does not tur
 
 ### `persona_replace`
 
-- Replaces **IDENTITY.md**, **USER.md**, **HEARTBEAT.md**, or **VOICE.md** (parameters `file` + `markdown`).
-- Use when learning about the human, settling name/vibe, updating heartbeat checklists, or refining how you sound out loud.
+- Replaces **IDENTITY.md**, **USER.md**, or **HEARTBEAT.md** (parameters `file` + `markdown`).
+- Use when learning about the human, settling name/vibe, or updating heartbeat checklists.
 
 ### `daily_log_append`
 

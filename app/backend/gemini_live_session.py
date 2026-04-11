@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from google.genai import types
 
-from hub_config import get_genai_client, get_gemini_api_key
+from hub_config import get_elevenlabs_api_key, get_genai_client, get_gemini_api_key
 from grounding_extract import (
     add_inline_citations_from_grounding,
     extract_search_sources_from_grounding_metadata,
@@ -133,6 +133,68 @@ class GeminiLiveCoordinator:
         self._live_turn_search_sources: list[dict] = []
         self._live_turn_search_queries: list[str] = []
         self._live_turn_gm: Any = None
+
+        self._el_q: Optional[asyncio.Queue] = None
+        self._el_task: Optional[asyncio.Task] = None
+        self._el_logged_no_key = False
+
+    def _want_elevenlabs_playback(self) -> bool:
+        bs = self._get_bot_settings(self.device_id)
+        mode = str(bs.get("pixel_tts_voice") or "gemini").strip()
+        if mode not in ("elevenlabs_pixel_male", "elevenlabs_pixel_female"):
+            return False
+        if not get_elevenlabs_api_key():
+            if not self._el_logged_no_key:
+                logger.warning(
+                    "[live] pixel_tts_voice=%s but no ElevenLabs API key; using Gemini PCM device=%s",
+                    mode,
+                    self.device_id,
+                )
+                self._el_logged_no_key = True
+            return False
+        return True
+
+    async def _ensure_elevenlabs_worker(self) -> None:
+        if self._el_q is not None:
+            return
+        from elevenlabs_tts_stream import stream_elevenlabs_turn_pcm, voice_id_for_pixel_tts_mode
+
+        mode = str(self._get_bot_settings(self.device_id).get("pixel_tts_voice") or "")
+        vid = voice_id_for_pixel_tts_mode(mode)
+        key = get_elevenlabs_api_key()
+        self._el_q = asyncio.Queue()
+
+        async def emit_pcm(chunk: bytes) -> None:
+            if not chunk:
+                return
+            b64 = base64.b64encode(chunk).decode("ascii")
+            await self._broadcast(
+                {
+                    "type": "live_audio_chunk",
+                    "device_id": self.device_id,
+                    "stream_id": self._current_stream_id,
+                    "sample_rate": LIVE_OUTPUT_AUDIO_SAMPLE_RATE,
+                    "channels": 1,
+                    "encoding": "pcm_s16le",
+                    "b64": b64,
+                }
+            )
+
+        async def _run_el() -> None:
+            try:
+                await stream_elevenlabs_turn_pcm(
+                    api_key=key,
+                    voice_id=vid,
+                    text_queue=self._el_q,
+                    emit_pcm=emit_pcm,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.exception("[live] ElevenLabs stream task failed device=%s: %s", self.device_id, e)
+                raise
+
+        self._el_task = asyncio.create_task(_run_el())
 
     async def ensure_started(self) -> None:
         async with self._lock:
@@ -290,6 +352,10 @@ class GeminiLiveCoordinator:
         self._live_turn_search_sources = []
         self._live_turn_search_queries = []
         self._live_turn_gm = None
+        if self._el_task and not self._el_task.done():
+            self._el_task.cancel()
+        self._el_task = None
+        self._el_q = None
         return sid
 
     async def _pcm_sender_loop(self) -> None:
@@ -427,6 +493,19 @@ class GeminiLiveCoordinator:
                 }
             )
             self._last_output_text = self._last_output_text + t
+            if self._want_elevenlabs_playback():
+                try:
+                    await self._ensure_elevenlabs_worker()
+                    if self._el_q is not None:
+                        await self._el_q.put((t, fin))
+                        logger.debug(
+                            "[live] elevenlabs queue put len=%s finished=%s device=%s",
+                            len(t or ""),
+                            fin,
+                            self.device_id,
+                        )
+                except Exception as e:
+                    logger.warning("[live] ElevenLabs enqueue failed: %s", e)
 
         raw_audio = msg.data
         if raw_audio is None and sc.model_turn and sc.model_turn.parts:
@@ -445,7 +524,7 @@ class GeminiLiveCoordinator:
                         pass
             if chunks:
                 raw_audio = b"".join(chunks)
-        if raw_audio:
+        if raw_audio and not self._want_elevenlabs_playback():
             if not self._first_token_sent_for_stream:
                 self._first_token_sent_for_stream = True
                 await self._notify_esp32_first_token(self.device_id)
@@ -471,6 +550,16 @@ class GeminiLiveCoordinator:
         )
         if turn_done and not self._closed_this_turn:
             self._closed_this_turn = True
+            if self._el_q is not None:
+                try:
+                    await self._el_q.put(None)
+                    if self._el_task:
+                        await self._el_task
+                except Exception as e:
+                    logger.warning("[live] ElevenLabs turn failed device=%s: %s", self.device_id, e)
+                finally:
+                    self._el_q = None
+                    self._el_task = None
             out_plain = (self._last_output_text or "").strip()
             out_cited = (
                 add_inline_citations_from_grounding(out_plain, self._live_turn_gm)

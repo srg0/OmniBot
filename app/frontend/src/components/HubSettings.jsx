@@ -24,6 +24,7 @@ const HubSettings = () => {
   const [saveStatus, setSaveStatus] = useState(null);
   const [form, setForm] = useState({
     gemini_api_key: '',
+    elevenlabs_api_key: '',
     nominatim_user_agent: '',
   });
 
@@ -112,6 +113,7 @@ const HubSettings = () => {
     try {
       const payload = {};
       if (form.gemini_api_key.trim()) payload.gemini_api_key = form.gemini_api_key.trim();
+      if (form.elevenlabs_api_key.trim()) payload.elevenlabs_api_key = form.elevenlabs_api_key.trim();
       if (!view?.nominatim_user_agent_from_env) {
         const nextN = form.nominatim_user_agent.trim();
         const prevN = (view?.nominatim_user_agent || '').trim();
@@ -129,6 +131,7 @@ const HubSettings = () => {
       setForm((f) => ({
         ...f,
         gemini_api_key: '',
+        elevenlabs_api_key: '',
       }));
       setSaveStatus('success');
     } catch (err) {
@@ -160,7 +163,7 @@ const HubSettings = () => {
       "Give me a soul resets this bot to a fresh persona baseline:",
       '',
       '• Hub chat history is cleared.',
-      '• SOUL, VOICE, IDENTITY, USER, TOOLS, MEMORY, HEARTBEAT, and AGENTS are overwritten from the hub persona templates (persona_defaults).',
+      '• SOUL, IDENTITY, USER, TOOLS, MEMORY, HEARTBEAT, and AGENTS are overwritten from the hub persona templates (persona_defaults).',
       '• A new BOOTSTRAP.md is written and the soul ritual runs with Gemini.',
       '• Daily logs under logs/daily/ and .heartbeat_state.json are removed so the model is not fed old diary context.',
       '',
@@ -293,6 +296,35 @@ const HubSettings = () => {
               onClick={() => clearKey('gemini_api_key')}
             >
               Remove stored Gemini key
+            </button>
+          )}
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="hubElevenlabsKey">ElevenLabs API key (optional)</label>
+          {view?.elevenlabs_api_key_configured && (
+            <p className="help-text">Stored: {view.elevenlabs_api_key_masked}</p>
+          )}
+          <input
+            id="hubElevenlabsKey"
+            type="password"
+            autoComplete="off"
+            className="holo-input"
+            value={form.elevenlabs_api_key}
+            onChange={(e) => setForm((f) => ({ ...f, elevenlabs_api_key: e.target.value }))}
+            placeholder={
+              view?.elevenlabs_api_key_configured ? 'Enter new key to replace' : 'Optional — Pixel ElevenLabs TTS'
+            }
+          />
+          {view?.elevenlabs_api_key_configured && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ alignSelf: 'flex-start', marginTop: '0.35rem' }}
+              disabled={saving}
+              onClick={() => clearKey('elevenlabs_api_key')}
+            >
+              Remove stored ElevenLabs key
             </button>
           )}
         </div>

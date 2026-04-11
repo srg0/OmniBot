@@ -86,6 +86,26 @@ DEFAULT_POST_REPLY_LISTEN_SEC = 10
 DEFAULT_HEARTBEAT_INTERVAL_MINUTES = 30
 DEFAULT_HEARTBEAT_ENABLED = True
 
+DEFAULT_PIXEL_TTS_VOICE = "gemini"
+PIXEL_TTS_VOICE_GEMINI = "gemini"
+PIXEL_TTS_VOICE_ELEVENLABS_MALE = "elevenlabs_pixel_male"
+PIXEL_TTS_VOICE_ELEVENLABS_FEMALE = "elevenlabs_pixel_female"
+VALID_PIXEL_TTS_VOICES = frozenset(
+    {
+        PIXEL_TTS_VOICE_GEMINI,
+        PIXEL_TTS_VOICE_ELEVENLABS_MALE,
+        PIXEL_TTS_VOICE_ELEVENLABS_FEMALE,
+    }
+)
+
+
+def normalize_pixel_tts_voice(v: Any) -> str:
+    s = str(v or "").strip()
+    if s in VALID_PIXEL_TTS_VOICES:
+        return s
+    return DEFAULT_PIXEL_TTS_VOICE
+
+
 # Gemini Live (3.1 Flash Live): streaming audio/video + native audio. Disable with OMNIBOT_USE_GEMINI_LIVE=0.
 USE_GEMINI_LIVE = (os.environ.get("OMNIBOT_USE_GEMINI_LIVE", "1") or "1").strip().lower() not in (
     "0",
@@ -93,7 +113,7 @@ USE_GEMINI_LIVE = (os.environ.get("OMNIBOT_USE_GEMINI_LIVE", "1") or "1").strip(
     "no",
     "off",
 )
-# Hub rules always injected; personality in persona/SOUL.md, spoken voice in VOICE.md (and USER/MEMORY).
+# Hub rules always injected; personality in persona/SOUL.md (and USER/MEMORY).
 _PIXEL_ANIMATION_AND_SINGLE_REC_RULES = (
     "Animation tools:\n"
     "- Use the `show_face_animation` / `face_animation` tool for conversational or emotional states only. "
@@ -308,6 +328,7 @@ def get_bot_settings(device_id: str):
         ),
         "heartbeat_enabled": bool(bot_conf.get("heartbeat_enabled", DEFAULT_HEARTBEAT_ENABLED)),
         "thinking_level": normalize_gemini_thinking_level(bot_conf.get("thinking_level")),
+        "pixel_tts_voice": normalize_pixel_tts_voice(bot_conf.get("pixel_tts_voice")),
     }
 
 
@@ -331,8 +352,7 @@ def resolve_effective_system_instruction(
 BOOTSTRAP_MODE_SYSTEM_SUFFIX = (
     "You are in BOOTSTRAP MODE for this conversation. Follow the BOOTSTRAP.md content in the user message: "
     "discover name, nature, vibe, and emoji together; update IDENTITY.md and USER.md with persona_replace; "
-    "refine SOUL.md with soul_replace as you align on how to behave; refine VOICE.md with persona_replace (file voice) "
-    "as you align on how you should sound when speaking; update HEARTBEAT.md if useful. "
+    "refine SOUL.md with soul_replace as you align on how to behave; update HEARTBEAT.md if useful. "
     "Use memory_replace when something should go in long-term MEMORY.md. "
     "Tell the user clearly whenever you change a file. When the ritual is finished, call bootstrap_complete "
     "to delete BOOTSTRAP.md from disk."
@@ -353,6 +373,7 @@ def _default_stored_bot_settings() -> dict:
         "heartbeat_interval_minutes": DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
         "heartbeat_enabled": DEFAULT_HEARTBEAT_ENABLED,
         "thinking_level": DEFAULT_GEMINI_THINKING_LEVEL,
+        "pixel_tts_voice": DEFAULT_PIXEL_TTS_VOICE,
     }
 
 
@@ -564,6 +585,11 @@ class WifiCredentials(BaseModel):
 
 
 GeminiThinkingLevel = Literal["auto", "minimal", "low", "medium", "high"]
+PixelTtsVoice = Literal[
+    "gemini",
+    "elevenlabs_pixel_male",
+    "elevenlabs_pixel_female",
+]
 
 
 class BotSettingsSchema(BaseModel):
@@ -582,6 +608,7 @@ class BotSettingsSchema(BaseModel):
     )
     heartbeat_enabled: bool = DEFAULT_HEARTBEAT_ENABLED
     thinking_level: GeminiThinkingLevel = DEFAULT_GEMINI_THINKING_LEVEL
+    pixel_tts_voice: PixelTtsVoice = DEFAULT_PIXEL_TTS_VOICE
 
 
 class HubAppSettingsSchema(BaseModel):
@@ -607,6 +634,7 @@ class TimezoneRuleRequest(BaseModel):
 
 class HubSettingsUpdate(BaseModel):
     gemini_api_key: Optional[str] = None
+    elevenlabs_api_key: Optional[str] = None
     nominatim_user_agent: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
@@ -772,6 +800,7 @@ async def update_settings(device_id: str, new_settings: BotSettingsSchema):
         "heartbeat_interval_minutes": int(new_settings.heartbeat_interval_minutes),
         "heartbeat_enabled": bool(new_settings.heartbeat_enabled),
         "thinking_level": normalize_gemini_thinking_level(new_settings.thinking_level),
+        "pixel_tts_voice": normalize_pixel_tts_voice(new_settings.pixel_tts_voice),
     }
     settings[device_id] = row
     save_all_settings(settings)
@@ -2093,7 +2122,6 @@ async def run_pixel_gemini_tool(
                 "identity": "IDENTITY.md",
                 "user": "USER.md",
                 "heartbeat": "HEARTBEAT.md",
-                "voice": "VOICE.md",
             }.get(pf.lower(), f"{pf}.md")
             await _broadcast_persona_file_updated(device_id, label)
     elif fname == "daily_log_append":

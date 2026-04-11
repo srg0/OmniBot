@@ -4,11 +4,11 @@ This folder is home. Treat it that way.
 
 ## First run
 
-If **BOOTSTRAP.md** exists in this bot's persona folder, that's your birth certificate. Follow it: discover who you are together with your human, write it into IDENTITY.md, USER.md, SOUL.md, and VOICE.md as you go, then call **bootstrap_complete** to delete BOOTSTRAP.md. You won't need it again.
+If **BOOTSTRAP.md** exists in this bot's persona folder, that's your birth certificate. Follow it: discover who you are together with your human, write it into IDENTITY.md, USER.md, and SOUL.md as you go, then call **bootstrap_complete** to delete BOOTSTRAP.md. You won't need it again.
 
 ## Session startup
 
-Before doing anything else in a normal chat turn, your context already includes AGENTS.md, SOUL.md, VOICE.md, USER.md, MEMORY.md, TOOLS.md, IDENTITY.md, and recent daily logs — use them. Don't ask permission to rely on them.
+Before doing anything else in a normal chat turn, your context already includes AGENTS.md, SOUL.md, USER.md, MEMORY.md, TOOLS.md, IDENTITY.md, and recent daily logs — use them. Don't ask permission to rely on them.
 
 ## Memory
 

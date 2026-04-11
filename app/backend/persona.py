@@ -11,8 +11,8 @@ from typing import Any, Literal
 
 from hub_config import DATA_DIR
 
-PersonaFileName = Literal["soul", "identity", "user", "tools", "memory", "heartbeat", "agents", "voice"]
-PersonaReplaceTarget = Literal["identity", "user", "heartbeat", "voice"]
+PersonaFileName = Literal["soul", "identity", "user", "tools", "memory", "heartbeat", "agents"]
+PersonaReplaceTarget = Literal["identity", "user", "heartbeat"]
 
 PERSONA_SUBDIR = "persona"
 MEMORY_INJECT_MAX_CHARS = 12_000
@@ -39,7 +39,6 @@ SOUL_REPLACE_DECLARATION = {
     "description": (
         "Replace the entire SOUL.md file with new markdown (personality, tone, boundaries). "
         "Use when the user asks to change attitude or how the bot behaves in text. "
-        "For spoken voice / TTS characterization, edit VOICE.md via persona_replace (file voice). "
         "Pass the complete file body. Max size enforced server-side."
     ),
     "parameters": {
@@ -57,18 +56,17 @@ SOUL_REPLACE_DECLARATION = {
 PERSONA_REPLACE_DECLARATION = {
     "name": "persona_replace",
     "description": (
-        "Replace the entire IDENTITY.md, USER.md, HEARTBEAT.md, or VOICE.md file. "
+        "Replace the entire IDENTITY.md, USER.md, or HEARTBEAT.md file. "
         "Use during bootstrap or when the user asks to update bot identity, the human's profile, or heartbeat checklists. "
         "Pass the complete file body. Tell the user in your reply whenever you change a file. "
-        "Do not use this for SOUL.md (use soul_replace), MEMORY.md (use memory_replace), TOOLS.md, or AGENTS.md. "
-        "Use file `voice` for VOICE.md (spoken / TTS sound)."
+        "Do not use this for SOUL.md (use soul_replace), MEMORY.md (use memory_replace), TOOLS.md, or AGENTS.md."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "file": {
                 "type": "string",
-                "enum": ["identity", "user", "heartbeat", "voice"],
+                "enum": ["identity", "user", "heartbeat"],
                 "description": "Which persona markdown file to replace.",
             },
             "markdown": {
@@ -101,7 +99,7 @@ DAILY_LOG_APPEND_DECLARATION = {
 BOOTSTRAP_COMPLETE_DECLARATION = {
     "name": "bootstrap_complete",
     "description": (
-        "Call when the bootstrap ritual from BOOTSTRAP.md is finished: identity/user/soul/voice agreed and files updated. "
+        "Call when the bootstrap ritual from BOOTSTRAP.md is finished: identity/user/soul agreed and files updated. "
         "Deletes BOOTSTRAP.md from this bot's persona folder so it is not loaded again. Safe to call if file is already gone."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
@@ -115,14 +113,12 @@ _FILE_MAP: dict[PersonaFileName, str] = {
     "memory": "MEMORY.md",
     "heartbeat": "HEARTBEAT.md",
     "agents": "AGENTS.md",
-    "voice": "VOICE.md",
 }
 
 REPLACE_TARGET_MAP: dict[PersonaReplaceTarget, PersonaFileName] = {
     "identity": "identity",
     "user": "user",
     "heartbeat": "heartbeat",
-    "voice": "voice",
 }
 
 # Canonical templates: committed under persona_defaults/ (git). Runtime copies: DATA_DIR/persona/<bot_id>/.
@@ -145,7 +141,6 @@ TEMPLATE_TOOLS = _read_persona_default("TOOLS.md")
 TEMPLATE_MEMORY = _read_persona_default("MEMORY.md")
 TEMPLATE_HEARTBEAT = _read_persona_default("HEARTBEAT.md")
 TEMPLATE_AGENTS = _read_persona_default("AGENTS.md")
-TEMPLATE_VOICE = _read_persona_default("VOICE.md")
 TEMPLATE_BOOTSTRAP = _read_persona_default("BOOTSTRAP.md")
 
 
@@ -185,7 +180,6 @@ PERSONA_FILE_SEEDS: list[tuple[str, str]] = [
     ("MEMORY.md", TEMPLATE_MEMORY),
     ("HEARTBEAT.md", TEMPLATE_HEARTBEAT),
     ("AGENTS.md", TEMPLATE_AGENTS),
-    ("VOICE.md", TEMPLATE_VOICE),
 ]
 
 
@@ -225,7 +219,7 @@ def clear_daily_logs_and_heartbeat_state(device_id: str) -> dict[str, Any]:
 
 
 def reset_persona_markdown_to_templates(device_id: str) -> dict[str, Any]:
-    """Overwrite SOUL/VOICE/IDENTITY/USER/TOOLS/MEMORY/HEARTBEAT/AGENTS with hub templates; remove BOOTSTRAP.md.
+    """Overwrite SOUL/IDENTITY/USER/TOOLS/MEMORY/HEARTBEAT/AGENTS with hub templates; remove BOOTSTRAP.md.
 
     Does not delete logs/daily/*.md or .heartbeat_state.json (use clear_daily_logs_and_heartbeat_state for that).
     """
@@ -285,13 +279,12 @@ def read_memory_for_prompt(device_id: str) -> str:
 
 _HEARTBEAT_MAINTENANCE_FILE_RULES = (
     "This pass only consolidates daily logs into MEMORY.md via memory_replace. "
-    "Do not call soul_replace or change SOUL.md, VOICE.md, IDENTITY.md, USER.md, TOOLS.md, AGENTS.md, or HEARTBEAT.md here."
+    "Do not call soul_replace or change SOUL.md, IDENTITY.md, USER.md, TOOLS.md, AGENTS.md, or HEARTBEAT.md here."
 )
 
 _CHAT_PERSONA_FILE_RULES = (
     "AGENTS.md is your behavior guide (read only in hub). "
     "TOOLS.md lists tools (reference; humans may edit). "
-    "VOICE.md: spoken / TTS sound (persona_replace file voice). "
     "IDENTITY.md / USER.md / HEARTBEAT.md: use persona_replace with the full file body when bootstrap or the user requires updates. "
     "SOUL.md: soul_replace when personality, stance, or boundaries should change. "
     "MEMORY.md: memory_replace when durable facts should change — not every turn. "
@@ -329,7 +322,6 @@ def build_composed_system_instruction(
 
     agents = read_persona_markdown(device_id, "agents")
     soul = read_persona_markdown(device_id, "soul")
-    voice = read_persona_markdown(device_id, "voice")
     identity = read_persona_markdown(device_id, "identity")
     user = read_persona_markdown(device_id, "user")
     tools_doc = read_persona_markdown(device_id, "tools")
@@ -342,7 +334,6 @@ def build_composed_system_instruction(
         "=== AGENTS.md (read-only) ===\n" + agents.strip(),
         "=== TOOLS.md (read-only reference) ===\n" + tools_doc.strip(),
         "=== SOUL ===\n" + soul.strip(),
-        "=== VOICE (spoken / TTS) ===\n" + voice.strip(),
         "=== IDENTITY ===\n" + identity.strip(),
         "=== USER ===\n" + user.strip(),
         "=== MEMORY ===\n" + memory.strip(),
@@ -400,7 +391,7 @@ def replace_persona_target_markdown(
     if t not in REPLACE_TARGET_MAP:
         return {
             "ok": False,
-            "error": f"persona_replace: invalid file {target!r}; use identity, user, heartbeat, or voice",
+            "error": f"persona_replace: invalid file {target!r}; use identity, user, or heartbeat",
         }
     key: PersonaFileName = REPLACE_TARGET_MAP[t]  # type: ignore[assignment]
     ensure_persona_layout(device_id)

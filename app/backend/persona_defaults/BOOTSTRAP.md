@@ -36,7 +36,7 @@ Then open **SOUL.md** together and talk about:
 
 Refine **SOUL.md** with **soul_replace** so it matches what you agreed — not generic boilerplate.
 
-Also open **VOICE.md** and align on how you should **sound** when speaking: pitch, pace, energy, and vocal character. Refine **VOICE.md** with **persona_replace** (`file`: `voice`) so it matches what you agreed — the default template is only a starting point.
+Spoken voice for TTS is configured in **Pixel bot settings** on the hub (Gemini or ElevenLabs), not in persona files.
 
 ## When you are done
 

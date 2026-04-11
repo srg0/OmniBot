@@ -1,6 +1,6 @@
 # OmniBot
 
-Run the **hub** (API + dashboard) on your PC and connect **ESP32** robots such as **Pixel** over Wi‑Fi. You chat with **Google Gemini** from the browser (including **Gemini Live** for voice and optional video), provision Wi‑Fi over Bluetooth, and tune hub and bot behavior from the UI. Each bot gets an **OpenClaw-style persona**: markdown files on disk (voice, identity, memory, tools, heartbeat rules) that the model can update through declared tools, plus optional **heartbeat maintenance** that merges daily logs into long-term memory.
+Run the **hub** (API + dashboard) on your PC and connect **ESP32** robots such as **Pixel** over Wi‑Fi. You chat with **Google Gemini** from the browser (including **Gemini Live** for voice and optional video), provision Wi‑Fi over Bluetooth, and tune hub and bot behavior from the UI. Each bot gets an **OpenClaw-style persona**: markdown files on disk (soul, identity, memory, tools, heartbeat rules) that the model can update through declared tools, plus optional **heartbeat maintenance** that merges daily logs into long-term memory.
 
 Licensed under the [MIT License](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
@@ -129,7 +129,7 @@ During chat, Gemini can call tools such as **`soul_replace`**, **`memory_replace
 
 - **Gemini Live** — Voice (and optional vision) turns use the Live API when enabled (default). Set environment variable **`OMNIBOT_USE_GEMINI_LIVE=0`** to disable Live and fall back to the non-Live path. REST/chat and heartbeat avoid “live” model IDs automatically where needed.
 - **Browser live voice** — In **Hub settings**, set voice source to **browser** to use the PC microphone and speakers (OpenWakeWord on the hub + `/ws/voice-bridge`) instead of streaming from Pixel. Pixel wake streaming is suppressed in that mode so only one path is active.
-- **Hub TTS** — After a **voice** turn, the hub can speak the assistant reply on the PC using **Gemini TTS** (voice selectable per bot). Typed chat messages are not spoken.
+- **Hub TTS** — After a **voice** turn, the hub can speak the assistant reply on the PC using **Gemini Live** audio or optional **ElevenLabs** (voice mode selectable per bot in Pixel settings). Typed chat messages are not spoken.
 - **Wake word & follow-up** — OpenWakeWord on the hub; optional custom model as **`pixel.onnx`** under [`app/backend/models/wake/`](app/backend/models/wake/README.md). **Post-reply listen** seconds control VAD-only follow-up without repeating the wake phrase (`0` = wake required every turn).
 - **Presence face scan** — Optional periodic snapshots from Pixel for on-LAN face matching and greetings; enroll people under **Pixel bot** settings.
 - **Thinking level** — Per-bot **Gemini 3** thinking levels (including **minimal** and **auto**) map to the API’s thinking config; see the in-UI help link if a model rejects a level.
@@ -183,6 +183,8 @@ Extra environment variables (Nominatim user-agent, Maps keys, data directory, de
 
 - **`OMNIBOT_DATA_DIR`** — Moves all hub JSON and the **`persona/`** tree to another directory (useful for backups or Docker volumes).
 - **`OMNIBOT_USE_GEMINI_LIVE`** — Set to **`0`** to disable Gemini Live for voice/video on the hub (see **Persona framework** above).
+- **`OMNIBOT_ELEVENLABS_DEBUG`** — Set to **`1`** to log verbose ElevenLabs WebSocket steps (chunk previews, per-message audio sizes) on the hub.
+- **`OMNIBOT_ELEVENLABS_CHUNK_SCHEDULE`** — Comma-separated integers for ElevenLabs `chunk_length_schedule` (buffer thresholds in characters). Default **`50,120,160,290`** (lower first-byte latency than **`120,160,250,290`**). Example: `80,120,160,290` for a middle ground.
 - **Wake tuning** — **`OMNIBOT_WAKE_WORD_MODEL`**, **`OMNIBOT_WAKE_THRESHOLD`**, **`OMNIBOT_WAKE_SILENCE_MS`** (see [`app/backend/models/wake/README.md`](app/backend/models/wake/README.md)).
 
 ---
