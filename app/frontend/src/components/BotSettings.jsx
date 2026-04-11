@@ -44,6 +44,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const [personaTab, setPersonaTab] = useState('soul');
   const [personaDrafts, setPersonaDrafts] = useState({
     soul: '',
+    voice: '',
     identity: '',
     user: '',
     tools: '',
@@ -74,7 +75,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const loadPersona = useCallback(async () => {
     setPersonaMessage(null);
     try {
-      const files = ['soul', 'identity', 'user', 'tools', 'memory', 'heartbeat', 'agents'];
+      const files = ['soul', 'voice', 'identity', 'user', 'tools', 'memory', 'heartbeat', 'agents'];
       const entries = await Promise.all(
         files.map(async (f) => {
           const d = await getPersonaFile(deviceId, f);
@@ -184,7 +185,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
     if (
       !window.confirm(
         'Reset Pixel vision, wake word, presence scan, and heartbeat settings to defaults? ' +
-          'SOUL.md, IDENTITY.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, and AGENTS.md will be overwritten with hub templates (your edits are lost). BOOTSTRAP.md is removed if present. Daily logs under logs/daily/ are kept. Hub clock is unchanged.'
+          'SOUL.md, VOICE.md, IDENTITY.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, and AGENTS.md will be overwritten with hub templates (your edits are lost). BOOTSTRAP.md is removed if present. Daily logs under logs/daily/ are kept. Hub clock is unchanged.'
       )
     ) {
       return;
@@ -530,12 +531,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       </div>
 
       <div className="form-group persona-section">
-        <label>Persona (AGENTS / SOUL / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT)</label>
+        <label>Persona (AGENTS / SOUL / VOICE / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT)</label>
         <p className="help-text">
           Markdown files on the hub (OpenClaw-style). <strong>AGENTS.md</strong> is high-level behavior (injected for the
-          model; edit here). <strong>TOOLS.md</strong> documents tools for context. The model can update{' '}
-          <strong>SOUL.md</strong>, <strong>MEMORY.md</strong>, <strong>IDENTITY.md</strong>, <strong>USER.md</strong>, and{' '}
-          <strong>HEARTBEAT.md</strong> via tools when appropriate (Hub settings → <strong>Give me a soul</strong> runs{' '}
+          model; edit here). <strong>VOICE.md</strong> is how you sound when speaking (TTS / live). <strong>TOOLS.md</strong>{' '}
+          documents tools for context. The model can update <strong>SOUL.md</strong>, <strong>VOICE.md</strong>,{' '}
+          <strong>MEMORY.md</strong>, <strong>IDENTITY.md</strong>, <strong>USER.md</strong>, and <strong>HEARTBEAT.md</strong>{' '}
+          via tools when appropriate (Hub settings → <strong>Give me a soul</strong> runs{' '}
           <strong>BOOTSTRAP.md</strong>). Heartbeat <em>maintenance</em> can merge daily logs into MEMORY. Voice turns use
           Gemini Live on the hub; add explicit daily-log lines with the <code>daily_log_append</code> tool if you want raw
           notes on disk. Save Pixel options with <strong>Save</strong>; save markdown with <strong>Save persona file</strong>.
@@ -544,6 +546,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           {[
             { id: 'agents', label: 'AGENTS' },
             { id: 'soul', label: 'SOUL' },
+            { id: 'voice', label: 'VOICE' },
             { id: 'identity', label: 'IDENTITY' },
             { id: 'user', label: 'USER' },
             { id: 'tools', label: 'TOOLS' },

@@ -64,6 +64,10 @@ from wake_listen import (
 import heartbeat_service
 import persona
 import gemini_live_session
+from grounding_extract import (
+    add_inline_citations_from_grounding,
+    extract_search_sources_from_grounding_metadata,
+)
 
 # ==========================================
 #          LOAD SECRETS & SETUP (see hub_config: OMNIBOT_DATA_DIR, .env, hub_secrets.json)
@@ -89,7 +93,7 @@ USE_GEMINI_LIVE = (os.environ.get("OMNIBOT_USE_GEMINI_LIVE", "1") or "1").strip(
     "no",
     "off",
 )
-# Hub rules always injected; personality lives in persona/SOUL.md (and USER/MEMORY).
+# Hub rules always injected; personality in persona/SOUL.md, spoken voice in VOICE.md (and USER/MEMORY).
 _PIXEL_ANIMATION_AND_SINGLE_REC_RULES = (
     "Animation tools:\n"
     "- Use the `show_face_animation` / `face_animation` tool for conversational or emotional states only. "
@@ -327,7 +331,8 @@ def resolve_effective_system_instruction(
 BOOTSTRAP_MODE_SYSTEM_SUFFIX = (
     "You are in BOOTSTRAP MODE for this conversation. Follow the BOOTSTRAP.md content in the user message: "
     "discover name, nature, vibe, and emoji together; update IDENTITY.md and USER.md with persona_replace; "
-    "refine SOUL.md with soul_replace as you align on how to behave; update HEARTBEAT.md if useful. "
+    "refine SOUL.md with soul_replace as you align on how to behave; refine VOICE.md with persona_replace (file voice) "
+    "as you align on how you should sound when speaking; update HEARTBEAT.md if useful. "
     "Use memory_replace when something should go in long-term MEMORY.md. "
     "Tell the user clearly whenever you change a file. When the ritual is finished, call bootstrap_complete "
     "to delete BOOTSTRAP.md from disk."
@@ -349,29 +354,6 @@ def _default_stored_bot_settings() -> dict:
         "heartbeat_enabled": DEFAULT_HEARTBEAT_ENABLED,
         "thinking_level": DEFAULT_GEMINI_THINKING_LEVEL,
     }
-
-
-def _extract_search_sources_from_grounding_metadata(gm) -> tuple[list[dict], list[str]]:
-    """Build link list + query list for hub UI (Google Search grounding attribution)."""
-    if gm is None:
-        return [], []
-    chunks = getattr(gm, "grounding_chunks", None) or []
-    by_uri: dict[str, dict] = {}
-    for ch in chunks:
-        web = getattr(ch, "web", None)
-        if web is None:
-            continue
-        uri = getattr(web, "uri", None)
-        if not uri:
-            continue
-        title = (getattr(web, "title", None) or "").strip() or "Web source"
-        by_uri[str(uri)] = {"title": title, "uri": str(uri)}
-    queries = []
-    for q in (getattr(gm, "web_search_queries", None) or []):
-        s = str(q).strip()
-        if s:
-            queries.append(s)
-    return list(by_uri.values()), queries
 
 
 def assemble_video(jpeg_frames: list[bytes], fps: int = 10) -> bytes:
@@ -2111,6 +2093,7 @@ async def run_pixel_gemini_tool(
                 "identity": "IDENTITY.md",
                 "user": "USER.md",
                 "heartbeat": "HEARTBEAT.md",
+                "voice": "VOICE.md",
             }.get(pf.lower(), f"{pf}.md")
             await _broadcast_persona_file_updated(device_id, label)
     elif fname == "daily_log_append":
@@ -2303,9 +2286,11 @@ async def stream_chat_turn_response(
 
         try:
             for turn in range(max_turns):
+                round_start_offset = len(full_text)
+                last_gm_this_round = None
                 response_stream = chat.send_message_stream(message_to_send)
                 functions_to_execute = []
-                
+
                 try:
                     while True:
                         chunk = await loop.run_in_executor(
@@ -2320,12 +2305,16 @@ async def stream_chat_turn_response(
                             if getattr(chunk, "candidates", None):
                                 for candidate in chunk.candidates:
                                     gm = getattr(candidate, "grounding_metadata", None)
-                                    web_src, web_queries = _extract_search_sources_from_grounding_metadata(gm)
+                                    if gm is not None:
+                                        last_gm_this_round = gm
+                                    web_src, web_queries = extract_search_sources_from_grounding_metadata(
+                                        gm
+                                    )
                                     if web_src:
                                         last_search_sources = web_src
                                     if web_queries:
                                         last_search_queries = web_queries
-                                        
+
                                     if candidate.content and getattr(candidate.content, "parts", None):
                                         for part in candidate.content.parts:
                                             fc = getattr(part, "function_call", None)
@@ -2364,8 +2353,12 @@ async def stream_chat_turn_response(
                             })
                 except Exception as e:
                     print(f"Stream interrupted: {e}")
-                    
+
                 if not functions_to_execute:
+                    last_round = full_text[round_start_offset:]
+                    cited = add_inline_citations_from_grounding(last_round, last_gm_this_round)
+                    if cited != last_round:
+                        full_text = full_text[:round_start_offset] + cited
                     break
                     
                 func_responses = []

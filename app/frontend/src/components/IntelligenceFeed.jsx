@@ -1,6 +1,37 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './IntelligenceFeed.css';
 
+/** Renders assistant text with clickable [n](url) grounding citations from Gemini. */
+function AiMessageText({ text }) {
+  if (text == null || text === '') return null;
+  const s = String(text);
+  const parts = [];
+  const re = /(\[[0-9]+\]\([^)]+\))/g;
+  let last = 0;
+  let m;
+  let key = 0;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) {
+      parts.push(<span key={`t${key++}`}>{s.slice(last, m.index)}</span>);
+    }
+    const inner = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(m[1]);
+    if (inner) {
+      parts.push(
+        <a key={`a${key++}`} href={inner[2]} target="_blank" rel="noopener noreferrer">
+          [{inner[1]}]
+        </a>
+      );
+    } else {
+      parts.push(<span key={`e${key++}`}>{m[1]}</span>);
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) {
+    parts.push(<span key={`t${key++}`}>{s.slice(last)}</span>);
+  }
+  return <>{parts}</>;
+}
+
 const SearchGroundingBlock = ({ sources, queries }) => {
   const hasSources = sources && sources.length > 0;
   const hasQueries = queries && queries.length > 0;
@@ -224,7 +255,11 @@ const IntelligenceFeed = ({
                       <audio className="message-audio" src={log.text} controls />
                     ) : (
                       <>
-                        {log.text}
+                        {log.sender === 'ai' ? (
+                          <AiMessageText text={log.text} />
+                        ) : (
+                          log.text
+                        )}
                         {log.sender === 'ai' && (
                           <>
                             <SearchGroundingBlock

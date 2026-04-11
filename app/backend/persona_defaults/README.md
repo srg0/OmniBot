@@ -10,7 +10,8 @@ These `.md` files are the **canonical defaults** for each bot’s persona. The h
 | File | Purpose |
 |------|---------|
 | **AGENTS.md** | Default behavior guide injected for the model (humans often edit per bot in the dashboard). |
-| **SOUL.md** | Default voice and boundaries. |
+| **SOUL.md** | Default personality and boundaries (text behavior). |
+| **VOICE.md** | Default spoken / TTS voice (how you sound out loud). |
 | **IDENTITY.md** | Default bot identity scaffold. |
 | **USER.md** | Default human profile scaffold. |
 | **TOOLS.md** | Documents tools for model context. |

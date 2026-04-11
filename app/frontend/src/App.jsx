@@ -380,17 +380,53 @@ function App() {
             }
             const hasSearchSources = message.search_sources && message.search_sources.length > 0;
             const hasSearchQueries = message.search_queries && message.search_queries.length > 0;
-            if (hasSearchSources || hasSearchQueries) {
+            const hasFinalText =
+              message.data != null && String(message.data).length > 0;
+            if (hasFinalText || hasSearchSources || hasSearchQueries) {
               setLogs((prev) =>
-                prev.map((log) =>
-                  log.sender === 'ai' && log.streamId === message.stream_id
-                    ? {
-                        ...log,
-                        ...(hasSearchSources ? { searchSources: message.search_sources } : {}),
-                        ...(hasSearchQueries ? { searchQueries: message.search_queries } : {}),
-                      }
-                    : log
-                )
+                prev.map((log) => {
+                  if (log.sender !== 'ai' || log.streamId !== message.stream_id) {
+                    return log;
+                  }
+                  const next = { ...log };
+                  if (hasFinalText) {
+                    next.text = String(message.data);
+                  }
+                  if (hasSearchSources) {
+                    next.searchSources = message.search_sources;
+                  }
+                  if (hasSearchQueries) {
+                    next.searchQueries = message.search_queries;
+                  }
+                  return next;
+                })
+              );
+            }
+          } else if (message.type === 'live_search_grounding') {
+            const hasSearchSources =
+              message.search_sources && message.search_sources.length > 0;
+            const hasSearchQueries =
+              message.search_queries && message.search_queries.length > 0;
+            const hasFinalText =
+              message.final_text != null && String(message.final_text).length > 0;
+            if (hasFinalText || hasSearchSources || hasSearchQueries) {
+              setLogs((prev) =>
+                prev.map((log) => {
+                  if (log.sender !== 'ai' || log.streamId !== message.stream_id) {
+                    return log;
+                  }
+                  const next = { ...log };
+                  if (hasFinalText) {
+                    next.text = String(message.final_text);
+                  }
+                  if (hasSearchSources) {
+                    next.searchSources = message.search_sources;
+                  }
+                  if (hasSearchQueries) {
+                    next.searchQueries = message.search_queries;
+                  }
+                  return next;
+                })
               );
             }
           } else if (message.type === 'error') {

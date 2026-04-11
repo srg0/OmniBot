@@ -160,7 +160,7 @@ const HubSettings = () => {
       "Give me a soul resets this bot to a fresh persona baseline:",
       '',
       '• Hub chat history is cleared.',
-      '• SOUL, IDENTITY, USER, TOOLS, MEMORY, HEARTBEAT, and AGENTS are overwritten from the hub persona templates (persona_defaults).',
+      '• SOUL, VOICE, IDENTITY, USER, TOOLS, MEMORY, HEARTBEAT, and AGENTS are overwritten from the hub persona templates (persona_defaults).',
       '• A new BOOTSTRAP.md is written and the soul ritual runs with Gemini.',
       '• Daily logs under logs/daily/ and .heartbeat_state.json are removed so the model is not fed old diary context.',
       '',

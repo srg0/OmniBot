@@ -16,6 +16,10 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from google.genai import types
 
 from hub_config import get_genai_client, get_gemini_api_key
+from grounding_extract import (
+    add_inline_citations_from_grounding,
+    extract_search_sources_from_grounding_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,11 @@ def unregister_live_coordinator(device_id: str) -> None:
 
 
 def build_pixel_live_tools() -> list[types.Tool]:
-    """Same tool surface as REST Pixel chat (Search + persona tools). Maps not supported on Live."""
+    """Grounding + function tools for Live — same split as REST (`_pixel_chat_generate_config`).
+
+    Per Live API docs, Google Search is its own tool entry, e.g. `[{'google_search': {}}, {...}]`;
+    we mirror that with two `types.Tool` objects. Maps not supported on Live.
+    """
     import heartbeat_service
     import persona
     from pixel_tool_declarations import FACE_ANIMATION_FUNCTION_DECLARATION
@@ -61,12 +69,9 @@ def build_pixel_live_tools() -> list[types.Tool]:
         types.FunctionDeclaration(**persona.DAILY_LOG_APPEND_DECLARATION),
         types.FunctionDeclaration(**persona.BOOTSTRAP_COMPLETE_DECLARATION),
     ]
-    # One Tool with both surfaces: Live AFC warns when google_search is a separate tool index.
     return [
-        types.Tool(
-            google_search=google_search_tool,
-            function_declarations=custom_declarations,
-        ),
+        types.Tool(google_search=google_search_tool),
+        types.Tool(function_declarations=custom_declarations),
     ]
 
 
@@ -125,6 +130,9 @@ class GeminiLiveCoordinator:
         self._last_output_text = ""
         self._video_last_sent_mono: float = 0.0
         self._closed_this_turn = False
+        self._live_turn_search_sources: list[dict] = []
+        self._live_turn_search_queries: list[str] = []
+        self._live_turn_gm: Any = None
 
     async def ensure_started(self) -> None:
         async with self._lock:
@@ -279,6 +287,9 @@ class GeminiLiveCoordinator:
         self._last_input_text = ""
         self._last_output_text = ""
         self._closed_this_turn = False
+        self._live_turn_search_sources = []
+        self._live_turn_search_queries = []
+        self._live_turn_gm = None
         return sid
 
     async def _pcm_sender_loop(self) -> None:
@@ -353,6 +364,15 @@ class GeminiLiveCoordinator:
         sc = msg.server_content
         if sc is None:
             return
+
+        gm = getattr(sc, "grounding_metadata", None)
+        if gm is not None:
+            self._live_turn_gm = gm
+            web_src, web_queries = extract_search_sources_from_grounding_metadata(gm)
+            if web_src:
+                self._live_turn_search_sources = web_src
+            if web_queries:
+                self._live_turn_search_queries = web_queries
 
         if sc.input_transcription and sc.input_transcription.text:
             t = sc.input_transcription.text
@@ -451,21 +471,42 @@ class GeminiLiveCoordinator:
         )
         if turn_done and not self._closed_this_turn:
             self._closed_this_turn = True
-            out = (self._last_output_text or "").strip()
-            if out:
+            out_plain = (self._last_output_text or "").strip()
+            out_cited = (
+                add_inline_citations_from_grounding(out_plain, self._live_turn_gm)
+                if out_plain and self._live_turn_gm is not None
+                else out_plain
+            )
+            if out_plain:
                 try:
                     self._append_history_content(
                         self.device_id,
                         types.Content(
                             role="model",
-                            parts=[types.Part(text=out)],
+                            parts=[types.Part(text=out_plain)],
                         ),
                     )
                 except Exception:
                     pass
-                await self._notify_esp32_reply(self.device_id, out)
+                await self._notify_esp32_reply(self.device_id, out_plain)
             else:
                 await self._notify_esp32_reply(self.device_id, "")
+            if self._live_turn_search_sources or self._live_turn_search_queries or (
+                out_cited and out_cited != out_plain
+            ):
+                payload: dict[str, Any] = {
+                    "type": "live_search_grounding",
+                    "device_id": self.device_id,
+                    "stream_id": self._current_stream_id,
+                    "search_sources": self._live_turn_search_sources,
+                    "search_queries": self._live_turn_search_queries,
+                }
+                if out_cited and out_cited != out_plain:
+                    payload["final_text"] = out_cited
+                await self._broadcast(payload)
+                self._live_turn_search_sources = []
+                self._live_turn_search_queries = []
+            self._live_turn_gm = None
             self._on_wake_live_turn_done(self.device_id)
             self._first_token_sent_for_stream = False
             self._last_output_text = ""
