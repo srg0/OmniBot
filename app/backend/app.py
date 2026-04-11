@@ -1274,6 +1274,37 @@ async def _send_runtime_sleep_timeout_to_esp32(device_id: str) -> None:
         print(f"Failed to send runtime_sleep_timeout to ESP32: {e}")
 
 
+async def _start_live_mic_after_face_recognition(device_id: str) -> None:
+    """After a face-triggered Live greeting, forward mic to Gemini without the wake phrase."""
+    if not USE_GEMINI_LIVE or not get_gemini_api_key():
+        return
+    did = (device_id or "").strip() or "default_bot"
+    wp = None
+    if _hub_live_voice_source_is_browser():
+        wp = browser_voice_wake_processor.get(did)
+    else:
+        for _ws, sess in active_streams.items():
+            if sess.get("device_id") == did:
+                wp = sess.get("wake_processor")
+                break
+    if not wp or not getattr(wp, "use_gemini_live", False):
+        return
+    await wp.start_live_pcm_forwarding_only()
+    esp32_ws = get_active_esp32_socket(did)
+    if esp32_ws:
+        try:
+            await esp32_ws.send_text(json.dumps({"type": "wake_processing"}))
+        except Exception as e:
+            print(f"[face] wake_processing to ESP32 failed: {e}")
+    await manager.broadcast(
+        {
+            "type": "processing_started",
+            "device_id": did,
+            "data": "Face recognized — speak to Gemini Live (no wake word needed).",
+        }
+    )
+
+
 async def _send_activity_event_to_esp32(device_id: str, source: str) -> None:
     """Nudges Pixel activity timer and wakes sleep animation if active."""
     ws = get_active_esp32_socket(device_id)
@@ -2466,6 +2497,7 @@ async def _process_presence_jpeg(device_id: str, jpeg_bytes: bytes) -> None:
                 try:
                     await coord.send_text(msg)
                     used_live = True
+                    await _start_live_mic_after_face_recognition(device_id)
                 except Exception as ex:
                     print(f"[face] presence Gemini Live failed, using REST: {ex}")
 

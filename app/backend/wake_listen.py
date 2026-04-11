@@ -215,6 +215,22 @@ class WakeListenProcessor:
         except Exception:
             pass
 
+    async def start_live_pcm_forwarding_only(self) -> None:
+        """Stream mic to Live without ``on_live_wake`` / ``begin_user_turn`` (turn already started)."""
+        if not self.use_gemini_live or not self.on_live_pcm:
+            return
+        if self._live_forward:
+            return
+        self._ring.clear()
+        self._followup_scan_carry.clear()
+        self._cooldown_until = time.monotonic() + self.cooldown_s
+        self._live_forward = True
+        await self._await_wake_listen_state(WAKE_LISTEN_STREAMING)
+        try:
+            self.model.reset()
+        except Exception:
+            pass
+
     def note_model_user_activity(self) -> None:
         """Refresh follow-up timeout based on Gemini input transcription activity."""
         if self._follow_up_until is None:
