@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import socket
 import uvicorn
@@ -52,6 +53,7 @@ from face_matching import (
     add_reference_jpeg,
     create_profile,
     delete_profile,
+    jpeg_bytes_looks_complete,
     list_profiles,
     match_probe_jpeg,
 )
@@ -381,13 +383,24 @@ def assemble_video(jpeg_frames: list[bytes], fps: int = 10) -> bytes:
     """Takes a list of JPEG byte arrays and assembles them into an MP4 (H.264) video in memory."""
     if not jpeg_frames:
         return b""
-        
+
+    good_frames = [f for f in jpeg_frames if jpeg_bytes_looks_complete(f)]
+    dropped = len(jpeg_frames) - len(good_frames)
+    if dropped:
+        print(
+            f"[Omnibot] assemble_video: skipped {dropped} incomplete JPEG frame(s) "
+            f"(truncated camera/Wi-Fi frames)",
+            flush=True,
+        )
+    if not good_frames:
+        return b""
+
     tmp_path = os.path.join(tempfile.gettempdir(), "pixel_clip.mp4")
-    
-    # Write frames using imageio's ffmpeg plugin with libx264 codec 
+
+    # Write frames using imageio's ffmpeg plugin with libx264 codec
     # This guarantees cross-browser HTML5 <video> compatibility
     with imageio.get_writer(tmp_path, fps=fps, codec='libx264', format='FFMPEG') as writer:
-        for jpg_bytes in jpeg_frames:
+        for jpg_bytes in good_frames:
             frame = cv2.imdecode(np.frombuffer(jpg_bytes, np.uint8), cv2.IMREAD_COLOR)
             if frame is not None:
                 # cv2 imdecode returns BGR, imageio expects RGB
@@ -423,8 +436,33 @@ def create_wav_header(data_size: int, sample_rate: int = 16000, num_channels: in
     return bytes(header)
 
 
+def _configure_app_logging() -> None:
+    """Uvicorn's default logging leaves the root logger at WARNING, so app logger.info is silent."""
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s %(name)s: %(message)s",
+            force=True,
+        )
+    else:
+        for h in root.handlers:
+            h.setLevel(logging.INFO)
+    for name in (
+        "gemini_live_session",
+        "elevenlabs_tts_stream",
+        "google",
+        "google.genai",
+        "google_genai",
+        "grpc",
+    ):
+        logging.getLogger(name).setLevel(logging.INFO)
+
+
 @asynccontextmanager
 async def _omnibot_lifespan(_: FastAPI):
+    _configure_app_logging()
     global _main_async_loop
     _main_async_loop = asyncio.get_running_loop()
     hb_task = asyncio.create_task(
@@ -2380,7 +2418,10 @@ async def stream_chat_turn_response(
                                 "data": delta
                             })
                 except Exception as e:
-                    print(f"Stream interrupted: {e}")
+                    print(f"[gemini] chat stream error: {e}", flush=True)
+                    logging.getLogger(__name__).exception(
+                        "Gemini chat stream failed device_id=%s", device_id
+                    )
 
                 if not functions_to_execute:
                     last_round = full_text[round_start_offset:]
@@ -2516,8 +2557,17 @@ async def _process_presence_jpeg(device_id: str, jpeg_bytes: bytes) -> None:
             coord = await _ensure_live_coordinator_for_device(device_id)
             if coord is not None:
                 try:
-                    await coord.send_text(msg)
+                    # Wait for greeting audio (ElevenLabs) to finish before streaming mic — otherwise
+                    # realtime PCM interrupts the assistant turn and output_transcription/EL never complete.
+                    turn_ev = await coord.send_text(msg, track_turn_done=True)
                     used_live = True
+                    if turn_ev is not None:
+                        try:
+                            await asyncio.wait_for(turn_ev.wait(), timeout=120.0)
+                        except asyncio.TimeoutError:
+                            print(
+                                "[face] presence greeting: timed out waiting for assistant turn to finish"
+                            )
                     await _start_live_mic_after_face_recognition(device_id)
                 except Exception as ex:
                     print(f"[face] presence Gemini Live failed, using REST: {ex}")
@@ -3162,7 +3212,8 @@ async def text_command(req: TextCommandRequest):
             and not req.bootstrap
         ):
             turn_tool_state_by_device[req.device_id] = {"face_animation": False}
-            await live_coord.send_text(payload_message)
+            # Do not block on in-flight ElevenLabs from e.g. a presence greeting; user text preempts.
+            await live_coord.send_text(payload_message, interrupt_previous=True)
             print("\n>>> GEMINI (TEXT) sent via Live session")
             return {"status": "success", "reply": "", "live": True}
 
@@ -3378,4 +3429,4 @@ if __name__ == "__main__":
     print("--- AUDIO/VISUAL BRAIN SERVER STARTED ---")
     print(f"Listening on http://{_host}:{_port}")
     print("Waiting for ESP32 to connect to /ws/stream ...")
-    uvicorn.run(app, host=_host, port=_port)
+    uvicorn.run(app, host=_host, port=_port, log_level="info")

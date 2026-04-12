@@ -1,7 +1,8 @@
-"""ElevenLabs WebSocket stream-input TTS: MP3 from API, decode to PCM s16le mono 24 kHz for hub clients.
+"""ElevenLabs WebSocket stream-input TTS: PCM s16le mono 24 kHz from API for hub clients.
 
-Follows the official real-time TTS flow (init with ``text`` space + ``xi_api_key``, stream deltas,
-``flush`` on end of turn, ``{"text": ""}`` to close). See:
+Uses ``output_format=pcm_24000`` on the WebSocket URL so frames are raw PCM (base64 in JSON),
+avoiding MP3 + ffmpeg decode. Follows the official real-time TTS flow (init with ``text`` space +
+``xi_api_key``, stream deltas, ``flush`` on end of turn, ``{"text": ""}`` to close). See:
 https://elevenlabs.io/docs/eleven-api/guides/how-to/websockets/realtime-tts
 
 Auth is via ``xi_api_key`` in the first JSON message only (no WebSocket headers), per their Python example.
@@ -17,7 +18,6 @@ import logging
 import os
 from typing import Awaitable, Callable, Optional
 
-import imageio_ffmpeg
 import websockets
 from websockets.exceptions import ConnectionClosed
 
@@ -74,9 +74,24 @@ def _el_debug_enabled() -> bool:
     )
 
 
+def _live_audio_debug() -> bool:
+    """Same as gemini_live_session — set OMNIBOT_LIVE_AUDIO_DEBUG=1 for end-to-end audio tracing."""
+    return (os.environ.get("OMNIBOT_LIVE_AUDIO_DEBUG") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def _dlog(msg: str, *args: object) -> None:
     if _el_debug_enabled():
         logger.info("[elevenlabs] " + msg, *args)
+
+
+def _alog(msg: str, *args: object) -> None:
+    if _live_audio_debug():
+        logger.info("[elevenlabs-audio] " + msg, *args)
 
 
 ELEVENLABS_MODEL_ID = "eleven_flash_v2_5"
@@ -89,7 +104,7 @@ PCM_CHUNK_BYTES = 4800  # 100 ms at 24 kHz mono s16le
 def elevenlabs_stream_url(voice_id: str) -> str:
     return (
         f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
-        f"?model_id={ELEVENLABS_MODEL_ID}"
+        f"?model_id={ELEVENLABS_MODEL_ID}&output_format=pcm_24000"
     )
 
 
@@ -102,37 +117,6 @@ def voice_id_for_pixel_tts_mode(mode: str) -> str:
     raise ValueError(f"Not an ElevenLabs Pixel mode: {mode!r}")
 
 
-async def _mp3_bytes_to_pcm_s16le_24k_mono(mp3: bytes) -> bytes:
-    if not mp3:
-        return b""
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    proc = await asyncio.create_subprocess_exec(
-        ffmpeg,
-        "-i",
-        "pipe:0",
-        "-f",
-        "s16le",
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        "24000",
-        "-ac",
-        "1",
-        "pipe:1",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    if proc.stdin is None or proc.stdout is None:
-        return b""
-    proc.stdin.write(mp3)
-    await proc.stdin.drain()
-    proc.stdin.close()
-    out = await proc.stdout.read()
-    await proc.wait()
-    return out
-
-
 async def stream_elevenlabs_turn_pcm(
     *,
     api_key: str,
@@ -142,13 +126,13 @@ async def stream_elevenlabs_turn_pcm(
 ) -> None:
     """Drain text_queue: each item is (delta_text, finished). None ends input.
 
-    Sends chunks to ElevenLabs stream-input, collects MP3, decodes to PCM, emits in small chunks.
+    Sends chunks to ElevenLabs stream-input, collects PCM from WebSocket frames, emits in small chunks.
 
     While waiting for the next Gemini transcription chunk, sends periodic ``{"text": " "}``
     keepalives so ElevenLabs' 20s input timeout is not hit (see realtime-tts docs).
     """
     uri = elevenlabs_stream_url(voice_id)
-    mp3_acc = bytearray()
+    pcm_acc = bytearray()
     chunks_sent = 0
     keepalives_sent = 0
 
@@ -197,13 +181,18 @@ async def stream_elevenlabs_turn_pcm(
                         if aud:
                             try:
                                 dec = base64.b64decode(aud)
-                                mp3_acc.extend(dec)
-                                _dlog("recv audio mp3_chunk=%s total_mp3=%s", len(dec), len(mp3_acc))
+                                pcm_acc.extend(dec)
+                                _dlog(
+                                    "recv audio pcm_chunk=%s total_pcm=%s",
+                                    len(dec),
+                                    len(pcm_acc),
+                                )
                             except Exception:
                                 pass
+                        # Do not break on isFinal — ElevenLabs may emit multiple finals per stream; stopping
+                        # recv early drops later PCM until we send {"text": ""} and the socket closes.
                         if data.get("isFinal"):
                             _dlog("recv isFinal")
-                            break
                 except ConnectionClosed as cc:
                     logger.info("[elevenlabs] websocket closed code=%s reason=%s", cc.code, cc.reason)
                 except Exception as e:
@@ -225,6 +214,7 @@ async def stream_elevenlabs_turn_pcm(
                     continue
                 if item is None:
                     _dlog("end sentinel received from queue")
+                    _alog("queue sentinel (turn end) chunks_sent_so_far=%s", chunks_sent)
                     break
                 text, finished = item
                 payload: dict = {"text": text}
@@ -235,6 +225,13 @@ async def stream_elevenlabs_turn_pcm(
                 preview = (text or "")[:80].replace("\n", "\\n")
                 _dlog(
                     "sent chunk #%s len=%s finished=%s preview=%r",
+                    chunks_sent,
+                    len(text or ""),
+                    finished,
+                    preview,
+                )
+                _alog(
+                    "ws sent chunk #%s text_len=%s finished=%s preview=%r",
                     chunks_sent,
                     len(text or ""),
                     finished,
@@ -252,20 +249,41 @@ async def stream_elevenlabs_turn_pcm(
                     await recv_task
 
             logger.info(
-                "[elevenlabs] recv done; chunks_sent=%s keepalives=%s total_mp3=%s bytes",
+                "[elevenlabs] recv done; chunks_sent=%s keepalives=%s total_pcm=%s bytes",
                 chunks_sent,
                 keepalives_sent,
-                len(mp3_acc),
+                len(pcm_acc),
+            )
+            _alog(
+                "recv_loop joined chunks_sent=%s total_pcm=%s",
+                chunks_sent,
+                len(pcm_acc),
             )
 
     except Exception as e:
         logger.warning("[elevenlabs] stream failed: %s", e)
         raise
 
-    pcm = await _mp3_bytes_to_pcm_s16le_24k_mono(bytes(mp3_acc))
-    logger.info("[elevenlabs] ffmpeg decoded PCM len=%s bytes; emitting to hub clients", len(pcm))
+    pcm = bytes(pcm_acc)
+    logger.info(
+        "[elevenlabs] accumulated PCM len=%s bytes; emitting to hub clients",
+        len(pcm),
+    )
+    if not pcm and chunks_sent > 0:
+        logger.warning(
+            "[elevenlabs-audio] ZERO PCM after recv but chunks_sent=%s pcm_acc=%s bytes — check API / output_format",
+            chunks_sent,
+            len(pcm_acc),
+        )
+    if not pcm and chunks_sent == 0:
+        logger.warning(
+            "[elevenlabs-audio] ZERO PCM and chunks_sent=0 — no text reached ElevenLabs this turn"
+        )
     n_emit = 0
     for i in range(0, len(pcm), PCM_CHUNK_BYTES):
-        await emit_pcm(pcm[i : i + PCM_CHUNK_BYTES])
+        sl = pcm[i : i + PCM_CHUNK_BYTES]
+        _alog("emit_pcm slice #%s bytes=%s", n_emit + 1, len(sl))
+        await emit_pcm(sl)
         n_emit += 1
     _dlog("emit_pcm calls=%s", n_emit)
+    logger.info("[elevenlabs-audio] emit_pcm completed n=%s total_pcm=%s", n_emit, len(pcm))

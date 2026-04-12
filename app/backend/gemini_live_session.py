@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from google.genai import types
 
+from face_matching import jpeg_bytes_looks_complete
 from hub_config import get_elevenlabs_api_key, get_genai_client, get_gemini_api_key
 from grounding_extract import (
     add_inline_citations_from_grounding,
@@ -22,6 +23,31 @@ from grounding_extract import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _live_audio_debug() -> bool:
+    """Set OMNIBOT_LIVE_AUDIO_DEBUG=1 for verbose live audio / ElevenLabs tracing."""
+    return (os.environ.get("OMNIBOT_LIVE_AUDIO_DEBUG") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _alog(msg: str, *args: object) -> None:
+    if _live_audio_debug():
+        logger.info("[live-audio] " + msg, *args)
+
+
+def _print_live_error(msg: str, *args: object) -> None:
+    """Mirror warnings to stdout so `python app.py` / start.ps1 always shows Gemini Live issues."""
+    try:
+        line = msg % args if args else msg
+    except Exception:
+        line = msg
+    print(f"[gemini-live] {line}", flush=True)
+
 
 # Preview model per https://ai.google.dev/gemini-api/docs/live-api/get-started-sdk
 LIVE_MODEL = "gemini-3.1-flash-live-preview"
@@ -130,6 +156,10 @@ class GeminiLiveCoordinator:
         self._last_output_text = ""
         self._video_last_sent_mono: float = 0.0
         self._closed_this_turn = False
+        # After send_text/begin_user_turn, the next interrupt-only server message is the API
+        # acknowledging the prior turn was aborted — not completion of the new turn. If we
+        # treated it as turn_done, we'd set _closed_this_turn with acc_out_chars=0 and silence.
+        self._expect_user_turn_preempt_ack = False
         self._live_turn_search_sources: list[dict] = []
         self._live_turn_search_queries: list[str] = []
         self._live_turn_gm: Any = None
@@ -137,6 +167,8 @@ class GeminiLiveCoordinator:
         self._el_q: Optional[asyncio.Queue] = None
         self._el_task: Optional[asyncio.Task] = None
         self._el_logged_no_key = False
+        #: Set when ``send_text(..., track_turn_done=True)``; signaled after assistant turn + EL complete.
+        self._turn_done_waiter: Optional[asyncio.Event] = None
 
     def _want_elevenlabs_playback(self) -> bool:
         bs = self._get_bot_settings(self.device_id)
@@ -163,16 +195,26 @@ class GeminiLiveCoordinator:
         vid = voice_id_for_pixel_tts_mode(mode)
         key = get_elevenlabs_api_key()
         self._el_q = asyncio.Queue()
+        # Pin at worker creation: emit_pcm runs concurrently with receive_loop; if begin_user_turn()
+        # updates _current_stream_id mid-emit, old audio must not reuse the new id (interleaved chunks
+        # share one stream_id on the client and sound jumbled).
+        el_stream_id = self._current_stream_id or str(uuid.uuid4())
 
         async def emit_pcm(chunk: bytes) -> None:
             if not chunk:
+                _alog("emit_pcm(skip empty) stream_id=%s", el_stream_id)
                 return
             b64 = base64.b64encode(chunk).decode("ascii")
+            _alog(
+                "broadcast live_audio_chunk bytes=%s stream_id=%s",
+                len(chunk),
+                el_stream_id,
+            )
             await self._broadcast(
                 {
                     "type": "live_audio_chunk",
                     "device_id": self.device_id,
-                    "stream_id": self._current_stream_id,
+                    "stream_id": el_stream_id,
                     "sample_rate": LIVE_OUTPUT_AUDIO_SAMPLE_RATE,
                     "channels": 1,
                     "encoding": "pcm_s16le",
@@ -208,7 +250,12 @@ class GeminiLiveCoordinator:
             raise RuntimeError("Gemini API key not configured.")
         cfg = self._live_config()
         self._session_cm = gc.aio.live.connect(model=LIVE_MODEL, config=cfg)
-        self._session = await self._session_cm.__aenter__()
+        try:
+            self._session = await self._session_cm.__aenter__()
+        except Exception as e:
+            _print_live_error("Live session connect failed device=%s: %s", self.device_id, e)
+            logger.exception("[live] connect __aenter__ failed device=%s", self.device_id)
+            raise
         self._stop.clear()
 
         hist = list(self._get_history(self.device_id) or [])
@@ -217,6 +264,7 @@ class GeminiLiveCoordinator:
                 await self._session.send_client_content(turns=hist, turn_complete=True)
             except Exception as e:
                 logger.warning("[live] seed history failed device=%s: %s", self.device_id, e)
+                _print_live_error("seed history failed device=%s: %s", self.device_id, e)
 
         if self._sender_task is None or self._sender_task.done():
             self._sender_task = asyncio.create_task(self._pcm_sender_loop())
@@ -318,6 +366,8 @@ class GeminiLiveCoordinator:
     async def send_video_jpeg(self, jpeg_bytes: bytes) -> None:
         if not jpeg_bytes or self._session is None:
             return
+        if not jpeg_bytes_looks_complete(jpeg_bytes):
+            return
         now = time.monotonic()
         if now - self._video_last_sent_mono < 1.0:
             return
@@ -330,19 +380,64 @@ class GeminiLiveCoordinator:
                 await self._on_video_frame(self.device_id, jpeg_bytes)
         except Exception as e:
             logger.warning("[live] video frame send failed: %s", e)
+            _print_live_error("video frame send failed: %s", e)
 
-    async def send_text(self, text: str) -> None:
+    async def _await_in_flight_elevenlabs(self) -> None:
+        """HTTP send_text runs concurrently with the receive loop; do not cancel EL mid-decode."""
+        t = self._el_task
+        if t is None or t.done():
+            return
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug("[live] await in-flight ElevenLabs: %s", e)
+
+    async def _interrupt_in_flight_elevenlabs(self) -> None:
+        """Cancel and drain in-flight ElevenLabs (e.g. dashboard text must not block on greeting TTS)."""
+        t = self._el_task
+        if t is None or t.done():
+            self._el_q = None
+            self._el_task = None
+            return
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug("[live] interrupt ElevenLabs: %s", e)
+        self._el_q = None
+        self._el_task = None
+
+    async def send_text(
+        self, text: str, *, interrupt_previous: bool = False, track_turn_done: bool = False
+    ) -> Optional[asyncio.Event]:
         text = (text or "").strip()
         if not text:
-            return
+            return None
         await self.ensure_started()
         sess = self._session
         if sess is None:
-            return
+            return None
+        if interrupt_previous:
+            await self._interrupt_in_flight_elevenlabs()
+        else:
+            await self._await_in_flight_elevenlabs()
         self.begin_user_turn(stream_id=str(uuid.uuid4()))
+        ev: Optional[asyncio.Event] = None
+        if track_turn_done:
+            ev = asyncio.Event()
+            self._turn_done_waiter = ev
         await sess.send_realtime_input(text=text)
+        return ev
 
     def begin_user_turn(self, stream_id: Optional[str] = None) -> str:
+        old_waiter = self._turn_done_waiter
+        self._turn_done_waiter = None
+        if old_waiter is not None and not old_waiter.is_set():
+            old_waiter.set()
         sid = stream_id or str(uuid.uuid4())
         self._current_stream_id = sid
         self._first_token_sent_for_stream = False
@@ -356,6 +451,7 @@ class GeminiLiveCoordinator:
             self._el_task.cancel()
         self._el_task = None
         self._el_q = None
+        self._expect_user_turn_preempt_ack = True
         return sid
 
     async def _pcm_sender_loop(self) -> None:
@@ -393,6 +489,7 @@ class GeminiLiveCoordinator:
                 if self._stop.is_set():
                     break
                 logger.warning("[live] receive error device=%s: %s", self.device_id, e)
+                _print_live_error("receive error device=%s: %s", self.device_id, e)
                 self._clear_resumption_on_next_reconnect = True
                 await self._schedule_reconnect()
                 # Do not call receive() again on the dead session; wait until reconnect
@@ -426,6 +523,7 @@ class GeminiLiveCoordinator:
                     await self._session.send_tool_response(function_responses=responses)
             except Exception as e:
                 logger.exception("[live] tool_call handling: %s", e)
+                _print_live_error("tool_call handling failed: %s", e)
 
         sc = msg.server_content
         if sc is None:
@@ -479,6 +577,13 @@ class GeminiLiveCoordinator:
         if sc.output_transcription and sc.output_transcription.text:
             t = sc.output_transcription.text
             fin = bool(sc.output_transcription.finished)
+            _alog(
+                "output_tx delta_len=%s finished=%s stream_id=%s preview=%r",
+                len(t or ""),
+                fin,
+                self._current_stream_id,
+                (t or "")[:100].replace("\n", "\\n"),
+            )
             if not self._first_token_sent_for_stream:
                 self._first_token_sent_for_stream = True
                 await self._notify_esp32_first_token(self.device_id)
@@ -498,11 +603,11 @@ class GeminiLiveCoordinator:
                     await self._ensure_elevenlabs_worker()
                     if self._el_q is not None:
                         await self._el_q.put((t, fin))
-                        logger.debug(
-                            "[live] elevenlabs queue put len=%s finished=%s device=%s",
+                        _alog(
+                            "elevenlabs queue put len=%s finished=%s el_task_running=%s",
                             len(t or ""),
                             fin,
-                            self.device_id,
+                            bool(self._el_task and not self._el_task.done()),
                         )
                 except Exception as e:
                     logger.warning("[live] ElevenLabs enqueue failed: %s", e)
@@ -524,82 +629,157 @@ class GeminiLiveCoordinator:
                         pass
             if chunks:
                 raw_audio = b"".join(chunks)
-        if raw_audio and not self._want_elevenlabs_playback():
-            if not self._first_token_sent_for_stream:
-                self._first_token_sent_for_stream = True
-                await self._notify_esp32_first_token(self.device_id)
-            b64 = base64.b64encode(raw_audio).decode("ascii")
-            await self._broadcast(
-                {
-                    "type": "live_audio_chunk",
-                    "device_id": self.device_id,
-                    "stream_id": self._current_stream_id,
-                    "sample_rate": LIVE_OUTPUT_AUDIO_SAMPLE_RATE,
-                    "channels": 1,
-                    "encoding": "pcm_s16le",
-                    "b64": b64,
-                }
-            )
+        if raw_audio:
+            if self._want_elevenlabs_playback():
+                _alog(
+                    "Gemini native PCM present bytes=%s (suppressed; ElevenLabs mode) stream_id=%s",
+                    len(raw_audio),
+                    self._current_stream_id,
+                )
+            else:
+                if not self._first_token_sent_for_stream:
+                    self._first_token_sent_for_stream = True
+                    await self._notify_esp32_first_token(self.device_id)
+                _alog(
+                    "broadcast Gemini PCM bytes=%s stream_id=%s",
+                    len(raw_audio),
+                    self._current_stream_id,
+                )
+                b64 = base64.b64encode(raw_audio).decode("ascii")
+                await self._broadcast(
+                    {
+                        "type": "live_audio_chunk",
+                        "device_id": self.device_id,
+                        "stream_id": self._current_stream_id,
+                        "sample_rate": LIVE_OUTPUT_AUDIO_SAMPLE_RATE,
+                        "channels": 1,
+                        "encoding": "pcm_s16le",
+                        "b64": b64,
+                    }
+                )
 
         # Live often sets generation_complete when the model finishes; turn_complete may be absent,
         # which left wake forwarding and the dashboard stuck on "streaming".
-        turn_done = (
-            bool(sc.turn_complete)
-            or bool(sc.generation_complete)
-            or bool(sc.interrupted)
-        )
-        if turn_done and not self._closed_this_turn:
-            self._closed_this_turn = True
-            if self._el_q is not None:
-                try:
-                    await self._el_q.put(None)
-                    if self._el_task:
-                        await self._el_task
-                except Exception as e:
-                    logger.warning("[live] ElevenLabs turn failed device=%s: %s", self.device_id, e)
-                finally:
-                    self._el_q = None
-                    self._el_task = None
-            out_plain = (self._last_output_text or "").strip()
-            out_cited = (
-                add_inline_citations_from_grounding(out_plain, self._live_turn_gm)
-                if out_plain and self._live_turn_gm is not None
-                else out_plain
+        tc = bool(getattr(sc, "turn_complete", False))
+        gc = bool(getattr(sc, "generation_complete", False))
+        intr = bool(getattr(sc, "interrupted", False))
+        interrupt_only = intr and not tc and not gc
+        if interrupt_only and self._expect_user_turn_preempt_ack:
+            self._expect_user_turn_preempt_ack = False
+            logger.info(
+                "[live-audio] ignored interrupt-only (new user turn preempted previous reply) "
+                "device=%s stream_id=%s",
+                self.device_id,
+                self._current_stream_id,
             )
-            if out_plain:
-                try:
-                    self._append_history_content(
+        else:
+            # turn_complete alone can arrive before any model tokens; finalizing then leaves
+            # _closed_this_turn set and ElevenLabs waiting forever for output_transcription.
+            has_out = bool((self._last_output_text or "").strip())
+            if self._want_elevenlabs_playback():
+                # Empty turn_complete before any output_transcription would close the turn and strand EL.
+                turn_done = bool(gc) or bool(intr) or (bool(tc) and (has_out or bool(gc)))
+                if tc and not gc and not intr and not has_out:
+                    logger.info(
+                        "[live-audio] ignored empty turn_complete (await generation_complete / model text) "
+                        "device=%s stream_id=%s",
                         self.device_id,
-                        types.Content(
-                            role="model",
-                            parts=[types.Part(text=out_plain)],
-                        ),
+                        self._current_stream_id,
                     )
-                except Exception:
-                    pass
-                await self._notify_esp32_reply(self.device_id, out_plain)
             else:
-                await self._notify_esp32_reply(self.device_id, "")
-            if self._live_turn_search_sources or self._live_turn_search_queries or (
-                out_cited and out_cited != out_plain
-            ):
-                payload: dict[str, Any] = {
-                    "type": "live_search_grounding",
-                    "device_id": self.device_id,
-                    "stream_id": self._current_stream_id,
-                    "search_sources": self._live_turn_search_sources,
-                    "search_queries": self._live_turn_search_queries,
-                }
-                if out_cited and out_cited != out_plain:
-                    payload["final_text"] = out_cited
-                await self._broadcast(payload)
-                self._live_turn_search_sources = []
-                self._live_turn_search_queries = []
-            self._live_turn_gm = None
-            self._on_wake_live_turn_done(self.device_id)
-            self._first_token_sent_for_stream = False
-            self._last_output_text = ""
-            self._last_input_text = ""
+                turn_done = bool(tc) or bool(gc) or bool(intr)
+            if turn_done and not self._closed_this_turn:
+                self._closed_this_turn = True
+                self._expect_user_turn_preempt_ack = False
+                prev_out = (self._last_output_text or "").strip()
+                logger.info(
+                    "[live-audio] turn_done device=%s stream_id=%s el=%s "
+                    "turn_complete=%s generation_complete=%s interrupted=%s acc_out_chars=%s",
+                    self.device_id,
+                    self._current_stream_id,
+                    self._want_elevenlabs_playback(),
+                    bool(getattr(sc, "turn_complete", False)),
+                    bool(getattr(sc, "generation_complete", False)),
+                    bool(getattr(sc, "interrupted", False)),
+                    len(prev_out),
+                )
+                if self._el_q is not None:
+                    try:
+                        _alog(
+                            "elevenlabs sentinel queue put (end turn) stream_id=%s",
+                            self._current_stream_id,
+                        )
+                        await self._el_q.put(None)
+                        if self._el_task:
+                            try:
+                                await self._el_task
+                                logger.info(
+                                    "[live-audio] ElevenLabs task finished cleanly device=%s stream_id=%s",
+                                    self.device_id,
+                                    self._current_stream_id,
+                                )
+                            except asyncio.CancelledError:
+                                # begin_user_turn() cancels the previous EL task when a new turn
+                                # starts. That must NOT propagate: _receive_loop treats CancelledError
+                                # as "stop receive forever" and would break the Gemini stream.
+                                if self._stop.is_set():
+                                    raise
+                                logger.info(
+                                    "[live-audio] ElevenLabs task superseded (new turn) device=%s stream_id=%s",
+                                    self.device_id,
+                                    self._current_stream_id,
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            "[live] ElevenLabs turn failed device=%s: %s", self.device_id, e
+                        )
+                    finally:
+                        self._el_q = None
+                        self._el_task = None
+                out_plain = (self._last_output_text or "").strip()
+                out_cited = (
+                    add_inline_citations_from_grounding(out_plain, self._live_turn_gm)
+                    if out_plain and self._live_turn_gm is not None
+                    else out_plain
+                )
+                if out_plain:
+                    try:
+                        self._append_history_content(
+                            self.device_id,
+                            types.Content(
+                                role="model",
+                                parts=[types.Part(text=out_plain)],
+                            ),
+                        )
+                    except Exception:
+                        pass
+                    await self._notify_esp32_reply(self.device_id, out_plain)
+                else:
+                    await self._notify_esp32_reply(self.device_id, "")
+                if self._live_turn_search_sources or self._live_turn_search_queries or (
+                    out_cited and out_cited != out_plain
+                ):
+                    payload: dict[str, Any] = {
+                        "type": "live_search_grounding",
+                        "device_id": self.device_id,
+                        "stream_id": self._current_stream_id,
+                        "search_sources": self._live_turn_search_sources,
+                        "search_queries": self._live_turn_search_queries,
+                    }
+                    if out_cited and out_cited != out_plain:
+                        payload["final_text"] = out_cited
+                    await self._broadcast(payload)
+                    self._live_turn_search_sources = []
+                    self._live_turn_search_queries = []
+                self._live_turn_gm = None
+                self._on_wake_live_turn_done(self.device_id)
+                tdw = self._turn_done_waiter
+                self._turn_done_waiter = None
+                if tdw is not None and not tdw.is_set():
+                    tdw.set()
+                self._first_token_sent_for_stream = False
+                self._last_output_text = ""
+                self._last_input_text = ""
 
     async def _schedule_reconnect(self) -> None:
         if self._reconnecting or self._stop.is_set():
@@ -645,9 +825,11 @@ class GeminiLiveCoordinator:
                     return
                 except Exception as e:
                     logger.warning("[live] reconnect attempt %s failed: %s", attempt + 1, e)
+                    _print_live_error("reconnect attempt %s failed: %s", attempt + 1, e)
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 8.0)
             logger.error("[live] reconnect exhausted device=%s", self.device_id)
+            _print_live_error("reconnect exhausted (giving up) device=%s", self.device_id)
         finally:
             self._reconnecting = False
             self._reconnect_task = None

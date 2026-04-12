@@ -109,6 +109,14 @@ def _save_profiles_index(device_id: str, rows: list[dict[str, Any]]) -> None:
         json.dump(rows, f, indent=2)
 
 
+def jpeg_bytes_looks_complete(data: bytes) -> bool:
+    """True if buffer has JPEG SOI/EOI markers (avoids cv2/libjpeg stderr on truncated ESP32 frames)."""
+    if not data or len(data) < 4:
+        return False
+    tail = data.rstrip(b"\x00\r\n \t")
+    return tail[:2] == b"\xff\xd8" and tail[-2:] == b"\xff\xd9"
+
+
 def _represent_image_bgr(image_bgr: np.ndarray) -> Optional[np.ndarray]:
     """Face embedding from BGR image; L2-normalized."""
     app = _get_face_app()
@@ -134,6 +142,8 @@ def _represent_image_bgr(image_bgr: np.ndarray) -> Optional[np.ndarray]:
 
 
 def embedding_from_jpeg_bytes(jpeg_bytes: bytes) -> Optional[np.ndarray]:
+    if not jpeg_bytes_looks_complete(jpeg_bytes):
+        return None
     arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
@@ -211,6 +221,8 @@ def _rebuild_profile_embedding(device_id: str, profile_id: str) -> None:
         if p.suffix.lower() not in (".jpg", ".jpeg", ".png", ".bmp"):
             continue
         data = p.read_bytes()
+        if not jpeg_bytes_looks_complete(data) and p.suffix.lower() in (".jpg", ".jpeg"):
+            continue
         arr = np.frombuffer(data, dtype=np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img is None:

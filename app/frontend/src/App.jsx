@@ -72,6 +72,8 @@ function App() {
   const liveAudioNextTimeRef = useRef(0);
   const liveAudioSrRef = useRef(24000);
   const liveAudioStreamIdRef = useRef(null);
+  /** @type {React.MutableRefObject<AudioBufferSourceNode[]>} */
+  const liveAudioSourcesRef = useRef([]);
 
   const applyPlaybackSinkId = useCallback(async (ctx) => {
     const id = (hubAppSettingsRef.current?.browser_audio_output_device_id || '').trim();
@@ -83,11 +85,23 @@ function App() {
     }
   }, []);
 
+  const stopScheduledLiveSources = useCallback(() => {
+    for (const s of liveAudioSourcesRef.current) {
+      try {
+        s.stop(0);
+      } catch {
+        /* already stopped */
+      }
+    }
+    liveAudioSourcesRef.current = [];
+  }, []);
+
   const stopLiveAudio = useCallback(() => {
     const ctx = liveAudioCtxRef.current;
     liveAudioCtxRef.current = null;
     liveAudioStreamIdRef.current = null;
     liveAudioNextTimeRef.current = 0;
+    stopScheduledLiveSources();
     if (ctx) {
       try {
         ctx.close();
@@ -95,7 +109,7 @@ function App() {
         /* ignore */
       }
     }
-  }, []);
+  }, [stopScheduledLiveSources]);
 
   const [logs, setLogs] = useState([]);
   const [toolCalls, setToolCalls] = useState([]);
@@ -503,6 +517,7 @@ function App() {
             // often breaks playback after other hub work (e.g. presence REST) due to autoplay rules.
             const sid = message.stream_id;
             if (sid && sid !== liveAudioStreamIdRef.current) {
+              stopScheduledLiveSources();
               liveAudioStreamIdRef.current = sid;
               let ctx = liveAudioCtxRef.current;
               if (!ctx) {
@@ -511,6 +526,7 @@ function App() {
                 void ctx.resume().catch(() => {});
                 void applyPlaybackSinkId(ctx);
               }
+              // New turn / stream: drop any pending schedule from a superseded reply (pins to ctx clock).
               liveAudioNextTimeRef.current = ctx.currentTime + 0.08;
             } else if (!liveAudioCtxRef.current) {
               const ctx = new AudioContext();
@@ -533,6 +549,18 @@ function App() {
               const src = ctx.createBufferSource();
               src.buffer = buffer;
               src.connect(ctx.destination);
+              src.onended = () => {
+                liveAudioSourcesRef.current = liveAudioSourcesRef.current.filter((n) => n !== src);
+              };
+              liveAudioSourcesRef.current.push(src);
+              // If the playhead fell far behind (tab sleep, long GC), catch up so audio still plays.
+              if (liveAudioNextTimeRef.current < ctx.currentTime - 0.5) {
+                liveAudioNextTimeRef.current = ctx.currentTime + 0.05;
+              }
+              // Avoid scheduling hours ahead if the queue once ran away (should be rare).
+              if (liveAudioNextTimeRef.current > ctx.currentTime + 5) {
+                liveAudioNextTimeRef.current = ctx.currentTime + 0.08;
+              }
               const startAt = Math.max(ctx.currentTime, liveAudioNextTimeRef.current);
               src.start(startAt);
               liveAudioNextTimeRef.current = startAt + buffer.duration;
@@ -576,6 +604,7 @@ function App() {
     refreshBotList,
     appendLiveTranscription,
     stopLiveAudio,
+    stopScheduledLiveSources,
     applyPlaybackSinkId,
   ]);
 
