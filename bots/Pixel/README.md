@@ -60,7 +60,7 @@ When Wi‑Fi works and the hub is reachable, Pixel connects with a WebSocket; th
 2. Boot with no saved credentials → **BLE SETUP**; device advertises as **Pixel**.
 3. On the PC: **Add New Bot** → choose Pixel → enter Wi‑Fi credentials.
 
-**If Wi‑Fi fails repeatedly:** the firmware retries associations, then after several failed boots can fall back to **BLE SETUP** or clear stored Wi‑Fi so you can reprovision without re-flashing. See **BT SETUP** and **CLR WIFI** above for manual changes.
+**If Wi‑Fi fails repeatedly:** the firmware retries associations (with a longer per-attempt boot connect window so AP association + DHCP can complete), then after several failed boots can fall back to **BLE SETUP** or clear stored Wi‑Fi so you can reprovision without re-flashing. See **BT SETUP** and **CLR WIFI** above for manual changes.
 
 **Change Wi‑Fi while Pixel already works:** **SETTINGS** → **BT SETUP**, then on the PC use **Add New Bot** to send the new network.
 

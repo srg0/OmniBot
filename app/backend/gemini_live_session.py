@@ -53,8 +53,15 @@ def _print_live_error(msg: str, *args: object) -> None:
 LIVE_MODEL = "gemini-3.1-flash-live-preview"
 
 # Native Live output voice (prebuilt names match Gemini speech docs, e.g. Kore, Umbriel, Puck).
-# Override without editing code: set OMNIBOT_LIVE_VOICE_NAME=Puck
-LIVE_PREBUILT_VOICE_NAME = (os.environ.get("OMNIBOT_LIVE_VOICE_NAME") or "Umbriel").strip() or "Umbriel"
+# Base hub voice is Umbriel. Override: set OMNIBOT_LIVE_VOICE_NAME=Puck
+# Env "default"/"auto"/"system" (or unset) = Umbriel — avoids sending invalid voice name "default".
+_LIVE_VOICE_ENV_RAW = (os.environ.get("OMNIBOT_LIVE_VOICE_NAME") or "").strip()
+_LIVE_VOICE_ENV = _LIVE_VOICE_ENV_RAW.lower()
+LIVE_VOICE_BASE_DEFAULT = "Umbriel"
+if _LIVE_VOICE_ENV in ("", "default", "auto", "system"):
+    LIVE_PREBUILT_VOICE_NAME = LIVE_VOICE_BASE_DEFAULT
+else:
+    LIVE_PREBUILT_VOICE_NAME = _LIVE_VOICE_ENV_RAW or LIVE_VOICE_BASE_DEFAULT
 
 # Live output audio is typically 24 kHz PCM (see Live API tool use samples).
 LIVE_OUTPUT_AUDIO_SAMPLE_RATE = 24000
@@ -370,7 +377,7 @@ class GeminiLiveCoordinator:
                 pass
 
     async def send_video_jpeg(self, jpeg_bytes: bytes) -> None:
-        if not jpeg_bytes or self._session is None:
+        if not jpeg_bytes:
             return
         if not jpeg_bytes_looks_complete(jpeg_bytes):
             return
@@ -378,12 +385,19 @@ class GeminiLiveCoordinator:
         if now - self._video_last_sent_mono < 1.0:
             return
         self._video_last_sent_mono = now
+        # Dashboard "Live to model" preview must not depend on Gemini accepting the frame
+        # (session still connecting, transient API errors, etc.).
+        if self._on_video_frame:
+            try:
+                await self._on_video_frame(self.device_id, jpeg_bytes)
+            except Exception as e:
+                logger.warning("[live] video frame preview broadcast failed: %s", e)
+        if self._session is None:
+            return
         try:
             await self._session.send_realtime_input(
                 video=types.Blob(data=jpeg_bytes, mime_type="image/jpeg")
             )
-            if self._on_video_frame:
-                await self._on_video_frame(self.device_id, jpeg_bytes)
         except Exception as e:
             logger.warning("[live] video frame send failed: %s", e)
             _print_live_error("video frame send failed: %s", e)

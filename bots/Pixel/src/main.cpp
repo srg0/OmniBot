@@ -375,8 +375,8 @@ static void drawFaceAnimWordsLine() {
 }
 
 const uint8_t WIFI_CONNECT_ATTEMPTS = 2;
-/** Per-attempt association window (boot only; keep short). */
-const uint16_t WIFI_CONNECT_TIMEOUT_MS = 2000;
+/** Per-attempt association + DHCP window on boot (2s is too short; AP/DHCP often needs 5–20s). */
+const uint16_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 const uint32_t RTC_WIFI_SYNC_INTERVAL_MS = 3600000UL; // 1 hour
 const char* DEFAULT_TIMEZONE_RULE = "EST5EDT,M3.2.0/2,M11.1.0/2";
 char activeTimezoneRule[64] = {0};

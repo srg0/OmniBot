@@ -128,6 +128,7 @@ During chat, Gemini can call tools such as **`soul_replace`**, **`memory_replace
 ### Other hub features worth knowing
 
 - **Gemini Live** — Voice (and optional vision) turns use the Live API when enabled (default). Set environment variable **`OMNIBOT_USE_GEMINI_LIVE=0`** to disable Live and fall back to the non-Live path. REST/chat and heartbeat avoid “live” model IDs automatically where needed.
+- **Live output voice selection** — Set **`OMNIBOT_LIVE_VOICE_NAME`** to a Gemini prebuilt voice name (for example `Puck`). If unset, or set to `default`, `auto`, or `system`, the hub uses **`Umbriel`**.
 - **Browser live voice** — In **Hub settings**, set voice source to **browser** to use the PC microphone and speakers (OpenWakeWord on the hub + `/ws/voice-bridge`) instead of streaming from Pixel. Pixel wake streaming is suppressed in that mode so only one path is active.
 - **Hub TTS** — After a **voice** turn, the hub can speak the assistant reply on the PC using **Gemini Live** audio or optional **ElevenLabs** (voice mode selectable per bot in Pixel settings). Typed chat messages are not spoken.
 - **Wake word & follow-up** — OpenWakeWord on the hub; optional custom model as **`pixel.onnx`** under [`app/backend/models/wake/`](app/backend/models/wake/README.md). **Post-reply listen** seconds control VAD-only follow-up without repeating the wake phrase (`0` = wake required every turn).
@@ -183,6 +184,7 @@ Extra environment variables (Nominatim user-agent, Maps keys, data directory, de
 
 - **`OMNIBOT_DATA_DIR`** — Moves all hub JSON and the **`persona/`** tree to another directory (useful for backups or Docker volumes).
 - **`OMNIBOT_USE_GEMINI_LIVE`** — Set to **`0`** to disable Gemini Live for voice/video on the hub (see **Persona framework** above).
+- **`OMNIBOT_LIVE_VOICE_NAME`** — Gemini Live output voice name for hub voice turns (default **`Umbriel`**). Values `default`, `auto`, and `system` are treated as the default to avoid invalid voice selection.
 - **`OMNIBOT_ELEVENLABS_DEBUG`** — Set to **`1`** to log verbose ElevenLabs WebSocket steps (chunk previews, per-message audio sizes) on the hub.
 - **`OMNIBOT_ELEVENLABS_CHUNK_SCHEDULE`** — Comma-separated integers for ElevenLabs `chunk_length_schedule` (buffer thresholds in characters). Default **`50,120,160,290`** (lower first-byte latency than **`120,160,250,290`**). Example: `80,120,160,290` for a middle ground.
 - **Wake tuning** — **`OMNIBOT_WAKE_WORD_MODEL`**, **`OMNIBOT_WAKE_THRESHOLD`**, **`OMNIBOT_WAKE_SILENCE_MS`** (see [`app/backend/models/wake/README.md`](app/backend/models/wake/README.md)).
