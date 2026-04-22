@@ -3,7 +3,7 @@
 **Pixel** is a desktop companion robot built on the **Seeed XIAO ESP32S3 Sense** and the **XIAO 1.28″ round display**. It streams microphone (and optional camera) data to the **OmniBot hub** over Wi‑Fi so **Gemini** can respond; the round screen shows eyes, status, and replies.
 
 Firmware is a **PlatformIO** project in this folder (`platformio.ini`, `src/main.cpp`).
-
+LINK TO CAD FILES - https://cad.onshape.com/documents/36ef3639f0adcbd215c2da2e/w/06b991eb4c1f6f28b2fd677f/e/884c5e41b396d185bfcf0efe?renderMode=0&uiState=69e847d2750fa350c28bad91
 ---
 
 ## Quick setup
