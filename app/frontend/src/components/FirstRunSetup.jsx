@@ -14,12 +14,13 @@ const TIMEZONE_OPTIONS = [
   { value: 'UTC0', label: 'UTC' },
 ];
 
-const STEP_LABELS = ['Gemini', 'Clock'];
+const STEP_LABELS = ['AI Keys', 'Clock'];
 
 export default function FirstRunSetup({ onConfigured }) {
   const [step, setStep] = useState(0);
   const [geminiSaved, setGeminiSaved] = useState(false);
   const [geminiKey, setGeminiKey] = useState('');
+  const [openaiKey, setOpenaiKey] = useState('');
   const [elevenlabsKey, setElevenlabsKey] = useState('');
   const [timezoneRule, setTimezoneRule] = useState(TIMEZONE_OPTIONS[0].value);
   const [saving, setSaving] = useState(false);
@@ -28,8 +29,9 @@ export default function FirstRunSetup({ onConfigured }) {
   const goNextFromGemini = async (e) => {
     e.preventDefault();
     const trimmed = geminiKey.trim();
-    if (!trimmed && !geminiSaved) {
-      setError('Paste your Gemini API key to continue.');
+    const openaiTrimmed = openaiKey.trim();
+    if (!trimmed && !openaiTrimmed && !geminiSaved) {
+      setError('Paste a Gemini or OpenAI API key to continue.');
       return;
     }
     setSaving(true);
@@ -40,6 +42,10 @@ export default function FirstRunSetup({ onConfigured }) {
         hubPayload.gemini_api_key = trimmed;
         setGeminiSaved(true);
         setGeminiKey('');
+      }
+      if (openaiTrimmed) {
+        hubPayload.openai_api_key = openaiTrimmed;
+        setOpenaiKey('');
       }
       const el = elevenlabsKey.trim();
       if (el) {
@@ -87,7 +93,7 @@ export default function FirstRunSetup({ onConfigured }) {
           <>
             <h1 className="first-run-title">Welcome to OmniBot</h1>
             <p className="first-run-lead">
-              Add your <strong>Google Gemini API key</strong>. It is stored on this machine in{' '}
+              Add your <strong>Gemini or OpenAI API key</strong>. It is stored on this machine in{' '}
               <code className="first-run-code">hub_secrets.json</code>.
             </p>
             <p className="first-run-hint">
@@ -116,6 +122,19 @@ export default function FirstRunSetup({ onConfigured }) {
                   A key is already saved. Leave blank and click Next to continue, or enter a new key to replace it.
                 </p>
               )}
+              <label className="first-run-label" htmlFor="first-run-openai" style={{ marginTop: '1rem' }}>
+                OpenAI API key
+              </label>
+              <input
+                id="first-run-openai"
+                type="password"
+                autoComplete="off"
+                className="first-run-input"
+                value={openaiKey}
+                onChange={(e) => setOpenaiKey(e.target.value)}
+                placeholder="Optional alternative to Gemini for Cardputer voice flow"
+                disabled={saving}
+              />
               <label className="first-run-label" htmlFor="first-run-elevenlabs" style={{ marginTop: '1rem' }}>
                 ElevenLabs API key (optional)
               </label>
@@ -126,7 +145,7 @@ export default function FirstRunSetup({ onConfigured }) {
                 className="first-run-input"
                 value={elevenlabsKey}
                 onChange={(e) => setElevenlabsKey(e.target.value)}
-                placeholder="Optional — for Pixel ElevenLabs voices"
+                placeholder="Optional — for supported ElevenLabs bot voices"
                 disabled={saving}
               />
               {error && <p className="first-run-error">{error}</p>}
@@ -140,7 +159,7 @@ export default function FirstRunSetup({ onConfigured }) {
         {step === 1 && (
           <>
             <h1 className="first-run-title">Clock</h1>
-            <p className="first-run-lead">Choose your hub timezone for Pixel clock sync.</p>
+            <p className="first-run-lead">Choose your hub timezone for device clock sync.</p>
             <form className="first-run-form first-run-form--stack" onSubmit={finishSetup}>
               <div className="form-group">
                 <label htmlFor="first-run-tz">Timezone (clock sync)</label>

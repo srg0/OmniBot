@@ -21,7 +21,7 @@ const SettingsShell = ({ setAppMode, tab, setTab, deviceId = 'default_bot', onBo
           className={`settings-tab ${tab === 'pixel' ? 'active' : ''}`}
           onClick={() => setTab('pixel')}
         >
-          Pixel bot
+          Bot
         </button>
         <button
           type="button"

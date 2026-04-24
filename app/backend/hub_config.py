@@ -107,6 +107,8 @@ def merge_hub_secrets(updates: dict[str, Any]) -> dict[str, Any]:
         if isinstance(v, str) and v.strip() == "" and k in {
             "gemini_api_key",
             "elevenlabs_api_key",
+            "openai_api_key",
+            "openrouter_api_key",
             "nominatim_user_agent",
         }:
             current.pop(k, None)
@@ -130,6 +132,14 @@ def get_gemini_api_key() -> str:
 
 def get_elevenlabs_api_key() -> str:
     return _env_first("ELEVENLABS_API_KEY", "elevenlabs_api_key")
+
+
+def get_openrouter_api_key() -> str:
+    return _env_first("OPENROUTER_API_KEY", "openrouter_api_key")
+
+
+def get_openai_api_key() -> str:
+    return _env_first("OPENAI_API_KEY", "openai_api_key")
 
 
 def get_nominatim_user_agent_raw() -> str:
@@ -176,6 +186,9 @@ def _default_hub_app_settings_dict() -> dict[str, Any]:
         "live_voice_source": "esp32",
         "browser_audio_input_device_id": "",
         "browser_audio_output_device_id": "",
+        "openrouter_tts_model": "",
+        "openrouter_tts_voice": "",
+        "openrouter_tts_sample_rate": 24000,
     }
 
 
@@ -225,8 +238,12 @@ def save_hub_app_settings(data: dict[str, Any]) -> None:
 
 def hub_public_status() -> dict[str, Any]:
     gk = get_gemini_api_key()
+    oak = get_openai_api_key()
+    ork = get_openrouter_api_key()
     return {
         "gemini_configured": bool(gk),
+        "openai_configured": bool(oak),
+        "openrouter_configured": bool(ork),
         "data_dir": str(DATA_DIR),
     }
 
@@ -235,6 +252,8 @@ def hub_settings_public_view() -> dict[str, Any]:
     """Non-secret hub settings for GET /api/hub/settings (keys are masked)."""
     gk = get_gemini_api_key()
     ek = get_elevenlabs_api_key()
+    oak = get_openai_api_key()
+    ork = get_openrouter_api_key()
     env_nomi = bool((os.getenv("NOMINATIM_USER_AGENT") or "").strip())
     stored_nomi = (str(_secrets_from_file().get("nominatim_user_agent") or "")).strip()
     return {
@@ -242,6 +261,10 @@ def hub_settings_public_view() -> dict[str, Any]:
         "gemini_api_key_masked": mask_secret(gk) if gk else None,
         "elevenlabs_api_key_configured": bool(ek),
         "elevenlabs_api_key_masked": mask_secret(ek) if ek else None,
+        "openai_api_key_configured": bool(oak),
+        "openai_api_key_masked": mask_secret(oak) if oak else None,
+        "openrouter_api_key_configured": bool(ork),
+        "openrouter_api_key_masked": mask_secret(ork) if ork else None,
         "nominatim_user_agent": stored_nomi,
         "nominatim_user_agent_from_env": env_nomi,
         "data_dir": str(DATA_DIR),

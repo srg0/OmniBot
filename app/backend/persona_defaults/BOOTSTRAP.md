@@ -36,7 +36,7 @@ Then open **SOUL.md** together and talk about:
 
 Refine **SOUL.md** with **soul_replace** so it matches what you agreed — not generic boilerplate.
 
-Spoken voice for TTS is configured in **Pixel bot settings** on the hub (Gemini or ElevenLabs), not in persona files.
+Spoken voice for TTS is configured in **Bot settings** on the hub (Gemini, OpenRouter, or ElevenLabs), not in persona files.
 
 ## When you are done
 

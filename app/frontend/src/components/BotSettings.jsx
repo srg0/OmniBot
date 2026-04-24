@@ -23,6 +23,7 @@ const HIDDEN_THINKING_LEVEL = 'minimal';
 
 const PIXEL_TTS_OPTIONS = [
   { value: 'gemini', label: 'Default (Gemini Live)' },
+  { value: 'openrouter', label: 'OpenRouter TTS (typed / hub playback)' },
   { value: 'elevenlabs_pixel_male', label: 'Pixel — male (ElevenLabs)' },
   { value: 'elevenlabs_pixel_female', label: 'Pixel — female (ElevenLabs)' },
 ];
@@ -51,6 +52,25 @@ const SLEEP_TIMEOUT_OPTIONS = [
   { value: 1200, label: '20 minutes' },
   { value: 1800, label: '30 minutes' },
 ];
+
+const DEFAULT_CAPABILITIES = {
+  text_input: false,
+  voice_input: true,
+  audio_output: true,
+  vision: true,
+  face_animation: true,
+  presence_scan: true,
+  face_enrollment: true,
+  ble_provisioning: true,
+};
+
+function normalizeCapabilities(caps) {
+  return { ...DEFAULT_CAPABILITIES, ...(caps && typeof caps === 'object' ? caps : {}) };
+}
+
+function labelForDeviceType(deviceType) {
+  return deviceType === 'cardputer_adv' ? 'Cardputer ADV' : 'Bot';
+}
 
 const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', onBotsChanged }) => {
   const [visionEnabled, setVisionEnabled] = useState(false);
@@ -85,6 +105,10 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const [facePreviewBusy, setFacePreviewBusy] = useState(null);
   const [pixelTtsVoice, setPixelTtsVoice] = useState('gemini');
   const [hubElevenlabsConfigured, setHubElevenlabsConfigured] = useState(false);
+  const [hubOpenrouterConfigured, setHubOpenrouterConfigured] = useState(false);
+  const [deviceType, setDeviceType] = useState('pixel');
+  const [deviceLabel, setDeviceLabel] = useState('Bot');
+  const [capabilities, setCapabilities] = useState(DEFAULT_CAPABILITIES);
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -122,9 +146,16 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           getHubSettings().catch(() => ({})),
         ]);
         setHubElevenlabsConfigured(Boolean(hubView.elevenlabs_api_key_configured));
+        setHubOpenrouterConfigured(Boolean(hubView.openrouter_api_key_configured));
+        const nextDeviceType = data.device_type || 'pixel';
+        setDeviceType(nextDeviceType);
+        setDeviceLabel(data.display_name || labelForDeviceType(nextDeviceType));
+        setCapabilities(normalizeCapabilities(data.capabilities));
         const ptv = data.pixel_tts_voice;
         setPixelTtsVoice(
-          ptv === 'elevenlabs_pixel_male' || ptv === 'elevenlabs_pixel_female' ? ptv : 'gemini'
+          ptv === 'openrouter' || ptv === 'elevenlabs_pixel_male' || ptv === 'elevenlabs_pixel_female'
+            ? ptv
+            : 'gemini'
         );
         setVisionEnabled(Boolean(data.vision_enabled));
         setWakeWordEnabled(data.wake_word_enabled !== false);
@@ -205,7 +236,9 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       setHeartbeatEnabled(saved.heartbeat_enabled !== false);
       const sptv = saved.pixel_tts_voice;
       setPixelTtsVoice(
-        sptv === 'elevenlabs_pixel_male' || sptv === 'elevenlabs_pixel_female' ? sptv : 'gemini'
+        sptv === 'openrouter' || sptv === 'elevenlabs_pixel_male' || sptv === 'elevenlabs_pixel_female'
+          ? sptv
+          : 'gemini'
       );
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000);
@@ -220,7 +253,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
   const handleResetToDefaults = async () => {
     if (
       !window.confirm(
-        'Reset Pixel vision, wake word, presence scan, and heartbeat settings to defaults? ' +
+        'Reset device settings to defaults? ' +
           'SOUL.md, IDENTITY.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, and AGENTS.md will be overwritten with hub templates (your edits are lost). BOOTSTRAP.md is removed if present. Daily logs under logs/daily/ are kept. Hub clock is unchanged.'
       )
     ) {
@@ -251,7 +284,9 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       setHeartbeatEnabled(saved.heartbeat_enabled !== false);
       const sptv = saved.pixel_tts_voice;
       setPixelTtsVoice(
-        sptv === 'elevenlabs_pixel_male' || sptv === 'elevenlabs_pixel_female' ? sptv : 'gemini'
+        sptv === 'openrouter' || sptv === 'elevenlabs_pixel_male' || sptv === 'elevenlabs_pixel_female'
+          ? sptv
+          : 'gemini'
       );
       await loadPersona();
       setSaveStatus('success');
@@ -272,7 +307,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       await createFaceProfile(deviceId, name);
       setNewProfileName('');
       await loadProfiles();
-      setFaceMessage('Profile added. Upload a reference photo or capture from Pixel.');
+      setFaceMessage('Profile added. Upload a reference photo or capture from the device.');
     } catch (err) {
       setFaceMessage(err.message || 'Could not add profile');
     } finally {
@@ -316,9 +351,9 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
     setFaceMessage(null);
     try {
       await captureFaceFromPixel(deviceId, profileId);
-      setFaceMessage('Capture requested. Pixel will take a photo when it receives the command.');
+      setFaceMessage('Capture requested. The device will take a photo when it receives the command.');
     } catch (err) {
-      setFaceMessage(err.message || 'Capture failed — is Pixel online?');
+      setFaceMessage(err.message || 'Capture failed — is the device online?');
     } finally {
       setFaceBusyId(null);
     }
@@ -329,9 +364,9 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
     setFaceMessage(null);
     try {
       await previewPixelFace(deviceId, anim, 3000);
-      setFaceMessage(`Playing “${anim}” on Pixel…`);
+      setFaceMessage(`Playing “${anim}” on the device…`);
     } catch (err) {
-      setFaceMessage(err.message || 'Face preview failed — is Pixel connected?');
+      setFaceMessage(err.message || 'Face preview failed — is the device connected?');
     } finally {
       setFacePreviewBusy(null);
     }
@@ -357,7 +392,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
     const loadingInner = (
       <div className="scanning-container">
         <div className="pulse-ring mx-auto"></div>
-        <p>Loading Pixel settings...</p>
+        <p>Loading device settings...</p>
       </div>
     );
     return embedded ? (
@@ -369,7 +404,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
 
   const header = (
     <div className={embedded ? 'settings-subheader' : 'settings-header'}>
-      <h2>{embedded ? 'Pixel bot' : 'Pixel bot'}</h2>
+      <h2>{embedded ? deviceLabel : `${deviceLabel} settings`}</h2>
       <div className="bot-identifier">
         <span className="id-label">TARGET:</span> {deviceId}
       </div>
@@ -378,6 +413,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
 
   const formBody = (
     <form className="settings-form" onSubmit={handleSave}>
+      {capabilities.vision && (
       <div className="form-group">
         <label htmlFor="visionSelect">Vision input to model</label>
         <div className="select-wrapper">
@@ -392,11 +428,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           </select>
         </div>
         <p className="help-text">
-          When on, Pixel captures and sends frames while idle (Gemini Live). When off, the camera sensor is powered down
+          When on, the device captures and sends frames while idle (Gemini Live). When off, the camera sensor is powered down
           on the device whenever presence scan is also off, to save battery. Stored per bot.
         </p>
       </div>
+      )}
 
+      {capabilities.voice_input && (
       <div className="form-group">
         <label htmlFor="wakeWordSelect">Wake word (mic stream to hub)</label>
         <div className="select-wrapper">
@@ -411,12 +449,14 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           </select>
         </div>
         <p className="help-text">
-          When on, Pixel streams the microphone to the hub for wake-word detection and end-of-speech (requires hub on
+          When on, the device streams the microphone to the hub for wake-word detection and end-of-speech (requires hub on
           your LAN). Train or place a custom model as <code>pixel.onnx</code> on the hub, or use the default test model
           (see hub logs).
         </p>
       </div>
+      )}
 
+      {capabilities.voice_input && (
       <div className="form-group">
         <label htmlFor="postReplyListen">After the bot replies, keep listening (seconds)</label>
         <input
@@ -438,11 +478,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           Applies to Gemini Live and REST wake. Save to apply.
         </p>
       </div>
+      )}
 
+      {capabilities.face_animation && (
       <div className="form-group">
         <label>Face animation preview</label>
         <p className="help-text">
-          Pixel must be connected to the hub. Each button plays that expression for a few seconds on the round display.
+          The device must be connected to the hub. Each button plays that expression for a few seconds on the display.
         </p>
         <div className="face-preview-buttons">
           {FACE_PREVIEW_ANIMATIONS.map((anim) => (
@@ -458,7 +500,9 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           ))}
         </div>
       </div>
+      )}
 
+      {capabilities.presence_scan && (
       <div className="form-group">
         <label htmlFor="presenceScan">Presence face scan (hub)</label>
         <div className="select-wrapper">
@@ -473,11 +517,13 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           </select>
         </div>
         <p className="help-text">
-          When on, Pixel sends small snapshots to the hub for face matching. Greeting uses Gemini; images stay on your
+          When on, the device sends small snapshots to the hub for face matching. Greeting uses Gemini; images stay on your
           LAN. Default off for privacy.
         </p>
       </div>
+      )}
 
+      {capabilities.presence_scan && (
       <div className="form-group">
         <label htmlFor="presenceInterval">Snapshot interval (seconds)</label>
         <input
@@ -490,9 +536,11 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           className="holo-textarea"
           style={{ maxWidth: '120px', minHeight: 'unset', height: '40px' }}
         />
-        <p className="help-text">How often Pixel captures a frame while idle (3–300).</p>
+        <p className="help-text">How often the device captures a frame while idle (3–300).</p>
       </div>
+      )}
 
+      {capabilities.presence_scan && (
       <div className="form-group">
         <label htmlFor="greetingCooldown">Greeting cooldown (minutes)</label>
         <input
@@ -507,6 +555,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
         />
         <p className="help-text">Minimum time between automated greetings for the same person (1–720).</p>
       </div>
+      )}
 
       <div className="form-group">
         <label htmlFor="sleepTimeoutSelect">Sleep after inactivity</label>
@@ -525,11 +574,12 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           </select>
         </div>
         <p className="help-text">
-          Pixel switches to a sleep animation after this long without activity. Wakes on wake-word, known face,
-          text command, or face animation trigger.
+          The device switches to an idle/sleep state after this long without activity. Wakes on device activity,
+          incoming text turns, or supported runtime events.
         </p>
       </div>
 
+      {capabilities.audio_output && (
       <div className="form-group">
         <label htmlFor="pixelTtsVoice">Spoken voice (TTS)</label>
         <div className="select-wrapper">
@@ -554,16 +604,24 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
               Live audio.
             </p>
           )}
+        {pixelTtsVoice === 'openrouter' && !hubOpenrouterConfigured && (
+          <p className="help-text" style={{ color: '#fa0' }}>
+            Add an OpenRouter API key in Hub settings to enable this mode.
+          </p>
+        )}
         <p className="help-text">
-          Default uses native Gemini Live speech. Pixel male/female use ElevenLabs (same text as Gemini’s output
-          transcription). The ElevenLabs API key is stored in Hub settings, not here.
+          Default uses native Gemini Live speech. OpenRouter TTS is intended for typed or hub-played replies such as
+          the ADV Cardputer flow. Pixel male/female use ElevenLabs. Keys and OpenRouter model/voice settings are stored
+          in Hub settings, not here.
         </p>
       </div>
+      )}
 
+      {capabilities.face_enrollment && (
       <div className="form-group">
         <label>Face recognition — enrolled people</label>
         <p className="help-text">
-          Add a person, then upload a clear frontal photo or use Capture from Pixel while the bot is connected.
+          Add a person, then upload a clear frontal photo or use Capture from device while the bot is connected.
         </p>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
           <input
@@ -612,7 +670,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
                   onClick={() => handleCaptureFromPixel(p.profile_id)}
                   disabled={!!faceBusyId}
                 >
-                  {faceBusyId === p.profile_id ? '…' : 'Capture from Pixel'}
+                  {faceBusyId === p.profile_id ? '…' : 'Capture from device'}
                 </button>
                 <button
                   type="button"
@@ -632,6 +690,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           </p>
         )}
       </div>
+      )}
 
       <div className="form-group persona-section">
         <label>Persona (AGENTS / SOUL / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT)</label>
@@ -642,7 +701,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
           <strong>IDENTITY.md</strong>, <strong>USER.md</strong>, and <strong>HEARTBEAT.md</strong> via tools when appropriate
           (Hub settings → <strong>Give me a soul</strong> runs <strong>BOOTSTRAP.md</strong>). Heartbeat <em>maintenance</em>{' '}
           can merge daily logs into MEMORY. Voice turns use Gemini Live on the hub; add explicit daily-log lines with the{' '}
-          <code>daily_log_append</code> tool if you want raw notes on disk. Save Pixel options with <strong>Save</strong>; save
+          <code>daily_log_append</code> tool if you want raw notes on disk. Save device options with <strong>Save</strong>; save
           markdown with <strong>Save persona file</strong>.
         </p>
         <div className="persona-tab-row" role="tablist">
@@ -740,7 +799,7 @@ const BotSettings = ({ setAppMode, embedded = false, deviceId = 'default_bot', o
       </div>
 
       {saveStatus === 'success' && (
-        <div className="status-message success slide-enter">Pixel settings saved.</div>
+        <div className="status-message success slide-enter">Device settings saved.</div>
       )}
       {saveStatus === 'error' && (
         <div className="status-message error slide-enter">Something went wrong. Check connection to the hub.</div>

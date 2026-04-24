@@ -9,7 +9,7 @@ const SetupWifi = ({ state, setters, actions }) => {
     <div className="setup-section slide-enter">
       <h3 className="section-title">Select Wi‑Fi network</h3>
       <p className="help-text" style={{ marginBottom: '1rem' }}>
-        Choose the network Pixel should join. Use refresh below if the list is incomplete.
+        Choose the network the device should join. Use refresh below if the list is incomplete.
       </p>
       {wifiScanMessage && (
         <p className="help-text" style={{ marginBottom: '1rem' }}>
@@ -67,7 +67,7 @@ const SetupWifi = ({ state, setters, actions }) => {
       </button>
 
       <button className="btn btn-secondary btn-block mt-4" onClick={() => setSetupStep('device')}>
-        Back to bot selection
+        Back to device selection
       </button>
     </div>
   );

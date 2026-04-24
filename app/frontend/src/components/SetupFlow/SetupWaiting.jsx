@@ -13,7 +13,7 @@ const SetupWaiting = ({ state, setters }) => {
           <span className="spinner setup-waiting-spinner-icon" />
         </div>
         <p className="help-text setup-waiting-lead">
-          Wi‑Fi credentials were sent. When Pixel joins this hub, the next step starts automatically.
+          Wi‑Fi credentials were sent. When the device joins this hub, the next step starts automatically.
         </p>
         <p className="help-text">
           On the device, confirm it shows as connected. This usually takes under a minute.

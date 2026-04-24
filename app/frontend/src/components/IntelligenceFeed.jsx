@@ -232,9 +232,9 @@ const IntelligenceFeed = ({
                 <div key={log.id} className={`message-bubble ${log.sender}`}>
                   <div className="message-meta">
                     <span className="message-sender">
-                      {log.sender === 'esp32' && 'Pixel Bot'}
-                      {log.sender === 'video' && 'Pixel Bot (Video)'}
-                      {log.sender === 'audio' && 'Pixel Bot (Audio)'}
+                      {log.sender === 'esp32' && 'Device'}
+                      {log.sender === 'video' && 'Device (Video)'}
+                      {log.sender === 'audio' && 'Device (Audio)'}
                       {log.sender === 'ai' && 'Gemini AI'}
                       {log.sender === 'user' && 'You'}
                     </span>
@@ -284,7 +284,7 @@ const IntelligenceFeed = ({
           ref={textInputRef}
           type="text"
           className="text-command-input"
-          placeholder="Type a message to Pixel..."
+          placeholder="Type a message to the bot..."
           value={textMessage}
           onChange={(e) => setTextMessage(e.target.value)}
         />

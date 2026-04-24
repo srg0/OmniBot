@@ -41,7 +41,7 @@ const Sidebar = ({
 
         {bots.length === 0 ? (
           <p className="sidebar-empty-bots">
-            No bots yet. Use <strong>Add New Bot</strong> below to provision Pixel, or run the hub on your PC for
+            No bots yet. Use <strong>Add New Bot</strong> below to provision a supported device, or run the hub on your PC for
             Bluetooth setup. Bots appear here after they connect or you save hub settings for them.
           </p>
         ) : (
@@ -60,7 +60,7 @@ const Sidebar = ({
                     tabIndex={0}
                     title={
                       status === 'offline'
-                        ? 'Offline — open Pixel settings or reconnect the device'
+                        ? 'Offline — open device settings or reconnect the hardware'
                         : 'Open Intelligence Feed'
                     }
                     onClick={() => {

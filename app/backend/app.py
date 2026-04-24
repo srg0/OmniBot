@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import re
 import socket
 import uvicorn
 from contextlib import asynccontextmanager
@@ -12,7 +13,7 @@ import numpy as np
 import imageio
 import asyncio # Added for non-blocking operations
 from collections import deque
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -32,6 +33,8 @@ from hub_config import (
     DEFAULT_NOMINATIM_USER_AGENT,
     KNOWN_BOTS_FILE,
     SETTINGS_FILE,
+    get_openai_api_key,
+    get_openrouter_api_key,
     get_genai_client,
     get_gemini_api_key,
     get_nominatim_user_agent_raw,
@@ -70,6 +73,17 @@ from grounding_extract import (
     add_inline_citations_from_grounding,
     extract_search_sources_from_grounding_metadata,
 )
+from openai_voice import (
+    generate_openai_chat_reply,
+    synthesize_openai_tts_pcm,
+    transcribe_openai_audio,
+)
+from openrouter_tts import synthesize_openrouter_tts_pcm
+from device_profiles import (
+    capabilities_for_device_type,
+    default_display_name_for_device_type,
+    normalize_device_type,
+)
 
 # ==========================================
 #          LOAD SECRETS & SETUP (see hub_config: OMNIBOT_DATA_DIR, .env, hub_secrets.json)
@@ -90,15 +104,24 @@ DEFAULT_HEARTBEAT_ENABLED = True
 
 DEFAULT_PIXEL_TTS_VOICE = "gemini"
 PIXEL_TTS_VOICE_GEMINI = "gemini"
+PIXEL_TTS_VOICE_OPENROUTER = "openrouter"
 PIXEL_TTS_VOICE_ELEVENLABS_MALE = "elevenlabs_pixel_male"
 PIXEL_TTS_VOICE_ELEVENLABS_FEMALE = "elevenlabs_pixel_female"
 VALID_PIXEL_TTS_VOICES = frozenset(
     {
         PIXEL_TTS_VOICE_GEMINI,
+        PIXEL_TTS_VOICE_OPENROUTER,
         PIXEL_TTS_VOICE_ELEVENLABS_MALE,
         PIXEL_TTS_VOICE_ELEVENLABS_FEMALE,
     }
 )
+DEFAULT_OPENROUTER_TTS_SAMPLE_RATE = 24000
+DEFAULT_OPENAI_CHAT_MODEL = "gpt-4o-mini"
+DEFAULT_OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
+DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
+DEFAULT_OPENAI_TTS_VOICE = "alloy"
+DEFAULT_OPENAI_TTS_SAMPLE_RATE = 24000
+MAX_OPENAI_DEVICE_HISTORY_MESSAGES = 12
 
 
 def normalize_pixel_tts_voice(v: Any) -> str:
@@ -106,6 +129,10 @@ def normalize_pixel_tts_voice(v: Any) -> str:
     if s in VALID_PIXEL_TTS_VOICES:
         return s
     return DEFAULT_PIXEL_TTS_VOICE
+
+
+def _normalize_openrouter_tts_sample_rate(v: Any) -> int:
+    return _clamp_int(v, DEFAULT_OPENROUTER_TTS_SAMPLE_RATE, 8000, 48000)
 
 
 # Gemini Live (3.1 Flash Live): streaming audio/video + native audio. Disable with OMNIBOT_USE_GEMINI_LIVE=0.
@@ -201,6 +228,7 @@ map_display_style_by_device: dict[str, str] = {}
 # Curated multi-turn history per bot; Gemini turn lock (also used by heartbeat maintenance).
 history_by_device: dict[str, list] = {}
 gemini_turn_locks: dict[str, asyncio.Lock] = {}
+openai_device_history_by_device: dict[str, list[dict[str, str]]] = {}
 
 def get_all_settings():
     if not os.path.exists(SETTINGS_FILE):
@@ -227,6 +255,17 @@ def _default_display_name_for_device_id(device_id: str) -> str:
     return did.replace("_", " ") or "Bot"
 
 
+def _sanitize_device_id(value: Any) -> str:
+    raw = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(value or "").strip())
+    raw = raw.strip("._-")
+    return raw[:64] if raw else ""
+
+
+def _known_bot_meta(device_id: str) -> dict[str, Any]:
+    did = (device_id or "").strip() or "default_bot"
+    return dict(load_known_bots().get(did) or {})
+
+
 def load_known_bots() -> dict[str, dict[str, Any]]:
     if not os.path.exists(KNOWN_BOTS_FILE):
         return {}
@@ -248,14 +287,29 @@ def save_known_bots(data: dict[str, dict[str, Any]]) -> None:
         print(f"Error saving known bots: {e}")
 
 
-def record_bot_seen(device_id: str) -> None:
+def record_bot_seen(
+    device_id: str,
+    *,
+    display_name: Optional[str] = None,
+    device_type: Optional[str] = None,
+    capabilities: Optional[dict[str, Any]] = None,
+) -> None:
     """Persist that a stream device has connected (sidebar / hub memory)."""
     did = (device_id or "").strip() or "default_bot"
     kb = load_known_bots()
     row = dict(kb.get(did) or {})
     row["last_seen"] = datetime.now(timezone.utc).isoformat()
-    if not row.get("display_name"):
-        row["display_name"] = _default_display_name_for_device_id(did)
+    dtype = normalize_device_type(device_type or row.get("device_type"))
+    row["device_type"] = dtype
+    row["capabilities"] = capabilities_for_device_type(dtype, capabilities or row.get("capabilities"))
+    disp = (str(display_name or row.get("display_name") or "").strip())
+    if not disp:
+        disp = (
+            _default_display_name_for_device_id(did)
+            if did == "default_bot"
+            else default_display_name_for_device_type(dtype)
+        )
+    row["display_name"] = disp
     kb[did] = row
     save_known_bots(kb)
 
@@ -268,12 +322,16 @@ def list_registered_bots() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for did in ids:
         meta = kb.get(did) or {}
+        device_type = normalize_device_type(meta.get("device_type"))
+        capabilities = capabilities_for_device_type(device_type, meta.get("capabilities"))
         display = (meta.get("display_name") or "").strip() or _default_display_name_for_device_id(did)
         online = device_stream_is_live(did)
         out.append(
             {
                 "device_id": did,
                 "display_name": display,
+                "device_type": device_type,
+                "capabilities": capabilities,
                 "last_seen": meta.get("last_seen"),
                 "online": online,
             }
@@ -294,8 +352,14 @@ def get_bot_settings(device_id: str):
     settings = get_all_settings()
     bot_conf = settings.get(device_id, {})
     hub = load_hub_app_settings()
+    meta = _known_bot_meta(device_id)
+    device_type = normalize_device_type(meta.get("device_type"))
     return {
         "model": bot_conf.get("model", DEFAULT_MODEL),
+        "device_type": device_type,
+        "display_name": (meta.get("display_name") or "").strip()
+        or _default_display_name_for_device_id(device_id),
+        "capabilities": capabilities_for_device_type(device_type, meta.get("capabilities")),
         "vision_enabled": bool(bot_conf.get("vision_enabled", DEFAULT_VISION_ENABLED)),
         "timezone_rule": hub.get("timezone_rule", DEFAULT_TIMEZONE_RULE),
         "presence_scan_enabled": bool(bot_conf.get("presence_scan_enabled", DEFAULT_PRESENCE_SCAN_ENABLED)),
@@ -629,6 +693,7 @@ class WifiCredentials(BaseModel):
 GeminiThinkingLevel = Literal["auto", "minimal", "low", "medium", "high"]
 PixelTtsVoice = Literal[
     "gemini",
+    "openrouter",
     "elevenlabs_pixel_male",
     "elevenlabs_pixel_female",
 ]
@@ -660,11 +725,25 @@ class HubAppSettingsSchema(BaseModel):
     live_voice_source: Optional[Literal["esp32", "browser"]] = None
     browser_audio_input_device_id: Optional[str] = None
     browser_audio_output_device_id: Optional[str] = None
+    openrouter_tts_model: Optional[str] = None
+    openrouter_tts_voice: Optional[str] = None
+    openrouter_tts_sample_rate: Optional[int] = Field(default=None, ge=8000, le=48000)
 
 class TextCommandRequest(BaseModel):
     message: str = ""
     device_id: str = "default_bot"
     bootstrap: bool = False
+    device_delivery: bool = True
+
+
+class DeviceTextTurnRequest(BaseModel):
+    message: str = ""
+    device_id: str = "default_bot"
+
+
+class DeviceTtsRequest(BaseModel):
+    text: str = ""
+    device_id: str = "default_bot"
 
 class VisionToggleRequest(BaseModel):
     enabled: bool
@@ -677,6 +756,8 @@ class TimezoneRuleRequest(BaseModel):
 class HubSettingsUpdate(BaseModel):
     gemini_api_key: Optional[str] = None
     elevenlabs_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    openrouter_api_key: Optional[str] = None
     nominatim_user_agent: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
@@ -715,16 +796,16 @@ def _ble_device_advertises_omnibot_service(device) -> bool:
 
 
 def _ble_device_is_pixel_setup(device) -> bool:
-    """Pixel in BLE provisioning: local name contains Pixel, or our service UUID appears in the advertisement."""
+    """Supported OmniBot device in BLE provisioning mode."""
     name = (device.name or "").strip()
-    if name and "Pixel" in name:
+    if name and any(tag in name.lower() for tag in ("pixel", "cardputer", "omnibot")):
         return True
     return _ble_device_advertises_omnibot_service(device)
 
 
 def _pixel_display_name_for_scan(device) -> str:
     n = (device.name or "").strip()
-    return n if n else "Pixel"
+    return n if n else "OmniBot device"
 
 
 # ==========================================
@@ -745,7 +826,7 @@ async def setup_scan():
             "message": (
                 "Bluetooth scanning is not available in this environment (typical in Docker: no "
                 "host Bluetooth/D-Bus). Run the OmniBot hub on your PC (not in a container) to "
-                "scan for Pixel over BLE, or configure Wi‑Fi on the device manually."
+                "scan for a supported device over BLE, or configure Wi‑Fi on the device manually."
             ),
         }
 
@@ -759,9 +840,7 @@ async def setup_scan():
     if not results and sim in ("1", "true", "yes"):
         results.append({"name": "DesktopBot_Setup (Simulated)", "address": "00:00:00:00:00:00"})
 
-    empty_hint = (
-        "No Pixel found in Bluetooth setup mode. On the device, open SETTINGS (swipe down) and tap BT SETUP, then scan again."
-    )
+    empty_hint = "No supported OmniBot device found in Bluetooth setup mode. Put the device into BT setup mode, then scan again."
     return {
         "devices": results,
         "ble_available": True,
@@ -770,7 +849,7 @@ async def setup_scan():
 
 @app.get("/setup/hub-endpoint")
 async def setup_hub_endpoint():
-    """LAN IP and port Pixel should use for the hub WebSocket (ESP32 cannot use localhost)."""
+    """LAN IP and port an ESP32 device should use for the hub WebSocket (not localhost)."""
     port = 8000
     try:
         port = int(os.environ.get("OMNIBOT_PORT", "8000") or 8000)
@@ -1145,11 +1224,132 @@ def _hub_live_voice_source_is_browser() -> bool:
     return str(load_hub_app_settings().get("live_voice_source") or "esp32").lower() == "browser"
 
 
+def _bot_wants_openrouter_tts(device_id: str) -> bool:
+    return (
+        str(get_bot_settings(device_id).get("pixel_tts_voice") or "").strip()
+        == PIXEL_TTS_VOICE_OPENROUTER
+    )
+
+
+def _hub_openrouter_tts_config() -> tuple[str, str, int]:
+    hub = load_hub_app_settings()
+    model = str(hub.get("openrouter_tts_model") or "").strip()
+    voice = str(hub.get("openrouter_tts_voice") or "").strip()
+    sample_rate = _normalize_openrouter_tts_sample_rate(hub.get("openrouter_tts_sample_rate"))
+    return model, voice, sample_rate
+
+
+async def _maybe_broadcast_openrouter_tts(device_id: str, text: str) -> bool:
+    if not _bot_wants_openrouter_tts(device_id):
+        return False
+
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+
+    api_key = get_openrouter_api_key()
+    if not api_key:
+        print(f"[openrouter-tts] skipped device={device_id!r}: API key is not configured")
+        return False
+
+    model, voice, sample_rate = _hub_openrouter_tts_config()
+    if not model or not voice:
+        print(
+            f"[openrouter-tts] skipped device={device_id!r}: model/voice not configured "
+            "(set them in Hub settings)"
+        )
+        return False
+
+    try:
+        pcm = await asyncio.to_thread(
+            synthesize_openrouter_tts_pcm,
+            api_key=api_key,
+            text=cleaned,
+            model=model,
+            voice=voice,
+        )
+    except Exception as e:
+        print(f"[openrouter-tts] failed device={device_id!r}: {e}")
+        return False
+
+    if not pcm:
+        return False
+
+    stream_id = str(uuid.uuid4())
+    chunk_size = 4096
+    for off in range(0, len(pcm), chunk_size):
+        chunk = pcm[off : off + chunk_size]
+        if len(chunk) % 2 == 1:
+            chunk = chunk[:-1]
+        if not chunk:
+            continue
+        await manager.broadcast(
+            {
+                "type": "live_audio_chunk",
+                "device_id": device_id,
+                "stream_id": stream_id,
+                "sample_rate": sample_rate,
+                "channels": 1,
+                "encoding": "pcm_s16le",
+                "b64": base64.b64encode(chunk).decode("ascii"),
+            }
+        )
+    return True
+
+
 def _esp32_session_dict_for_device(device_id: str) -> Optional[dict[str, Any]]:
     ws = get_active_esp32_socket(device_id)
     if not ws:
         return None
     return active_streams.get(ws)
+
+
+def _openai_device_system_prompt(device_id: str) -> str:
+    bot = get_bot_settings(device_id)
+    display_name = str(bot.get("display_name") or "ADV Cardputer").strip() or "ADV Cardputer"
+    return (
+        f"You are {display_name}, a compact AI assistant speaking through an M5Stack Cardputer ADV. "
+        "The device has a screen, keyboard, microphone, and speaker, but no camera. "
+        "Reply naturally in the user's language. Keep spoken answers concise and easy to hear, usually 1 to 4 short sentences. "
+        "Do not use markdown unless the user explicitly asks for it. "
+        "If the user asks for vision or camera actions, say that this device does not have a camera in the current firmware."
+    )
+
+
+def _openai_device_history(device_id: str) -> list[dict[str, str]]:
+    return list(openai_device_history_by_device.get(device_id) or [])
+
+
+def _append_openai_device_history(device_id: str, user_text: str, assistant_text: str) -> None:
+    row = list(openai_device_history_by_device.get(device_id) or [])
+    if user_text:
+        row.append({"role": "user", "content": user_text})
+    if assistant_text:
+        row.append({"role": "assistant", "content": assistant_text})
+    if len(row) > MAX_OPENAI_DEVICE_HISTORY_MESSAGES:
+        row = row[-MAX_OPENAI_DEVICE_HISTORY_MESSAGES:]
+    openai_device_history_by_device[device_id] = row
+
+
+async def _run_openai_device_turn(device_id: str, message: str) -> str:
+    api_key = get_openai_api_key()
+    if not api_key:
+        raise RuntimeError("OpenAI API key not configured. Set OPENAI_API_KEY in Hub settings.")
+
+    cleaned = str(message or "").strip()
+    if not cleaned:
+        return ""
+
+    reply = await asyncio.to_thread(
+        generate_openai_chat_reply,
+        api_key=api_key,
+        user_text=cleaned,
+        history=_openai_device_history(device_id),
+        system_prompt=_openai_device_system_prompt(device_id),
+        model=DEFAULT_OPENAI_CHAT_MODEL,
+    )
+    _append_openai_device_history(device_id, cleaned, reply)
+    return reply
 
 
 def _browser_abort_wake_video(device_id: str) -> None:
@@ -2556,6 +2756,42 @@ def bind_esp32_stream_to_device(websocket: WebSocket, device_id: str) -> None:
     gemini_live_session.register_live_coordinator(did, coord)
 
 
+async def _sync_runtime_settings_to_stream(websocket: WebSocket, device_id: str) -> None:
+    """Push the current runtime snapshot to a specific ESP32 stream."""
+    bind_esp32_stream_to_device(websocket, device_id)
+    await websocket.send_text(
+        json.dumps(
+            {
+                "type": "runtime_vision",
+                "enabled": is_vision_enabled(device_id),
+            }
+        )
+    )
+    await websocket.send_text(
+        json.dumps(
+            {
+                "type": "runtime_timezone",
+                "timezone_rule": get_timezone_rule(device_id),
+            }
+        )
+    )
+    await _send_runtime_presence_scan_to_esp32(device_id)
+    await _send_runtime_sleep_timeout_to_esp32(device_id)
+    await _send_runtime_wake_word_to_esp32(
+        device_id,
+        is_wake_word_enabled(device_id),
+    )
+    browser_voice = _hub_live_voice_source_is_browser()
+    sess = active_streams.get(websocket) or {}
+    live_coord = sess.get("live_coordinator")
+    if USE_GEMINI_LIVE and live_coord is not None:
+        await websocket.send_text(
+            json.dumps(
+                {"type": "runtime_live_voice", "enabled": bool(not browser_voice)}
+            )
+        )
+
+
 async def _process_presence_jpeg(device_id: str, jpeg_bytes: bytes) -> None:
     """Match face on hub; optionally run a short Gemini greeting (cooldown + lock aware)."""
     bs = get_bot_settings(device_id)
@@ -2740,35 +2976,7 @@ async def esp32_stream_endpoint(websocket: WebSocket):
     )
 
     try:
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "runtime_vision",
-                    "enabled": is_vision_enabled(stream_device_id),
-                }
-            )
-        )
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "runtime_timezone",
-                    "timezone_rule": get_timezone_rule(stream_device_id),
-                }
-            )
-        )
-        await _send_runtime_presence_scan_to_esp32(stream_device_id)
-        await _send_runtime_sleep_timeout_to_esp32(stream_device_id)
-        browser_voice = _hub_live_voice_source_is_browser()
-        await _send_runtime_wake_word_to_esp32(
-            stream_device_id,
-            is_wake_word_enabled(stream_device_id),
-        )
-        if USE_GEMINI_LIVE and live_coord is not None:
-            await websocket.send_text(
-                json.dumps(
-                    {"type": "runtime_live_voice", "enabled": bool(not browser_voice)}
-                )
-            )
+        await _sync_runtime_settings_to_stream(websocket, stream_device_id)
     except Exception as e:
         print(f"Could not sync runtime settings to ESP32 on connect: {e}")
 
@@ -2892,7 +3100,36 @@ async def esp32_stream_endpoint(websocket: WebSocket):
                     j = json.loads(msg["text"])
                     msg_type = j.get("type", "")
                     dev_id = active_streams[websocket].get("device_id", "default_bot")
-                    if msg_type == "vision_changed":
+                    if msg_type == "device_hello":
+                        requested_id = _sanitize_device_id(j.get("device_id")) or dev_id
+                        requested_type = normalize_device_type(
+                            j.get("device_type") or j.get("hardware")
+                        )
+                        requested_caps = capabilities_for_device_type(
+                            requested_type, j.get("capabilities")
+                        )
+                        requested_name = (
+                            str(j.get("display_name") or "").strip()
+                            or default_display_name_for_device_type(requested_type)
+                        )
+                        bind_esp32_stream_to_device(websocket, requested_id)
+                        record_bot_seen(
+                            requested_id,
+                            display_name=requested_name,
+                            device_type=requested_type,
+                            capabilities=requested_caps,
+                        )
+                        await _sync_runtime_settings_to_stream(websocket, requested_id)
+                        await manager.broadcast(
+                            {
+                                "type": "device_profile_updated",
+                                "device_id": requested_id,
+                                "device_type": requested_type,
+                                "display_name": requested_name,
+                                "capabilities": requested_caps,
+                            }
+                        )
+                    elif msg_type == "vision_changed":
                         enabled = bool(j.get("enabled", DEFAULT_VISION_ENABLED))
                         vision_enabled_by_device[dev_id] = enabled
                         settings = get_all_settings()
@@ -3207,6 +3444,96 @@ async def voice_bridge_websocket(websocket: WebSocket):
                     print(f"[live] voice bridge coordinator stop: {ex}")
 
 
+@app.post("/api/device-text-turn")
+async def device_text_turn(req: DeviceTextTurnRequest):
+    """Simple OpenAI-backed text turn for Cardputer-style devices."""
+    device_id = _sanitize_device_id(req.device_id) or "default_bot"
+    message = str(req.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    try:
+        await _send_activity_event_to_esp32(device_id, "device_text_turn")
+        reply = await _run_openai_device_turn(device_id, message)
+        return {"status": "success", "reply": reply}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/api/device-audio-turn")
+async def device_audio_turn(device_id: str = Form("default_bot"), file: UploadFile = File(...)):
+    """Simple OpenAI-backed voice turn for Cardputer-style devices."""
+    did = _sanitize_device_id(device_id) or "default_bot"
+    api_key = get_openai_api_key()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenAI API key not configured. Set OPENAI_API_KEY or configure in Hub settings.",
+        )
+
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio file cannot be empty")
+
+    try:
+        transcript = await asyncio.to_thread(
+            transcribe_openai_audio,
+            api_key=api_key,
+            audio_bytes=audio_bytes,
+            filename=file.filename or "cardputer.wav",
+            model=DEFAULT_OPENAI_STT_MODEL,
+        )
+        transcript = transcript.strip()
+        if not transcript:
+            raise HTTPException(status_code=422, detail="Could not transcribe speech")
+        await _send_activity_event_to_esp32(did, "device_audio_turn")
+        reply = await _run_openai_device_turn(did, transcript)
+        return {"status": "success", "transcript": transcript, "reply": reply}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/api/device-tts")
+async def device_tts(req: DeviceTtsRequest):
+    """Render raw PCM speech for embedded playback."""
+    api_key = get_openai_api_key()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenAI API key not configured. Set OPENAI_API_KEY or configure in Hub settings.",
+        )
+
+    text = str(req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    try:
+        pcm = await asyncio.to_thread(
+            synthesize_openai_tts_pcm,
+            api_key=api_key,
+            text=text,
+            model=DEFAULT_OPENAI_TTS_MODEL,
+            voice=DEFAULT_OPENAI_TTS_VOICE,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    if not pcm:
+        return Response(status_code=204)
+
+    return Response(
+        content=pcm,
+        media_type="application/octet-stream",
+        headers={
+            "X-Audio-Encoding": "pcm_s16le",
+            "X-Audio-Channels": "1",
+            "X-Audio-Sample-Rate": str(DEFAULT_OPENAI_TTS_SAMPLE_RATE),
+        },
+    )
+
+
 @app.post("/api/text-command")
 async def text_command(req: TextCommandRequest):
     """Receives a typed command from dashboard, streams AI reply, and forwards to ESP32."""
@@ -3252,6 +3579,7 @@ async def text_command(req: TextCommandRequest):
         if (
             USE_GEMINI_LIVE
             and live_coord is not None
+            and req.device_delivery
             and not req.bootstrap
         ):
             turn_tool_state_by_device[req.device_id] = {"face_animation": False}
@@ -3267,6 +3595,7 @@ async def text_command(req: TextCommandRequest):
                 except asyncio.TimeoutError:
                     print("[text-command] timed out waiting for Live assistant turn")
                 reply_live = live_coord.pop_http_turn_reply_text()
+            await _maybe_broadcast_openrouter_tts(req.device_id, reply_live)
             return {"status": "success", "reply": reply_live, "live": True}
 
         full_text, _stream_id = await stream_chat_turn_response(
@@ -3278,11 +3607,13 @@ async def text_command(req: TextCommandRequest):
         print(f"\n>>> GEMINI (TEXT) SAYS: {full_text}")
 
         esp32_ws = get_active_esp32_socket(req.device_id)
-        if esp32_ws:
+        if req.device_delivery and esp32_ws:
             await esp32_ws.send_text(json.dumps({
                 "status": "success",
                 "reply": full_text
             }))
+
+        await _maybe_broadcast_openrouter_tts(req.device_id, full_text)
 
         return {"status": "success", "reply": full_text}
     except Exception as e:
@@ -3371,6 +3702,14 @@ async def post_hub_app_settings_endpoint(new_settings: HubAppSettingsSchema):
         hub["browser_audio_output_device_id"] = str(
             updates["browser_audio_output_device_id"] or ""
         )
+    if "openrouter_tts_model" in updates:
+        hub["openrouter_tts_model"] = str(updates["openrouter_tts_model"] or "").strip()
+    if "openrouter_tts_voice" in updates:
+        hub["openrouter_tts_voice"] = str(updates["openrouter_tts_voice"] or "").strip()
+    if "openrouter_tts_sample_rate" in updates and updates["openrouter_tts_sample_rate"] is not None:
+        hub["openrouter_tts_sample_rate"] = _normalize_openrouter_tts_sample_rate(
+            updates["openrouter_tts_sample_rate"]
+        )
 
     if str(hub.get("live_voice_source") or "esp32").lower() not in ("esp32", "browser"):
         hub["live_voice_source"] = "esp32"
@@ -3395,6 +3734,9 @@ async def post_hub_app_settings_endpoint(new_settings: HubAppSettingsSchema):
                 "live_voice_source": hub.get("live_voice_source"),
                 "browser_audio_input_device_id": hub.get("browser_audio_input_device_id"),
                 "browser_audio_output_device_id": hub.get("browser_audio_output_device_id"),
+                "openrouter_tts_model": hub.get("openrouter_tts_model"),
+                "openrouter_tts_voice": hub.get("openrouter_tts_voice"),
+                "openrouter_tts_sample_rate": hub.get("openrouter_tts_sample_rate"),
             },
         }
     )

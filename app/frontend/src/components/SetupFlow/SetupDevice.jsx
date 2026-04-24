@@ -22,8 +22,8 @@ const SetupDevice = ({ state, setters, actions }) => {
       </button>
 
       <p className="help-text setup-scan-hint" style={{ marginTop: '0.75rem' }}>
-        On Pixel, open <strong>SETTINGS</strong> and tap <strong>BT SETUP</strong> so it is discoverable. Then scan here.
-        You will enter Wi‑Fi credentials on the next steps.
+        Put the device into Bluetooth setup mode so it is discoverable, then scan here. You will enter Wi‑Fi
+        credentials on the next steps.
       </p>
 
       {bleScanMessage && (
@@ -52,9 +52,7 @@ const SetupDevice = ({ state, setters, actions }) => {
           </div>
         ))}
         {bleDevices.length === 0 && !isScanning && !bleScanMessage && (
-          <div className="empty-state">
-            No nearby devices found. On Pixel, use SETTINGS → BT SETUP, then scan again.
-          </div>
+          <div className="empty-state">No nearby devices found. Put the device into BT setup mode, then scan again.</div>
         )}
       </div>
     </div>

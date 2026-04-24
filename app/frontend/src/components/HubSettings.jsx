@@ -25,6 +25,8 @@ const HubSettings = () => {
   const [form, setForm] = useState({
     gemini_api_key: '',
     elevenlabs_api_key: '',
+    openai_api_key: '',
+    openrouter_api_key: '',
     nominatim_user_agent: '',
   });
 
@@ -42,6 +44,9 @@ const HubSettings = () => {
     live_voice_source: 'esp32',
     browser_audio_input_device_id: '',
     browser_audio_output_device_id: '',
+    openrouter_tts_model: '',
+    openrouter_tts_voice: '',
+    openrouter_tts_sample_rate: 24000,
   });
 
   const [soulBots, setSoulBots] = useState([]);
@@ -77,6 +82,10 @@ const HubSettings = () => {
           app.live_voice_source === 'browser' ? 'browser' : 'esp32',
         browser_audio_input_device_id: app.browser_audio_input_device_id || '',
         browser_audio_output_device_id: app.browser_audio_output_device_id || '',
+        openrouter_tts_model: app.openrouter_tts_model || '',
+        openrouter_tts_voice: app.openrouter_tts_voice || '',
+        openrouter_tts_sample_rate:
+          typeof app.openrouter_tts_sample_rate === 'number' ? app.openrouter_tts_sample_rate : 24000,
       });
     } catch (e) {
       console.error(e);
@@ -114,6 +123,8 @@ const HubSettings = () => {
       const payload = {};
       if (form.gemini_api_key.trim()) payload.gemini_api_key = form.gemini_api_key.trim();
       if (form.elevenlabs_api_key.trim()) payload.elevenlabs_api_key = form.elevenlabs_api_key.trim();
+      if (form.openai_api_key.trim()) payload.openai_api_key = form.openai_api_key.trim();
+      if (form.openrouter_api_key.trim()) payload.openrouter_api_key = form.openrouter_api_key.trim();
       if (!view?.nominatim_user_agent_from_env) {
         const nextN = form.nominatim_user_agent.trim();
         const prevN = (view?.nominatim_user_agent || '').trim();
@@ -132,6 +143,8 @@ const HubSettings = () => {
         ...f,
         gemini_api_key: '',
         elevenlabs_api_key: '',
+        openai_api_key: '',
+        openrouter_api_key: '',
       }));
       setSaveStatus('success');
     } catch (err) {
@@ -167,7 +180,7 @@ const HubSettings = () => {
       '• A new BOOTSTRAP.md is written and the soul ritual runs with Gemini.',
       '• Daily logs under logs/daily/ and .heartbeat_state.json are removed so the model is not fed old diary context.',
       '',
-      'Face profiles and saved Pixel settings (model, vision, etc.) are unchanged.',
+      'Face profiles and saved device settings (model, vision, etc.) are unchanged.',
       '',
       'Continue?',
     ].join('\n');
@@ -201,6 +214,9 @@ const HubSettings = () => {
         live_voice_source: voiceForm.live_voice_source,
         browser_audio_input_device_id: voiceForm.browser_audio_input_device_id || '',
         browser_audio_output_device_id: voiceForm.browser_audio_output_device_id || '',
+        openrouter_tts_model: voiceForm.openrouter_tts_model || '',
+        openrouter_tts_voice: voiceForm.openrouter_tts_voice || '',
+        openrouter_tts_sample_rate: Number(voiceForm.openrouter_tts_sample_rate) || 24000,
       });
       const saved = res.settings || {};
       setVoiceForm({
@@ -208,6 +224,10 @@ const HubSettings = () => {
           saved.live_voice_source === 'browser' ? 'browser' : 'esp32',
         browser_audio_input_device_id: saved.browser_audio_input_device_id || '',
         browser_audio_output_device_id: saved.browser_audio_output_device_id || '',
+        openrouter_tts_model: saved.openrouter_tts_model || '',
+        openrouter_tts_voice: saved.openrouter_tts_voice || '',
+        openrouter_tts_sample_rate:
+          typeof saved.openrouter_tts_sample_rate === 'number' ? saved.openrouter_tts_sample_rate : 24000,
       });
       setVoiceSaveStatus('success');
     } catch (err) {
@@ -313,7 +333,7 @@ const HubSettings = () => {
             value={form.elevenlabs_api_key}
             onChange={(e) => setForm((f) => ({ ...f, elevenlabs_api_key: e.target.value }))}
             placeholder={
-              view?.elevenlabs_api_key_configured ? 'Enter new key to replace' : 'Optional — Pixel ElevenLabs TTS'
+              view?.elevenlabs_api_key_configured ? 'Enter new key to replace' : 'Optional — supported device TTS'
             }
           />
           {view?.elevenlabs_api_key_configured && (
@@ -325,6 +345,68 @@ const HubSettings = () => {
               onClick={() => clearKey('elevenlabs_api_key')}
             >
               Remove stored ElevenLabs key
+            </button>
+          )}
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="hubOpenaiKey">OpenAI API key (optional)</label>
+          {view?.openai_api_key_configured && (
+            <p className="help-text">Stored: {view.openai_api_key_masked}</p>
+          )}
+          <input
+            id="hubOpenaiKey"
+            type="password"
+            autoComplete="off"
+            className="holo-input"
+            value={form.openai_api_key}
+            onChange={(e) => setForm((f) => ({ ...f, openai_api_key: e.target.value }))}
+            placeholder={
+              view?.openai_api_key_configured
+                ? 'Enter new key to replace'
+                : 'Optional — Cardputer voice pipeline'
+            }
+          />
+          {view?.openai_api_key_configured && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ alignSelf: 'flex-start', marginTop: '0.35rem' }}
+              disabled={saving}
+              onClick={() => clearKey('openai_api_key')}
+            >
+              Remove stored OpenAI key
+            </button>
+          )}
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="hubOpenrouterKey">OpenRouter API key (optional)</label>
+          {view?.openrouter_api_key_configured && (
+            <p className="help-text">Stored: {view.openrouter_api_key_masked}</p>
+          )}
+          <input
+            id="hubOpenrouterKey"
+            type="password"
+            autoComplete="off"
+            className="holo-input"
+            value={form.openrouter_api_key}
+            onChange={(e) => setForm((f) => ({ ...f, openrouter_api_key: e.target.value }))}
+            placeholder={
+              view?.openrouter_api_key_configured
+                ? 'Enter new key to replace'
+                : 'Optional — OpenRouter TTS for typed replies'
+            }
+          />
+          {view?.openrouter_api_key_configured && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ alignSelf: 'flex-start', marginTop: '0.35rem' }}
+              disabled={saving}
+              onClick={() => clearKey('openrouter_api_key')}
+            >
+              Remove stored OpenRouter key
             </button>
           )}
         </div>
@@ -360,8 +442,8 @@ const HubSettings = () => {
         Use your <strong>PC microphone and speakers</strong> in the dashboard so the browser can apply echo
         cancellation (same machine for capture and playback). Requires a secure context (HTTPS or localhost).
         Saved device IDs are browser- and machine-specific; use <strong>Refresh devices</strong> if hardware
-        changes. With <strong>wake word</strong> enabled for the bot in Pixel settings, Pixel still listens for
-        the wake phrase on its mic; only your spoken question is taken from the browser mic after wake.
+        changes. With <strong>wake word</strong> enabled for a supported device in Bot settings, the device still
+        listens for the wake phrase on its mic; only your spoken question is taken from the browser mic after wake.
       </p>
 
       <form className="settings-form" onSubmit={handleSubmitVoice}>
@@ -376,7 +458,7 @@ const HubSettings = () => {
               }
               className="holo-select"
             >
-              <option value="esp32">Pixel (ESP32) microphone</option>
+              <option value="esp32">ESP32 device microphone</option>
               <option value="browser">This computer (browser mic + speakers)</option>
             </select>
           </div>
@@ -458,6 +540,69 @@ const HubSettings = () => {
         {voiceSaveStatus === 'error' && (
           <div className="status-message error slide-enter">Failed to save voice settings.</div>
         )}
+      </form>
+
+      <h3 className="hub-section-title">OpenRouter TTS</h3>
+      <p className="help-text">
+        This path is intended for typed or hub-played replies, especially the ADV Cardputer flow. It does not replace
+        the full Gemini Live browser-mic session; it adds a separate spoken-output option for bot replies.
+      </p>
+
+      <form className="settings-form" onSubmit={handleSubmitVoice}>
+        <div className="form-group">
+          <label htmlFor="hubOpenrouterTtsModel">TTS model</label>
+          <input
+            id="hubOpenrouterTtsModel"
+            type="text"
+            className="holo-input"
+            value={voiceForm.openrouter_tts_model}
+            onChange={(e) => setVoiceForm((f) => ({ ...f, openrouter_tts_model: e.target.value }))}
+            placeholder="Example: openai/gpt-4o-mini-tts-2025-12-15"
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="hubOpenrouterTtsVoice">Voice</label>
+          <input
+            id="hubOpenrouterTtsVoice"
+            type="text"
+            className="holo-input"
+            value={voiceForm.openrouter_tts_voice}
+            onChange={(e) => setVoiceForm((f) => ({ ...f, openrouter_tts_voice: e.target.value }))}
+            placeholder="Example: alloy"
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="hubOpenrouterTtsSampleRate">PCM sample rate</label>
+          <input
+            id="hubOpenrouterTtsSampleRate"
+            type="number"
+            min={8000}
+            max={48000}
+            className="holo-input"
+            style={{ maxWidth: '10rem' }}
+            value={voiceForm.openrouter_tts_sample_rate}
+            onChange={(e) =>
+              setVoiceForm((f) => ({
+                ...f,
+                openrouter_tts_sample_rate: Math.min(48000, Math.max(8000, Number(e.target.value) || 24000)),
+              }))
+            }
+          />
+          <p className="help-text">
+            OpenRouter returns raw PCM bytes. Default is 24000 Hz, which matches the current hub playback path for
+            spoken replies.
+          </p>
+        </div>
+
+        <div className="form-actions">
+          <div className="form-actions-trailing">
+            <button type="submit" className="btn btn-primary" disabled={voiceSaving}>
+              {voiceSaving ? 'Saving...' : 'Save OpenRouter TTS'}
+            </button>
+          </div>
+        </div>
       </form>
 
       <h3 className="hub-section-title">Give me a soul</h3>

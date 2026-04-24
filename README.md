@@ -1,6 +1,6 @@
 # OmniBot
 
-Run the **hub** (API + dashboard) on your PC and connect **ESP32** robots such as **Pixel** over Wi‑Fi. You chat with **Google Gemini** from the browser (including **Gemini Live** for voice and optional video), provision Wi‑Fi over Bluetooth, and tune hub and bot behavior from the UI. Each bot gets an **OpenClaw-style persona**: markdown files on disk (soul, identity, memory, tools, heartbeat rules) that the model can update through declared tools, plus optional **heartbeat maintenance** that merges daily logs into long-term memory.
+Run the **hub** (API + dashboard) on your PC and connect **ESP32** robots such as **Pixel** or **Cardputer ADV** over Wi‑Fi. `Pixel` keeps the original **Google Gemini** browser/live-voice path; `Cardputer ADV` can now also run a simple **OpenAI-backed** voice loop (`push-to-talk -> transcribe -> reply -> TTS`) for a camera-free handheld agent. You can provision Wi‑Fi over Bluetooth and tune hub and bot behavior from the UI. Each bot gets an **OpenClaw-style persona**: markdown files on disk (soul, identity, memory, tools, heartbeat rules) that the model can update through declared tools, plus optional **heartbeat maintenance** that merges daily logs into long-term memory.
 
 Licensed under the [MIT License](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
@@ -84,7 +84,7 @@ export OMNIBOT_NO_BROWSER=1
 
 ### 4. First launch
 
-You do **not** need a `.env` file to begin. When the UI loads, paste your **Gemini API key** on the welcome screen; it is stored in the hub data directory.
+You do **not** need a `.env` file to begin. When the UI loads, paste your **Gemini API key** or **OpenAI API key** in Hub settings; it is stored in the hub data directory.
 
 Optional: set `GEMINI_API_KEY` in [`app/backend/.env`](app/backend/.env.example) instead of using the welcome screen.
 
@@ -95,8 +95,8 @@ Optional: set `GEMINI_API_KEY` in [`app/backend/.env`](app/backend/.env.example)
 ### Sidebar
 
 - **Bots** — Each connected or configured bot appears as a card. **Click a card** to open the **Dashboard** (Intelligence Feed) for that bot. **Offline** / **Ready** / **Processing** reflect connection and activity.
-- **Gear on a bot card** — Opens **Settings** with the **Pixel bot** tab for that device (model, vision, wake word, persona markdown, face profiles, heartbeat, hub TTS, and more).
-- **Hub settings** — API keys, timezone, optional location (postal + country), **browser live voice** (mic/speakers vs Pixel), and **Give me a soul** (persona bootstrap ritual).
+- **Gear on a bot card** — Opens **Settings** with the **Bot** tab for that device (model, persona markdown, heartbeat, hub TTS, and hardware-specific options such as vision or wake word where supported).
+- **Hub settings** — API keys, timezone, optional location (postal + country), **browser live voice** (mic/speakers vs ESP32 device), and **Give me a soul** (persona bootstrap ritual).
 - **Add New Bot** — Opens **Setup**: scan for a device over **Bluetooth**, pick a Wi‑Fi network, and send credentials so the bot can join your LAN and reach the hub.
 
 ### Dashboard (Intelligence Feed)
@@ -109,7 +109,7 @@ The hub composes the model’s **system instruction** from hub rules plus markdo
 
 | File | Role |
 |------|------|
-| **AGENTS.md** | High-level behavior guide (injected; edit in **Pixel bot** settings). |
+| **AGENTS.md** | High-level behavior guide (injected; edit in **Bot** settings). |
 | **SOUL.md** | Voice, tone, boundaries. |
 | **IDENTITY.md** | Who the bot is (name, nature, emoji, etc.). |
 | **USER.md** | Profile of the human. |
@@ -123,16 +123,16 @@ During chat, Gemini can call tools such as **`soul_replace`**, **`memory_replace
 
 **Give me a soul** (under **Hub settings**): resets persona markdown to the hub templates, clears that bot’s hub chat history, wipes daily logs and heartbeat state, writes **BOOTSTRAP.md**, and starts a streamed bootstrap conversation—follow it in the Intelligence Feed for the chosen bot.
 
-**Reset to defaults** (in **Pixel bot** settings): restores numeric/boolean bot settings and **overwrites** the persona markdown files from templates; daily logs are kept unless you use the soul flow (which clears logs for a clean ritual).
+**Reset to defaults** (in **Bot** settings): restores numeric/boolean bot settings and **overwrites** the persona markdown files from templates; daily logs are kept unless you use the soul flow (which clears logs for a clean ritual).
 
 ### Other hub features worth knowing
 
 - **Gemini Live** — Voice (and optional vision) turns use the Live API when enabled (default). Set environment variable **`OMNIBOT_USE_GEMINI_LIVE=0`** to disable Live and fall back to the non-Live path. REST/chat and heartbeat avoid “live” model IDs automatically where needed.
 - **Live output voice selection** — Set **`OMNIBOT_LIVE_VOICE_NAME`** to a Gemini prebuilt voice name (for example `Puck`). If unset, or set to `default`, `auto`, or `system`, the hub uses **`Umbriel`**.
-- **Browser live voice** — In **Hub settings**, set voice source to **browser** to use the PC microphone and speakers (OpenWakeWord on the hub + `/ws/voice-bridge`) instead of streaming from Pixel. Pixel wake streaming is suppressed in that mode so only one path is active.
-- **Hub TTS** — After a **voice** turn, the hub can speak the assistant reply on the PC using **Gemini Live** audio or optional **ElevenLabs** (voice mode selectable per bot in Pixel settings). Typed chat messages are not spoken.
+- **Browser live voice** — In **Hub settings**, set voice source to **browser** to use the PC microphone and speakers (OpenWakeWord on the hub + `/ws/voice-bridge`) instead of streaming from the device. Device wake streaming is suppressed in that mode so only one path is active.
+- **Hub TTS** — After a **voice** turn, the hub can speak the assistant reply on the PC using **Gemini Live** audio or optional **ElevenLabs** (voice mode selectable per bot in Bot settings). There is also an **OpenRouter TTS** path for typed / hub-played replies, and an **OpenAI STT + chat + PCM TTS** path used by `Cardputer ADV`.
 - **Wake word & follow-up** — OpenWakeWord on the hub; optional custom model as **`pixel.onnx`** under [`app/backend/models/wake/`](app/backend/models/wake/README.md). **Post-reply listen** seconds control VAD-only follow-up without repeating the wake phrase (`0` = wake required every turn).
-- **Presence face scan** — Optional periodic snapshots from Pixel for on-LAN face matching and greetings; enroll people under **Pixel bot** settings.
+- **Presence face scan** — Optional periodic snapshots from supported camera devices for on-LAN face matching and greetings; enroll people under **Bot** settings.
 - **Thinking level** — Per-bot **Gemini 3** thinking levels (including **minimal** and **auto**) map to the API’s thinking config; see the in-UI help link if a model rejects a level.
 
 ### Settings
@@ -141,14 +141,14 @@ Two tabs:
 
 | Tab | Purpose |
 |-----|--------|
-| **Pixel bot** | Per-bot model & thinking, vision, wake word, post-reply listen, hub TTS, presence scan, sleep timeout, **persona editor** (AGENTS / SOUL / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT), face profiles, heartbeat interval and enable flag. |
+| **Bot** | Per-bot model & thinking, vision, wake word, post-reply listen, hub TTS, presence scan, sleep timeout, **persona editor** (AGENTS / SOUL / IDENTITY / USER / TOOLS / MEMORY / HEARTBEAT), face profiles, heartbeat interval and enable flag. Unsupported sections are hidden for limited-capability devices such as Cardputer ADV. |
 | **Hub / application** | Hub-wide secrets and preferences (Gemini key, timezone, optional Maps-related settings), **browser live voice** devices, **Give me a soul** (bootstrap) per bot. |
 
-Open **Hub settings** from the sidebar, or **Pixel bot** via the gear on a bot card.
+Open **Hub settings** from the sidebar, or **Bot** via the gear on a bot card.
 
 ### Setup (Wi‑Fi provisioning)
 
-Use **Add New Bot** when the device shows **BLE SETUP** (first boot or after clearing Wi‑Fi). On the PC, allow Bluetooth when prompted, pick your **Pixel** (or supported device), choose the network, and send the password. After the bot joins Wi‑Fi and connects to the hub, it appears under **Bots**.
+Use **Add New Bot** when the device shows **BLE SETUP** (first boot or after clearing Wi‑Fi). On the PC, allow Bluetooth when prompted, pick your device, choose the network, and send the password. After the bot joins Wi‑Fi and connects to the hub, it appears under **Bots**.
 
 For provisioning, prefer running the hub **on the host** (not only inside Docker) if Bluetooth is unreliable in containers.
 
@@ -175,6 +175,12 @@ More detail: [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.y
 ### Pixel firmware (optional)
 
 Build and flash from [`bots/Pixel`](bots/Pixel) with **PlatformIO**. Set `backend_ip` and `backend_port` in firmware to match your hub (LAN IP; port **8000** for local dev, **8080** for default Docker). Full device usage (gestures, on-screen menus, Wi‑Fi recovery): [`bots/Pixel/README.md`](bots/Pixel/README.md).
+
+### Cardputer ADV firmware (optional)
+
+Build and flash from [`bots/CardputerADV`](bots/CardputerADV) with **PlatformIO**. This target is designed for `M5Stack Cardputer ADV` on `ESP32-S3` with `8MB flash` and now supports a simple device-native agent loop: BLE provisioning, Wi‑Fi, hub registration, keyboard input, push-to-talk voice turns, spoken replies through the speaker, and an on-screen eyes/chat UI. Camera, wake-word / hands-free capture, and presence scan are intentionally not implemented in this port.
+
+See [`bots/CardputerADV/README.md`](bots/CardputerADV/README.md) for the device workflow and commands.
 
 ---
 

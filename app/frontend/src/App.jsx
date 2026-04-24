@@ -29,7 +29,7 @@ function base64ToInt16PCM(b64) {
 }
 
 function App() {
-  /** null = checking, false = show first-run key screen, true = hub has Gemini configured */
+  /** null = checking, false = show first-run key screen, true = hub has at least one AI provider configured */
   const [geminiConfigured, setGeminiConfigured] = useState(null);
   const [hubLoadError, setHubLoadError] = useState(null);
   const [hubAppSettings, setHubAppSettings] = useState(null);
@@ -40,7 +40,9 @@ function App() {
     setHubLoadError(null);
     setGeminiConfigured(null);
     getHubStatus()
-      .then((s) => setGeminiConfigured(Boolean(s.gemini_configured)))
+      .then((s) =>
+        setGeminiConfigured(Boolean(s.gemini_configured || s.openai_configured || s.openrouter_configured))
+      )
       .catch(() =>
         setHubLoadError(
           'Cannot reach the OmniBot hub. Start the backend (e.g. python app.py in app/backend) and ensure this UI can reach it (port 8000, or your Vite proxy).'
@@ -766,8 +768,8 @@ function App() {
         addLog(
           'system',
           hubIp
-            ? `Credentials and hub address (${hubIp}:${hubPort}) sent to ${setupState.selectedDevice.name}. Waiting for Pixel to connect…`
-            : `Credentials sent to ${setupState.selectedDevice.name}. Hub LAN IP was not detected — ensure Pixel firmware points to this PC, then wait for connection…`
+            ? `Credentials and hub address (${hubIp}:${hubPort}) sent to ${setupState.selectedDevice.name}. Waiting for the device to connect…`
+            : `Credentials sent to ${setupState.selectedDevice.name}. Hub LAN IP was not detected — ensure the firmware points to this PC, then wait for connection…`
         );
         updateSetup('setupStep', 'waiting');
         try {
