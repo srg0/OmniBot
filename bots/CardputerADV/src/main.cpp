@@ -56,7 +56,7 @@ constexpr size_t kMaxInputChars = 180;
 constexpr size_t kWrapColumns = 34;
 constexpr uint32_t kMicSampleRate = 8000;
 constexpr uint32_t kTtsDefaultSampleRate = 12000;
-constexpr float kMaxRecordSeconds = 8.0f;
+constexpr float kMaxRecordSeconds = 600.0f;
 constexpr float kMaxTtsSeconds = 14.0f;
 constexpr float kMinRecordSeconds = 0.35f;
 constexpr uint32_t kImuSampleIntervalMs = 30;
@@ -84,6 +84,14 @@ constexpr size_t kVoicePreviewLineThreshold = 5;
 constexpr const char* kVoiceDir = "/voice";
 constexpr const char* kVoiceMetaExt = ".json";
 constexpr const char* kVoiceAudioExt = ".wav";
+constexpr const char* kActiveRecordPcmPath = "/voice/__active_record.pcm";
+constexpr const char* kActiveTtsPcmPath = "/voice/__active_tts.pcm";
+constexpr size_t kRecordChunkSamples = 2048;
+constexpr size_t kRecordChunkBytes = kRecordChunkSamples * sizeof(int16_t);
+constexpr size_t kRecordChunkBufferCount = 3;
+constexpr size_t kPlaybackChunkSamples = 2048;
+constexpr size_t kPlaybackChunkBytes = kPlaybackChunkSamples * sizeof(int16_t);
+constexpr size_t kPlaybackBufferCount = 2;
 constexpr uint8_t kTca8418IntPin = 11;
 constexpr uint8_t kTca8418I2cAddr = 0x34;
 constexpr uint8_t kTca8418SdaPin = 8;
@@ -383,10 +391,28 @@ String gLastKeySignature;
 bool gTcaPressedKeys[4][14] = {};
 bool gCtrlSoloHeld = false;
 bool gCtrlSoloCandidate = false;
+bool gG0VoiceHeld = false;
+bool gRecordingToFile = false;
+bool gPlaybackStreaming = false;
 uint8_t* gDynamicPlaybackBuffer = nullptr;
 volatile bool gTcaInterruptPending = false;
 bool gTimeZoneConfigured = false;
 bool gTimeValid = false;
+File gActiveRecordFile;
+String gActiveRecordPath;
+size_t gActiveRecordBytes = 0;
+size_t gActiveRecordCommittedBytes = 0;
+size_t gActiveRecordExpectedBytes = 0;
+std::deque<uint8_t> gRecordInflightChunks;
+uint8_t gRecordNextChunkIndex = 0;
+int16_t gRecordChunkBuffers[kRecordChunkBufferCount][kRecordChunkSamples];
+File gPlaybackStreamFile;
+String gPlaybackStreamPath;
+uint32_t gPlaybackStreamSampleRate = 0;
+size_t gPlaybackStreamRemainingBytes = 0;
+uint8_t gPlaybackStreamNextBuffer = 0;
+bool gPlaybackStreamRawPcm = false;
+uint8_t gPlaybackStreamBuffers[kPlaybackBufferCount][kPlaybackChunkBytes];
 
 void IRAM_ATTR onTcaKeyboardInterrupt() {
   gTcaInterruptPending = true;
@@ -406,6 +432,10 @@ void submitInput();
 void syncClockFromNtp(bool force = false);
 void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs = 180);
 void updateStatusLed();
+void writeWavHeader(uint8_t* h, uint32_t dataSize, uint32_t sampleRate);
+void serviceRecordingToFile();
+void updateG0VoiceTrigger();
+void servicePlaybackStream();
 
 void mapTcaRawKeyToPhysical(uint8_t keyValue, uint8_t& row, uint8_t& col) {
   uint8_t unit = keyValue % 10;
@@ -941,6 +971,52 @@ bool persistWavFile(const String& path, const uint8_t* header, size_t headerLen,
   return writtenHeader == headerLen && writtenBody == audioLen;
 }
 
+bool persistFileToFile(File& src, File& dst, size_t bytesToCopy) {
+  uint8_t buffer[1024];
+  size_t copied = 0;
+  while (copied < bytesToCopy) {
+    size_t chunk = bytesToCopy - copied;
+    if (chunk > sizeof(buffer)) {
+      chunk = sizeof(buffer);
+    }
+    size_t readBytes = src.read(buffer, chunk);
+    if (readBytes == 0) {
+      return false;
+    }
+    size_t written = dst.write(buffer, readBytes);
+    if (written != readBytes) {
+      return false;
+    }
+    copied += readBytes;
+  }
+  return copied == bytesToCopy;
+}
+
+bool persistWavFromPcmFile(const String& outPath, const String& pcmPath, uint32_t sampleRate, size_t audioLen) {
+  if (!gStorageReady || !ensureVoiceStorage()) {
+    return false;
+  }
+  File src = LittleFS.open(pcmPath, "r");
+  if (!src) {
+    return false;
+  }
+  File dst = LittleFS.open(outPath, "w");
+  if (!dst) {
+    src.close();
+    return false;
+  }
+
+  uint8_t header[44];
+  writeWavHeader(header, static_cast<uint32_t>(audioLen), sampleRate);
+  bool ok = dst.write(header, sizeof(header)) == sizeof(header) && persistFileToFile(src, dst, audioLen);
+  src.close();
+  dst.close();
+  if (!ok) {
+    LittleFS.remove(outPath);
+  }
+  return ok;
+}
+
 void rememberVoiceNote(const String& title, const String& preview, const uint8_t* header, size_t headerLen,
                        const uint8_t* audioBytes, size_t audioLen, uint32_t sampleRate, bool assistant) {
   if (!gStorageReady || !ensureVoiceStorage()) {
@@ -979,66 +1055,184 @@ void rememberVoiceNote(const String& title, const String& preview, const uint8_t
   gSelectedVoiceNote = 0;
 }
 
+void rememberVoiceNoteFromPcmFile(const String& title, const String& preview, const String& pcmPath,
+                                  size_t audioLen, uint32_t sampleRate, bool assistant) {
+  if (!gStorageReady || !ensureVoiceStorage() || !LittleFS.exists(pcmPath)) {
+    return;
+  }
+  size_t totalBytes = LittleFS.totalBytes();
+  size_t usedBytes = LittleFS.usedBytes();
+  size_t requiredBytes = 44 + audioLen + 2048;
+  if (totalBytes > 0 && usedBytes + requiredBytes >= totalBytes) {
+    logf("[VOICE] skip note storage used=%u total=%u required=%u",
+         static_cast<unsigned>(usedBytes),
+         static_cast<unsigned>(totalBytes),
+         static_cast<unsigned>(requiredBytes));
+    return;
+  }
+
+  VoiceNote note;
+  note.id = makeVoiceNoteId(assistant);
+  note.audioPath = voiceAudioPath(note.id);
+  note.metaPath = voiceMetaPath(note.id);
+  note.title = title;
+  note.preview = trimPreview(preview);
+  note.sampleRate = sampleRate;
+  note.durationMs = sampleRate ? static_cast<uint32_t>((audioLen / 2U) * 1000ULL / sampleRate) : 0;
+  note.assistant = assistant;
+
+  if (!persistWavFromPcmFile(note.audioPath, pcmPath, sampleRate, audioLen)) {
+    return;
+  }
+  if (!saveVoiceNoteMetadata(note)) {
+    LittleFS.remove(note.audioPath);
+    return;
+  }
+  gVoiceNotes.push_back(note);
+  sortVoiceNotesNewestFirst();
+  pruneVoiceNotes();
+  gSelectedVoiceNote = 0;
+}
+
+void stopPlaybackStream() {
+  if (gPlaybackStreamFile) {
+    gPlaybackStreamFile.close();
+  }
+  gPlaybackStreamPath = "";
+  gPlaybackStreaming = false;
+  gPlaybackStreamRemainingBytes = 0;
+  gPlaybackStreamSampleRate = 0;
+  gPlaybackStreamNextBuffer = 0;
+  gPlaybackStreamRawPcm = false;
+  if (gDynamicPlaybackBuffer) {
+    free(gDynamicPlaybackBuffer);
+    gDynamicPlaybackBuffer = nullptr;
+  }
+  M5Cardputer.Speaker.stop();
+}
+
+bool startPlaybackStreamFromRawPcmFile(const String& path, uint32_t sampleRate, size_t audioLen, const String& diag) {
+  if (!LittleFS.exists(path)) {
+    setStatus("Voice file missing", 1200);
+    return false;
+  }
+  stopPlaybackStream();
+  gPlaybackStreamFile = LittleFS.open(path, "r");
+  if (!gPlaybackStreamFile) {
+    setStatus("Voice file missing", 1200);
+    return false;
+  }
+  gPlaybackStreamPath = path;
+  gPlaybackStreamRemainingBytes = audioLen;
+  gPlaybackStreamSampleRate = sampleRate;
+  gPlaybackStreamNextBuffer = 0;
+  gPlaybackStreamRawPcm = true;
+  gPlaybackStreaming = true;
+  gPlaybackActive = true;
+  setFaceMode(FaceMode::Speaking);
+  setStatus("Playing voice...", 1200);
+  setVoiceDiag(diag);
+  return true;
+}
+
+bool startPlaybackStreamFromWavFile(const String& path, const String& diag) {
+  if (!LittleFS.exists(path)) {
+    setStatus("Voice file missing", 1200);
+    return false;
+  }
+  stopPlaybackStream();
+  File file = LittleFS.open(path, "r");
+  if (!file) {
+    setStatus("Voice file missing", 1200);
+    return false;
+  }
+  uint8_t header[44];
+  if (file.read(header, sizeof(header)) != sizeof(header)) {
+    file.close();
+    setStatus("Voice file invalid", 1200);
+    return false;
+  }
+  if (!(header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F')) {
+    file.close();
+    setStatus("Voice file invalid", 1200);
+    return false;
+  }
+  uint32_t sampleRate = static_cast<uint32_t>(header[24]) |
+                        (static_cast<uint32_t>(header[25]) << 8) |
+                        (static_cast<uint32_t>(header[26]) << 16) |
+                        (static_cast<uint32_t>(header[27]) << 24);
+  uint32_t audioLen = static_cast<uint32_t>(header[40]) |
+                      (static_cast<uint32_t>(header[41]) << 8) |
+                      (static_cast<uint32_t>(header[42]) << 16) |
+                      (static_cast<uint32_t>(header[43]) << 24);
+  gPlaybackStreamFile = file;
+  gPlaybackStreamPath = path;
+  gPlaybackStreamRemainingBytes = audioLen;
+  gPlaybackStreamSampleRate = sampleRate;
+  gPlaybackStreamNextBuffer = 0;
+  gPlaybackStreamRawPcm = false;
+  gPlaybackStreaming = true;
+  gPlaybackActive = true;
+  setFaceMode(FaceMode::Speaking);
+  setStatus("Playing voice...", 1200);
+  setVoiceDiag(diag);
+  return true;
+}
+
+void servicePlaybackStream() {
+  if (!gPlaybackStreaming) {
+    return;
+  }
+  constexpr int kPlaybackChannel = 0;
+  while (gPlaybackStreamRemainingBytes > 0 && M5Cardputer.Speaker.isPlaying(kPlaybackChannel) < 2) {
+    size_t chunk = gPlaybackStreamRemainingBytes;
+    if (chunk > kPlaybackChunkBytes) {
+      chunk = kPlaybackChunkBytes;
+    }
+    uint8_t* buffer = gPlaybackStreamBuffers[gPlaybackStreamNextBuffer];
+    size_t readBytes = gPlaybackStreamFile.read(buffer, chunk);
+    if (readBytes == 0) {
+      gPlaybackStreamRemainingBytes = 0;
+      break;
+    }
+    bool firstChunk = M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0;
+    bool queued = M5Cardputer.Speaker.playRaw(reinterpret_cast<const int16_t*>(buffer),
+                                              readBytes / sizeof(int16_t),
+                                              gPlaybackStreamSampleRate,
+                                              false,
+                                              1,
+                                              kPlaybackChannel,
+                                              firstChunk);
+    if (!queued) {
+      setVoiceDiag("playback: queue fail");
+      setFaceMode(FaceMode::Error);
+      setStatus("Playback failed", 1500);
+      stopPlaybackStream();
+      gPlaybackActive = false;
+      return;
+    }
+    gPlaybackStreamRemainingBytes -= readBytes;
+    gPlaybackStreamNextBuffer = (gPlaybackStreamNextBuffer + 1) % kPlaybackBufferCount;
+  }
+
+  if (gPlaybackStreamRemainingBytes == 0 && M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0) {
+    bool removeTempPcm = gPlaybackStreamPath == kActiveTtsPcmPath;
+    stopPlaybackStream();
+    gPlaybackActive = false;
+    setFaceMode(FaceMode::Idle);
+    setStatus("Reply finished", 1000);
+    if (removeTempPcm) {
+      LittleFS.remove(kActiveTtsPcmPath);
+    }
+  }
+}
+
 bool playVoiceNoteAt(int index) {
   if (index < 0 || index >= static_cast<int>(gVoiceNotes.size())) {
     return false;
   }
   const auto& note = gVoiceNotes[index];
-  File file = LittleFS.open(note.audioPath, "r");
-  if (!file) {
-    setStatus("Voice file missing", 1200);
-    return false;
-  }
-  size_t fileSize = file.size();
-  if (fileSize < 44) {
-    file.close();
-    setStatus("Voice file invalid", 1200);
-    return false;
-  }
-
-  uint8_t* wavBuffer = nullptr;
-  bool dynamicBuffer = false;
-  size_t capacity = max(gTtsCapacityBytes, gRecordCapacityBytes);
-  if (capacity >= fileSize && gTtsBuffer) {
-    wavBuffer = reinterpret_cast<uint8_t*>(gTtsBuffer);
-  } else if (capacity >= fileSize && gRecordBuffer && !gRecording) {
-    wavBuffer = reinterpret_cast<uint8_t*>(gRecordBuffer);
-  } else {
-    wavBuffer = static_cast<uint8_t*>(heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    dynamicBuffer = wavBuffer != nullptr;
-  }
-  if (!wavBuffer) {
-    file.close();
-    setStatus("Voice note too large", 1200);
-    return false;
-  }
-
-  size_t readBytes = file.read(wavBuffer, fileSize);
-  file.close();
-  if (readBytes != fileSize) {
-    if (dynamicBuffer) {
-      free(wavBuffer);
-    }
-    setStatus("Voice read failed", 1200);
-    return false;
-  }
-
-  M5Cardputer.Speaker.stop();
-  if (gDynamicPlaybackBuffer) {
-    free(gDynamicPlaybackBuffer);
-    gDynamicPlaybackBuffer = nullptr;
-  }
-  gPlaybackActive = true;
-  setFaceMode(FaceMode::Speaking);
-  setStatus("Playing note", 1200);
-  M5Cardputer.Speaker.playWav(wavBuffer, fileSize, 1, -1, true);
-  if (dynamicBuffer) {
-    gDynamicPlaybackBuffer = wavBuffer;
-    setVoiceDiag("note: dynamic");
-  } else {
-    setVoiceDiag("note: cached");
-  }
-  return true;
+  return startPlaybackStreamFromWavFile(note.audioPath, String("note: ") + note.title);
 }
 
 void setUiMode(UiMode mode) {
@@ -1600,6 +1794,17 @@ void logHeapStats(const char* tag) {
 }
 
 uint32_t currentRecordLimitMs() {
+  if (gRecordingToFile && gStorageReady) {
+    size_t total = LittleFS.totalBytes();
+    size_t used = LittleFS.usedBytes();
+    size_t availableBytes = 0;
+    if (total > used + 8192) {
+      availableBytes = total - used - 8192;
+    }
+    uint32_t storageMs = static_cast<uint32_t>((availableBytes * 1000ULL) / (kMicSampleRate * sizeof(int16_t)));
+    uint32_t configuredMs = static_cast<uint32_t>(kMaxRecordSeconds * 1000.0f);
+    return storageMs < configuredMs ? storageMs : configuredMs;
+  }
   if (!gRecordCapacitySamples) {
     return static_cast<uint32_t>(kMaxRecordSeconds * 1000.0f);
   }
@@ -1641,6 +1846,50 @@ void stopMic() {
   initSpeaker();
 }
 
+void flushCompletedRecordChunksToFile(size_t completedCount) {
+  for (size_t i = 0; i < completedCount && !gRecordInflightChunks.empty(); ++i) {
+    uint8_t chunkIndex = gRecordInflightChunks.front();
+    gRecordInflightChunks.pop_front();
+    if (gActiveRecordFile) {
+      gActiveRecordFile.write(reinterpret_cast<const uint8_t*>(gRecordChunkBuffers[chunkIndex]), kRecordChunkBytes);
+      gActiveRecordBytes += kRecordChunkBytes;
+      gActiveRecordCommittedBytes += kRecordChunkBytes;
+    }
+  }
+}
+
+bool queueRecordChunk(uint8_t chunkIndex) {
+  return M5Cardputer.Mic.record(gRecordChunkBuffers[chunkIndex], kRecordChunkSamples, kMicSampleRate);
+}
+
+void serviceRecordingToFile() {
+  if (!gRecording || !gRecordingToFile) {
+    return;
+  }
+  size_t micQueued = M5Cardputer.Mic.isRecording();
+  if (gRecordInflightChunks.size() > micQueued) {
+    flushCompletedRecordChunksToFile(gRecordInflightChunks.size() - micQueued);
+  }
+  while (gRecordInflightChunks.size() < 2) {
+    uint8_t chunkIndex = gRecordNextChunkIndex;
+    gRecordNextChunkIndex = (gRecordNextChunkIndex + 1) % kRecordChunkBufferCount;
+    bool alreadyInflight = false;
+    for (uint8_t inflight : gRecordInflightChunks) {
+      if (inflight == chunkIndex) {
+        alreadyInflight = true;
+        break;
+      }
+    }
+    if (alreadyInflight) {
+      continue;
+    }
+    if (!queueRecordChunk(chunkIndex)) {
+      break;
+    }
+    gRecordInflightChunks.push_back(chunkIndex);
+  }
+}
+
 void startRecording() {
   if (gRecording || gSubmitting || gThinking || gPlaybackActive) {
     logf("[VOICE] start ignored rec=%d submit=%d think=%d play=%d", gRecording, gSubmitting,
@@ -1658,31 +1907,56 @@ void startRecording() {
   if (!gPlaybackActive && gTtsBuffer) {
     releaseTtsBuffer();
   }
-  logHeapStats("voice-start");
-  if (!ensureRecordBuffer()) {
-    pushError("Audio buffer allocation failed.");
-    setFaceMode(FaceMode::Error);
-    setStatus("No audio buffer", 1500);
-    setVoiceDiag("voice: record buffer failed");
-    logf("[VOICE] audio buffer allocation failed");
-    return;
-  }
-
   gRecordedSamples = 0;
   gRecording = true;
   gRecordStartMs = millis();
+
+  gRecordingToFile = gStorageReady && ensureVoiceStorage();
+  if (gRecordingToFile) {
+    LittleFS.remove(kActiveRecordPcmPath);
+    gActiveRecordFile = LittleFS.open(kActiveRecordPcmPath, "w");
+    if (!gActiveRecordFile) {
+      gRecordingToFile = false;
+    } else {
+      gActiveRecordPath = kActiveRecordPcmPath;
+      gActiveRecordBytes = 0;
+      gActiveRecordCommittedBytes = 0;
+      gActiveRecordExpectedBytes = 0;
+      gRecordInflightChunks.clear();
+      gRecordNextChunkIndex = 0;
+    }
+  }
+
+  if (!gRecordingToFile) {
+    logHeapStats("voice-start");
+    if (!ensureRecordBuffer()) {
+      pushError("Audio buffer allocation failed.");
+      setFaceMode(FaceMode::Error);
+      setStatus("No audio buffer", 1500);
+      setVoiceDiag("voice: record buffer failed");
+      logf("[VOICE] audio buffer allocation failed");
+      gRecording = false;
+      return;
+    }
+  }
+
   startMic();
-  M5Cardputer.Mic.record(gRecordBuffer, gRecordCapacitySamples, kMicSampleRate);
+  if (gRecordingToFile) {
+    serviceRecordingToFile();
+    setVoiceDiag("voice: recording fs");
+  } else {
+    M5Cardputer.Mic.record(gRecordBuffer, gRecordCapacitySamples, kMicSampleRate);
+    setVoiceDiag("voice: recording");
+  }
   setFaceMode(FaceMode::Listening);
   setStatus("Listening...");
-  setVoiceDiag("voice: recording");
   render();
-  logf("[VOICE] recording started capacity_samples=%u", static_cast<unsigned>(gRecordCapacitySamples));
+  logf("[VOICE] recording started mode=%s", gRecordingToFile ? "file" : "ram");
 }
 
-void writeWavHeader(uint8_t* h, uint32_t dataSize) {
+void writeWavHeader(uint8_t* h, uint32_t dataSize, uint32_t sampleRate) {
   uint32_t fileSize = 36 + dataSize;
-  uint32_t byteRate = kMicSampleRate * 2;
+  uint32_t byteRate = sampleRate * 2;
   uint16_t blockAlign = 2;
 
   h[0] = 'R'; h[1] = 'I'; h[2] = 'F'; h[3] = 'F';
@@ -1695,10 +1969,10 @@ void writeWavHeader(uint8_t* h, uint32_t dataSize) {
   h[16] = 16; h[17] = 0; h[18] = 0; h[19] = 0;
   h[20] = 1; h[21] = 0;
   h[22] = 1; h[23] = 0;
-  h[24] = kMicSampleRate & 0xFF;
-  h[25] = (kMicSampleRate >> 8) & 0xFF;
-  h[26] = (kMicSampleRate >> 16) & 0xFF;
-  h[27] = (kMicSampleRate >> 24) & 0xFF;
+  h[24] = sampleRate & 0xFF;
+  h[25] = (sampleRate >> 8) & 0xFF;
+  h[26] = (sampleRate >> 16) & 0xFF;
+  h[27] = (sampleRate >> 24) & 0xFF;
   h[28] = byteRate & 0xFF;
   h[29] = (byteRate >> 8) & 0xFF;
   h[30] = (byteRate >> 16) & 0xFF;
@@ -1899,6 +2173,63 @@ bool writeClientAllStaged(WiFiClient& client, const uint8_t* data, size_t length
   return true;
 }
 
+bool writeClientAllFileStaged(WiFiClient& client, File& file, size_t length, const char* label) {
+  uint8_t stage[kHttpStageChunkBytes];
+  size_t written = 0;
+  unsigned long deadline = millis() + 90000;
+  unsigned long lastProgress = millis();
+
+  while (written < length && millis() < deadline) {
+    if (WiFi.status() != WL_CONNECTED) {
+      setHttpDiag(String(label) + ": wifi lost");
+      return false;
+    }
+    if (!client.connected()) {
+      setHttpDiag(String(label) + ": disconnected");
+      return false;
+    }
+    size_t chunk = length - written;
+    if (chunk > sizeof(stage)) {
+      chunk = sizeof(stage);
+    }
+    size_t readBytes = file.read(stage, chunk);
+    if (readBytes == 0) {
+      break;
+    }
+    size_t sent = client.write(stage, readBytes);
+    if (sent == 0) {
+      if (millis() - lastProgress > 3000) {
+        setHttpDiag(String(label) + ": stalled");
+        return false;
+      }
+      yield();
+      delay(2);
+      file.seek(file.position() - static_cast<int>(readBytes));
+      continue;
+    }
+    if (sent != readBytes) {
+      setHttpDiag(String(label) + ": short");
+      return false;
+    }
+    written += sent;
+    lastProgress = millis();
+    if ((written % (8 * 1024)) == 0 || written == length) {
+      setHttpDiag(String(label) + ": " + String(static_cast<unsigned>(written / 1024)) + "k/" +
+                  String(static_cast<unsigned>(length / 1024)) + "k");
+    }
+    yield();
+    delay(1);
+  }
+
+  if (written != length) {
+    setHttpDiag(String(label) + ": short " + String(static_cast<unsigned>(written)) + "/" +
+                String(static_cast<unsigned>(length)));
+    return false;
+  }
+  setHttpDiag(String(label) + ": ok " + String(static_cast<unsigned>(length / 1024)) + "k");
+  return true;
+}
+
 bool connectHubClient(WiFiClient& client, const char* reason, uint32_t readTimeoutSec) {
   if (!ensureWifiForHttp(reason)) {
     setHttpDiag(String(reason ? reason : "?") + ": wifi unavailable");
@@ -1972,24 +2303,8 @@ bool requestAndPlayTts(const String& text) {
   if (!gRecording && gRecordBuffer) {
     releaseRecordBuffer();
   }
-
-  logHeapStats("tts-start");
-
-  int16_t* playbackBuffer = gTtsBuffer;
-  size_t playbackCapacityBytes = gTtsCapacityBytes;
-  if (!playbackBuffer) {
-    if (ensureTtsBuffer()) {
-      playbackBuffer = gTtsBuffer;
-      playbackCapacityBytes = gTtsCapacityBytes;
-    } else {
-      setVoiceDiag("tts: empty/buffer");
-      return false;
-    }
-  }
-
-  if (gDynamicPlaybackBuffer && !gPlaybackActive) {
-    free(gDynamicPlaybackBuffer);
-    gDynamicPlaybackBuffer = nullptr;
+  if (gTtsBuffer) {
+    releaseTtsBuffer();
   }
 
   bool pausedWsForTts = false;
@@ -2051,90 +2366,78 @@ bool requestAndPlayTts(const String& text) {
     return false;
   }
 
-  size_t maxBytes = playbackCapacityBytes;
-  size_t toRead = maxBytes;
-  uint8_t* dynamicPcmBuffer = nullptr;
-  bool dynamicPlayback = false;
-  if (contentLength > 0 && static_cast<size_t>(contentLength) < toRead) {
-    toRead = static_cast<size_t>(contentLength);
-  } else if (contentLength > 0 && static_cast<size_t>(contentLength) > maxBytes) {
-    dynamicPcmBuffer = static_cast<uint8_t*>(
-        heap_caps_malloc(static_cast<size_t>(contentLength), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (!dynamicPcmBuffer) {
-      dynamicPcmBuffer = static_cast<uint8_t*>(
-          heap_caps_malloc(static_cast<size_t>(contentLength), MALLOC_CAP_8BIT));
-    }
-    if (dynamicPcmBuffer) {
-      if (gTtsBuffer) {
-        releaseTtsBuffer();
-      }
-      playbackBuffer = reinterpret_cast<int16_t*>(dynamicPcmBuffer);
-      playbackCapacityBytes = static_cast<size_t>(contentLength);
-      toRead = static_cast<size_t>(contentLength);
-      dynamicPlayback = true;
-      logf("[TTS] dynamic buffer content_length=%u", static_cast<unsigned>(contentLength));
-      setVoiceDiag("tts: dyn " + String(static_cast<unsigned>(contentLength / 1024)) + "k");
-    } else {
-      logf("[TTS] clipping response content_length=%u max_bytes=%u",
-           static_cast<unsigned>(contentLength),
-           static_cast<unsigned>(maxBytes));
-      setVoiceDiag("tts: clip " + String(static_cast<unsigned>(maxBytes / 1024)) + "k");
-    }
-  }
-
-  size_t bytesRead = 0;
-  uint8_t* dst = reinterpret_cast<uint8_t*>(playbackBuffer);
-  unsigned long deadline = millis() + 45000;
-  while (bytesRead < toRead && (client.connected() || client.available()) && millis() < deadline) {
-    if (!client.available()) {
-      delay(1);
-      continue;
-    }
-    int avail = client.available();
-    int chunk = avail;
-    if (bytesRead + static_cast<size_t>(chunk) > toRead) {
-      chunk = static_cast<int>(toRead - bytesRead);
-    }
-    int got = client.read(dst + bytesRead, chunk);
-    if (got > 0) {
-      bytesRead += static_cast<size_t>(got);
-    }
-  }
-  client.stop();
-  delay(20);
-
-  size_t samples = bytesRead / sizeof(int16_t);
-  if (samples == 0) {
-    logf("[TTS] empty PCM response");
-    setVoiceDiag("tts: empty pcm");
-    if (dynamicPcmBuffer) {
-      free(dynamicPcmBuffer);
-    }
-    releaseTtsBuffer();
+  if (!gStorageReady || !ensureVoiceStorage()) {
+    client.stop();
+    setVoiceDiag("tts: fs unavailable");
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
     }
     return false;
   }
 
-  uint8_t wavHeader[44];
-  writeWavHeader(wavHeader, static_cast<uint32_t>(bytesRead));
-  rememberVoiceNote("Assistant voice", text, wavHeader, sizeof(wavHeader),
-                    reinterpret_cast<const uint8_t*>(playbackBuffer), bytesRead, sampleRate, true);
-
-  gPlaybackActive = true;
-  setFaceMode(FaceMode::Speaking);
-  setStatus("Speaking...");
-  M5Cardputer.Speaker.playRaw(playbackBuffer, samples, sampleRate, false);
-  if (dynamicPlayback) {
-    gDynamicPlaybackBuffer = dynamicPcmBuffer;
+  LittleFS.remove(kActiveTtsPcmPath);
+  File pcmFile = LittleFS.open(kActiveTtsPcmPath, "w");
+  if (!pcmFile) {
+    client.stop();
+    setVoiceDiag("tts: fs open failed");
+    if (pausedWsForTts) {
+      resumeHubWebSocketAfterVoice();
+    }
+    return false;
   }
-  logf("[TTS] playback samples=%u sample_rate=%u", static_cast<unsigned>(samples), sampleRate);
-  setVoiceDiag("tts: playing " + String(static_cast<unsigned>(samples)));
+
+  size_t bytesRead = 0;
+  uint8_t ioBuffer[1024];
+  unsigned long deadline = millis() + 90000;
+  while ((client.connected() || client.available()) && millis() < deadline) {
+    if (!client.available()) {
+      delay(1);
+      continue;
+    }
+    int avail = client.available();
+    size_t chunk = static_cast<size_t>(avail);
+    if (chunk > sizeof(ioBuffer)) {
+      chunk = sizeof(ioBuffer);
+    }
+    int got = client.read(ioBuffer, chunk);
+    if (got > 0) {
+      size_t written = pcmFile.write(ioBuffer, static_cast<size_t>(got));
+      if (written != static_cast<size_t>(got)) {
+        pcmFile.close();
+        client.stop();
+        LittleFS.remove(kActiveTtsPcmPath);
+        setVoiceDiag("tts: fs write failed");
+        if (pausedWsForTts) {
+          resumeHubWebSocketAfterVoice();
+        }
+        return false;
+      }
+      bytesRead += static_cast<size_t>(got);
+    }
+  }
+  pcmFile.close();
+  client.stop();
+
+  if (bytesRead == 0) {
+    logf("[TTS] empty PCM response");
+    setVoiceDiag("tts: empty pcm");
+    LittleFS.remove(kActiveTtsPcmPath);
+    if (pausedWsForTts) {
+      resumeHubWebSocketAfterVoice();
+    }
+    return false;
+  }
+
+  rememberVoiceNoteFromPcmFile("Assistant voice", text, kActiveTtsPcmPath, bytesRead, sampleRate, true);
+  bool started = startPlaybackStreamFromRawPcmFile(kActiveTtsPcmPath, sampleRate, bytesRead,
+                                                   "tts: file " + String(static_cast<unsigned>(bytesRead / 1024)) + "k");
+  if (!started) {
+    LittleFS.remove(kActiveTtsPcmPath);
+  }
   if (pausedWsForTts) {
     resumeHubWebSocketAfterVoice();
   }
-  return true;
+  return started;
 }
 
 bool sendTextTurn(const String& text) {
@@ -2220,19 +2523,61 @@ bool stopRecordingAndSend() {
   gRecording = false;
 
   float elapsed = (millis() - gRecordStartMs) / 1000.0f;
-  gRecordedSamples = static_cast<size_t>(elapsed * kMicSampleRate);
-  if (gRecordedSamples > gRecordCapacitySamples) {
-    gRecordedSamples = gRecordCapacitySamples;
+  size_t expectedSamples = static_cast<size_t>(elapsed * kMicSampleRate);
+  size_t dataSize = 0;
+  String pcmUploadPath;
+
+  if (gRecordingToFile) {
+    gActiveRecordExpectedBytes = expectedSamples * sizeof(int16_t);
+    stopMic();
+    size_t remainingBytes = gActiveRecordExpectedBytes > gActiveRecordCommittedBytes
+                                ? (gActiveRecordExpectedBytes - gActiveRecordCommittedBytes)
+                                : 0;
+    while (!gRecordInflightChunks.empty() && remainingBytes > 0) {
+      uint8_t chunkIndex = gRecordInflightChunks.front();
+      gRecordInflightChunks.pop_front();
+      size_t writeBytes = remainingBytes > kRecordChunkBytes ? kRecordChunkBytes : remainingBytes;
+      if (gActiveRecordFile) {
+        gActiveRecordFile.write(reinterpret_cast<const uint8_t*>(gRecordChunkBuffers[chunkIndex]), writeBytes);
+      }
+      gActiveRecordBytes += writeBytes;
+      remainingBytes -= writeBytes;
+    }
+    if (gActiveRecordFile) {
+      gActiveRecordFile.close();
+    }
+    gRecordedSamples = gActiveRecordBytes / sizeof(int16_t);
+    dataSize = static_cast<uint32_t>(gActiveRecordBytes);
+    pcmUploadPath = gActiveRecordPath;
+  } else {
+    gRecordedSamples = expectedSamples;
+    if (gRecordedSamples > gRecordCapacitySamples) {
+      gRecordedSamples = gRecordCapacitySamples;
+    }
+    stopMic();
+    dataSize = static_cast<uint32_t>(gRecordedSamples * sizeof(int16_t));
   }
-  stopMic();
-  logf("[VOICE] recording stopped elapsed=%.2f samples=%u", elapsed,
-       static_cast<unsigned>(gRecordedSamples));
+
+  logf("[VOICE] recording stopped elapsed=%.2f samples=%u mode=%s", elapsed,
+       static_cast<unsigned>(gRecordedSamples),
+       gRecordingToFile ? "file" : "ram");
 
   if (elapsed < kMinRecordSeconds || gRecordedSamples == 0) {
     setFaceMode(FaceMode::Idle);
     setStatus("Voice turn canceled", 1200);
     logf("[VOICE] canceled: too short");
-    releaseRecordBuffer();
+    if (gRecordingToFile) {
+      if (!pcmUploadPath.isEmpty()) {
+        LittleFS.remove(pcmUploadPath);
+      }
+      gRecordingToFile = false;
+      gActiveRecordPath = "";
+      gActiveRecordBytes = 0;
+      gActiveRecordCommittedBytes = 0;
+      gActiveRecordExpectedBytes = 0;
+    } else {
+      releaseRecordBuffer();
+    }
     return false;
   }
 
@@ -2243,7 +2588,19 @@ bool stopRecordingAndSend() {
     setStatus("Wi-Fi lost", 2000);
     setVoiceDiag("voice: wifi lost");
     logf("[VOICE] wifi lost before upload");
-    releaseRecordBuffer();
+    if (gRecordingToFile) {
+      if (!pcmUploadPath.isEmpty()) {
+        rememberVoiceNoteFromPcmFile("My voice", "Outbound voice note", pcmUploadPath, dataSize, kMicSampleRate, false);
+        LittleFS.remove(pcmUploadPath);
+      }
+      gRecordingToFile = false;
+      gActiveRecordPath = "";
+      gActiveRecordBytes = 0;
+      gActiveRecordCommittedBytes = 0;
+      gActiveRecordExpectedBytes = 0;
+    } else {
+      releaseRecordBuffer();
+    }
     return false;
   }
 
@@ -2261,11 +2618,14 @@ bool stopRecordingAndSend() {
     resumeHubWebSocketAfterVoice();
   };
 
-  uint32_t dataSize = static_cast<uint32_t>(gRecordedSamples * sizeof(int16_t));
-  uint8_t wavHeader[44];
-  writeWavHeader(wavHeader, dataSize);
-  rememberVoiceNote("My voice", "Outbound voice note", wavHeader, sizeof(wavHeader),
-                    reinterpret_cast<const uint8_t*>(gRecordBuffer), dataSize, kMicSampleRate, false);
+  if (gRecordingToFile) {
+    rememberVoiceNoteFromPcmFile("My voice", "Outbound voice note", pcmUploadPath, dataSize, kMicSampleRate, false);
+  } else {
+    uint8_t wavHeader[44];
+    writeWavHeader(wavHeader, dataSize, kMicSampleRate);
+    rememberVoiceNote("My voice", "Outbound voice note", wavHeader, sizeof(wavHeader),
+                      reinterpret_cast<const uint8_t*>(gRecordBuffer), dataSize, kMicSampleRate, false);
+  }
   logHeapStats("voice-upload");
 
   WiFiClient client;
@@ -2276,7 +2636,16 @@ bool stopRecordingAndSend() {
     setVoiceDiag("voice: upload connect failed");
     logf("[VOICE] upload connect failed host=%s port=%u", gHubHost.c_str(), gHubPort);
     finishVoiceTurn();
-    releaseRecordBuffer();
+    if (gRecordingToFile) {
+      LittleFS.remove(pcmUploadPath);
+      gRecordingToFile = false;
+      gActiveRecordPath = "";
+      gActiveRecordBytes = 0;
+      gActiveRecordCommittedBytes = 0;
+      gActiveRecordExpectedBytes = 0;
+    } else {
+      releaseRecordBuffer();
+    }
     return false;
   }
 
@@ -2305,8 +2674,18 @@ bool stopRecordingAndSend() {
   setStatus("Transcribing...");
   render();
   gLastRenderMs = millis();
-  const uint8_t* pcmBytes = reinterpret_cast<const uint8_t*>(gRecordBuffer);
-  if (!writeClientAllStaged(client, pcmBytes, dataSize, "voice_pcm")) {
+  bool uploadOk = false;
+  if (gRecordingToFile) {
+    File pcmFile = LittleFS.open(pcmUploadPath, "r");
+    if (pcmFile) {
+      uploadOk = writeClientAllFileStaged(client, pcmFile, dataSize, "voice_pcm");
+      pcmFile.close();
+    }
+  } else {
+    const uint8_t* pcmBytes = reinterpret_cast<const uint8_t*>(gRecordBuffer);
+    uploadOk = writeClientAllStaged(client, pcmBytes, dataSize, "voice_pcm");
+  }
+  if (!uploadOk) {
     client.stop();
     pushError("Voice upload body failed.");
     setFaceMode(FaceMode::Error);
@@ -2314,7 +2693,16 @@ bool stopRecordingAndSend() {
     setVoiceDiag("voice: upload body failed");
     logf("[VOICE] upload body write failed bytes=%u", static_cast<unsigned>(dataSize));
     finishVoiceTurn();
-    releaseRecordBuffer();
+    if (gRecordingToFile) {
+      LittleFS.remove(pcmUploadPath);
+      gRecordingToFile = false;
+      gActiveRecordPath = "";
+      gActiveRecordBytes = 0;
+      gActiveRecordCommittedBytes = 0;
+      gActiveRecordExpectedBytes = 0;
+    } else {
+      releaseRecordBuffer();
+    }
     return false;
   }
 
@@ -2329,7 +2717,16 @@ bool stopRecordingAndSend() {
     setVoiceDiag("voice: response header failed");
     logf("[VOICE] response header failed");
     finishVoiceTurn();
-    releaseRecordBuffer();
+    if (gRecordingToFile) {
+      LittleFS.remove(pcmUploadPath);
+      gRecordingToFile = false;
+      gActiveRecordPath = "";
+      gActiveRecordBytes = 0;
+      gActiveRecordCommittedBytes = 0;
+      gActiveRecordExpectedBytes = 0;
+    } else {
+      releaseRecordBuffer();
+    }
     return false;
   }
 
@@ -2343,7 +2740,16 @@ bool stopRecordingAndSend() {
   }
   client.stop();
   finishVoiceTurn();
-  releaseRecordBuffer();
+  if (gRecordingToFile) {
+    LittleFS.remove(pcmUploadPath);
+    gRecordingToFile = false;
+    gActiveRecordPath = "";
+    gActiveRecordBytes = 0;
+    gActiveRecordCommittedBytes = 0;
+    gActiveRecordExpectedBytes = 0;
+  } else {
+    releaseRecordBuffer();
+  }
 
   if (statusCode < 200 || statusCode >= 300) {
     logf("[VOICE] HTTP error status=%d body=%s", statusCode, response.c_str());
@@ -2856,7 +3262,7 @@ void handleVoicePlayerKey(char key, const Keyboard_Class::KeysState& keys) {
   }
   if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
     if (gPlaybackActive) {
-      M5Cardputer.Speaker.stop();
+      stopPlaybackStream();
       gPlaybackActive = false;
       setFaceMode(FaceMode::Idle);
       setStatus("Playback stopped", 800);
@@ -3076,6 +3482,27 @@ void updateVoiceTrigger() {
   }
   if (gLastCtrlTapMs != 0 && millis() - gLastCtrlTapMs > kCtrlDoubleTapWindowMs) {
     gLastCtrlTapMs = 0;
+  }
+}
+
+void updateG0VoiceTrigger() {
+  bool pressed = M5.BtnA.isPressed();
+  if (pressed && !gG0VoiceHeld) {
+    gG0VoiceHeld = true;
+    gLastCtrlTapMs = 0;
+    gCtrlSoloCandidate = false;
+    if (!gRecording) {
+      logf("[VOICE] G0 hold start");
+      startRecording();
+    }
+    return;
+  }
+  if (!pressed && gG0VoiceHeld) {
+    gG0VoiceHeld = false;
+    if (gRecording) {
+      logf("[VOICE] G0 hold stop");
+      stopRecordingAndSend();
+    }
   }
 }
 
@@ -3468,26 +3895,25 @@ void renderLauncherOverlay() {
   }
   static const char* kEntries[] = {"Chat+Face", "Face", "Hero", "Chat", "Clock", "Voice"};
   auto& d = gCanvas;
-  d.fillRoundRect(12, 10, 216, 114, 14, 0x0000);
-  d.drawRoundRect(12, 10, 216, 114, 14, 0x4228);
+  d.fillRoundRect(28, 8, 184, 118, 14, 0x0000);
+  d.drawRoundRect(28, 8, 184, 118, 14, 0x4228);
   d.setFont(&fonts::Font2);
   d.setTextColor(TFT_YELLOW, TFT_BLACK);
-  d.setCursor(22, 22);
+  d.setCursor(40, 20);
   d.print("Launcher");
   d.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  d.setCursor(22, 32);
+  d.setCursor(40, 30);
   d.print("modes");
   for (int i = 0; i < kLauncherModeCount; ++i) {
-    int y = 44 + i * 11;
+    int y = 44 + i * 12;
     bool selected = i == gLauncherSelection;
     if (selected) {
-      d.fillRoundRect(20, y - 2, 96, 12, 6, 0x2945);
+      d.fillRoundRect(36, y - 2, 138, 12, 6, 0x2945);
     }
     d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, selected ? 0x2945 : TFT_BLACK);
-    d.setCursor(28, y);
+    d.setCursor(46, y);
     d.print(kEntries[i]);
   }
-  renderLauncherLivingPreview(124, 20, 92, 86);
 }
 
 void renderModeFooter(const String& left, const String& right = "") {
@@ -3549,10 +3975,6 @@ void renderHeroUi() {
   int16_t shadowY = heroY + heroH - 6;
   d.fillRoundRect(shadowX, shadowY, shadowW, 10, 5, 0x0000);
   drawHeroSprite(heroX, heroY, scale, currentHeroFrame());
-
-  uint16_t accent = rgb565_local(90, 255, 185);
-  d.drawCircle(heroX + heroW / 2, heroY + heroH / 2, 52, 0x18C3);
-  d.drawCircle(heroX + heroW / 2, heroY + heroH / 2, 53, accent);
 
   renderLauncherOverlay();
   renderDebugOverlay();
@@ -3622,10 +4044,8 @@ void renderVoicePlayerUi() {
     }
   }
   d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(6, 112);
-  d.print("Enter/Space play-stop");
-  d.setCursor(6, 124);
-  d.print(", . select   +/- volume");
+  d.setCursor(6, 114);
+  d.print("Enter/Space Play  ,./+-");
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -3680,7 +4100,7 @@ void renderChatUi() {
 
   d.setFont(&fonts::efontCN_12);
   d.setTextColor(TFT_YELLOW, 0x0841);
-  d.setCursor(4, 122);
+  d.setCursor(4, 120);
   String inputLine = tailUtf8ToFit("> " + gInputBuffer, 232);
   d.print(inputLine);
   renderLauncherOverlay();
@@ -3820,11 +4240,14 @@ void loop() {
       gWs.loop();
     }
     syncClockFromNtp(false);
+    updateG0VoiceTrigger();
     updateVoiceTrigger();
     pollTyping();
+    serviceRecordingToFile();
+    servicePlaybackStream();
   }
 
-  if (gPlaybackActive && !M5Cardputer.Speaker.isPlaying()) {
+  if (gPlaybackActive && !gPlaybackStreaming && !M5Cardputer.Speaker.isPlaying()) {
     gPlaybackActive = false;
     if (gDynamicPlaybackBuffer) {
       free(gDynamicPlaybackBuffer);
