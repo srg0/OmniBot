@@ -74,6 +74,7 @@ constexpr size_t kHttpStageChunkBytes = 256;
 constexpr uint32_t kVoiceSocketSettleMs = 300;
 constexpr uint32_t kCtrlDoubleTapWindowMs = 420;
 constexpr uint32_t kLauncherToggleDebounceMs = 140;
+constexpr uint8_t kLauncherModeCount = 6;
 constexpr uint32_t kClockTickMs = 1000;
 constexpr uint32_t kTimeSyncRetryMs = 15000;
 constexpr uint32_t kTimeResyncMs = 6UL * 60UL * 60UL * 1000UL;
@@ -263,9 +264,24 @@ enum class KeyboardLayout : uint8_t {
 enum class UiMode : uint8_t {
   ChatFace,
   Face,
+  Hero,
   ChatFull,
   Clock,
   Voice,
+};
+
+enum class EyeEmotion : uint8_t {
+  Neutral,
+  Speaking,
+  Happy,
+  Mad,
+  Sad,
+  Surprised,
+  Sleepy,
+  Thinking,
+  Confused,
+  Excited,
+  Love,
 };
 
 struct ChatLine {
@@ -447,6 +463,8 @@ const char* uiModeName(UiMode mode) {
   switch (mode) {
     case UiMode::Face:
       return "Face";
+    case UiMode::Hero:
+      return "Hero";
     case UiMode::ChatFull:
       return "Chat";
     case UiMode::Clock:
@@ -456,6 +474,67 @@ const char* uiModeName(UiMode mode) {
     case UiMode::ChatFace:
     default:
       return "Chat+Face";
+  }
+}
+
+const char* eyeEmotionName(EyeEmotion emotion) {
+  switch (emotion) {
+    case EyeEmotion::Speaking:
+      return "speaking";
+    case EyeEmotion::Happy:
+      return "happy";
+    case EyeEmotion::Mad:
+      return "mad";
+    case EyeEmotion::Sad:
+      return "sad";
+    case EyeEmotion::Surprised:
+      return "surprised";
+    case EyeEmotion::Sleepy:
+      return "sleepy";
+    case EyeEmotion::Thinking:
+      return "thinking";
+    case EyeEmotion::Confused:
+      return "confused";
+    case EyeEmotion::Excited:
+      return "excited";
+    case EyeEmotion::Love:
+      return "love";
+    case EyeEmotion::Neutral:
+    default:
+      return "neutral";
+  }
+}
+
+EyeEmotion currentEyeEmotion() {
+  switch (gFaceMode) {
+    case FaceMode::Listening:
+      return EyeEmotion::Excited;
+    case FaceMode::Thinking:
+      return EyeEmotion::Thinking;
+    case FaceMode::Speaking:
+      return EyeEmotion::Speaking;
+    case FaceMode::Error:
+      return EyeEmotion::Mad;
+    case FaceMode::Idle:
+    default:
+      break;
+  }
+
+  switch ((millis() / 3800) % 8) {
+    case 1:
+      return EyeEmotion::Happy;
+    case 2:
+      return EyeEmotion::Love;
+    case 3:
+      return EyeEmotion::Sleepy;
+    case 4:
+      return EyeEmotion::Confused;
+    case 5:
+      return EyeEmotion::Surprised;
+    case 6:
+      return EyeEmotion::Excited;
+    default:
+      return EyeEmotion::Neutral;
   }
 }
 
@@ -969,9 +1048,8 @@ void setUiMode(UiMode mode) {
 }
 
 void moveLauncherSelection(int delta) {
-  constexpr int kModeCount = 5;
   gLauncherVisible = true;
-  gLauncherSelection = (gLauncherSelection + delta + kModeCount) % kModeCount;
+  gLauncherSelection = (gLauncherSelection + delta + kLauncherModeCount) % kLauncherModeCount;
 }
 
 void applyLauncherSelection() {
@@ -983,12 +1061,15 @@ void applyLauncherSelection() {
       setUiMode(UiMode::Face);
       break;
     case 2:
-      setUiMode(UiMode::ChatFull);
+      setUiMode(UiMode::Hero);
       break;
     case 3:
-      setUiMode(UiMode::Clock);
+      setUiMode(UiMode::ChatFull);
       break;
     case 4:
+      setUiMode(UiMode::Clock);
+      break;
+    case 5:
     default:
       setUiMode(UiMode::Voice);
       break;
@@ -2653,7 +2734,7 @@ bool handleLocalCommand(const String& input) {
     pushSystem("Ctrl+Space = EN/RU");
     pushSystem("Ctrl x2 = start/stop voice");
     pushSystem("Tab + < > = mode switch, Ctrl+D = debug");
-    pushSystem("/face /chat /clock /voice /dbg");
+    pushSystem("/face /hero /chat /clock /voice /dbg");
     return true;
   }
 
@@ -2691,6 +2772,11 @@ bool handleLocalCommand(const String& input) {
 
   if (cmd == "/chat") {
     setUiMode(UiMode::ChatFull);
+    return true;
+  }
+
+  if (cmd == "/hero") {
+    setUiMode(UiMode::Hero);
     return true;
   }
 
@@ -2732,7 +2818,7 @@ void submitInput() {
 }
 
 void handleLauncherKey(char key, const Keyboard_Class::KeysState& keys) {
-  if (key >= '1' && key <= '5') {
+  if (key >= '1' && key <= '6') {
     gLauncherSelection = key - '1';
     applyLauncherSelection();
     return;
@@ -3019,6 +3105,202 @@ void drawEye(int16_t cx, int16_t cy, int16_t halfW, int16_t halfH, float opennes
   d.fillCircle(cx + pupilOffsetX, cy + pupilOffsetY, max<int16_t>(2, eyeH / 5), TFT_BLACK);
 }
 
+void drawHeartGlyph(int16_t cx, int16_t cy, int16_t size, uint16_t color) {
+  auto& d = gCanvas;
+  int16_t r = max<int16_t>(1, size / 3);
+  d.fillCircle(cx - r, cy - r / 2, r, color);
+  d.fillCircle(cx + r, cy - r / 2, r, color);
+  d.fillTriangle(cx - size, cy, cx + size, cy, cx, cy + size, color);
+}
+
+void drawSparkGlyph(int16_t cx, int16_t cy, int16_t size, uint16_t color) {
+  auto& d = gCanvas;
+  d.drawLine(cx - size, cy, cx + size, cy, color);
+  d.drawLine(cx, cy - size, cx, cy + size, color);
+  d.drawLine(cx - size + 1, cy - size + 1, cx + size - 1, cy + size - 1, color);
+  d.drawLine(cx - size + 1, cy + size - 1, cx + size - 1, cy - size + 1, color);
+}
+
+void drawArcEye(int16_t cx, int16_t cy, int16_t halfW, int16_t arch, uint16_t color,
+                bool centerHigh, uint8_t thickness = 2) {
+  auto& d = gCanvas;
+  if (halfW <= 1) {
+    d.drawPixel(cx, cy, color);
+    return;
+  }
+  for (int16_t dx = -halfW; dx <= halfW; ++dx) {
+    float ratio = 1.0f - (static_cast<float>(dx * dx) / static_cast<float>(halfW * halfW));
+    if (ratio < 0.0f) {
+      ratio = 0.0f;
+    }
+    int16_t curve = static_cast<int16_t>(arch * ratio);
+    int16_t py = centerHigh ? (cy - curve) : (cy + curve);
+    d.fillRect(cx + dx, py - thickness / 2, 1, max<uint8_t>(1, thickness), color);
+  }
+}
+
+void drawBrowStroke(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color, uint8_t thickness = 2) {
+  auto& d = gCanvas;
+  int16_t half = max<int16_t>(0, thickness / 2);
+  for (int16_t t = -half; t <= half; ++t) {
+    d.drawLine(x1, y1 + t, x2, y2 + t, color);
+  }
+}
+
+void renderOmniEyePair(int16_t leftEyeX, int16_t rightEyeX, int16_t eyeCenterY,
+                       int16_t eyeHalfW, int16_t eyeHalfH, uint16_t panelBg) {
+  (void)panelBg;
+  auto& d = gCanvas;
+  EyeEmotion emotion = currentEyeEmotion();
+  uint16_t accent = TFT_CYAN;
+  float opennessL = 1.0f;
+  float opennessR = 1.0f;
+  int16_t pupilX = clampValue<int16_t>(static_cast<int16_t>(gEyeLookX), -max<int16_t>(2, eyeHalfW / 3), max<int16_t>(2, eyeHalfW / 3));
+  int16_t pupilY = clampValue<int16_t>(static_cast<int16_t>(gEyeLookY), -max<int16_t>(2, eyeHalfH / 3), max<int16_t>(2, eyeHalfH / 3));
+  bool happyArc = false;
+  bool sleepyArc = false;
+  bool angryBrows = false;
+  bool sadBrows = false;
+  bool lovePupils = false;
+  bool surprisedRings = false;
+  bool excitedSparks = false;
+
+  if (gFaceMode == FaceMode::Error) {
+    accent = TFT_ORANGE;
+    d.drawLine(leftEyeX - eyeHalfW, eyeCenterY - eyeHalfH, leftEyeX + eyeHalfW, eyeCenterY + eyeHalfH, accent);
+    d.drawLine(leftEyeX - eyeHalfW, eyeCenterY + eyeHalfH, leftEyeX + eyeHalfW, eyeCenterY - eyeHalfH, accent);
+    d.drawLine(rightEyeX - eyeHalfW, eyeCenterY - eyeHalfH, rightEyeX + eyeHalfW, eyeCenterY + eyeHalfH, accent);
+    d.drawLine(rightEyeX - eyeHalfW, eyeCenterY + eyeHalfH, rightEyeX + eyeHalfW, eyeCenterY - eyeHalfH, accent);
+    return;
+  }
+
+  switch (emotion) {
+    case EyeEmotion::Speaking:
+      accent = rgb565_local(90, 255, 185);
+      opennessL = 0.92f;
+      opennessR = 0.92f;
+      pupilX += static_cast<int16_t>(((millis() / 120) % 5) - 2);
+      break;
+    case EyeEmotion::Happy:
+      accent = rgb565_local(130, 255, 220);
+      happyArc = true;
+      pupilY = 0;
+      break;
+    case EyeEmotion::Mad:
+      accent = rgb565_local(255, 110, 64);
+      opennessL = 0.74f;
+      opennessR = 0.74f;
+      angryBrows = true;
+      pupilY -= max<int16_t>(1, eyeHalfH / 6);
+      break;
+    case EyeEmotion::Sad:
+      accent = rgb565_local(110, 195, 255);
+      opennessL = 0.76f;
+      opennessR = 0.76f;
+      sadBrows = true;
+      pupilY += max<int16_t>(1, eyeHalfH / 7);
+      break;
+    case EyeEmotion::Surprised:
+      accent = rgb565_local(165, 235, 255);
+      opennessL = 1.18f;
+      opennessR = 1.18f;
+      surprisedRings = true;
+      pupilY -= max<int16_t>(1, eyeHalfH / 8);
+      break;
+    case EyeEmotion::Sleepy:
+      accent = rgb565_local(120, 180, 225);
+      sleepyArc = true;
+      pupilY = 0;
+      break;
+    case EyeEmotion::Thinking:
+      accent = TFT_GOLD;
+      opennessL = 0.88f;
+      opennessR = 0.88f;
+      pupilY -= max<int16_t>(2, eyeHalfH / 4);
+      pupilX += static_cast<int16_t>(((millis() / 220) % 3) - 1);
+      break;
+    case EyeEmotion::Confused:
+      accent = rgb565_local(170, 220, 255);
+      opennessL = 0.5f;
+      opennessR = 1.08f;
+      pupilX -= 1;
+      break;
+    case EyeEmotion::Excited:
+      accent = rgb565_local(120, 255, 170);
+      opennessL = 1.12f;
+      opennessR = 1.12f;
+      excitedSparks = true;
+      break;
+    case EyeEmotion::Love:
+      accent = rgb565_local(255, 90, 180);
+      opennessL = 1.02f;
+      opennessR = 1.02f;
+      lovePupils = true;
+      break;
+    case EyeEmotion::Neutral:
+    default:
+      accent = TFT_CYAN;
+      pupilX += static_cast<int16_t>(((millis() / 520) % 5) - 2);
+      break;
+  }
+
+  if (gBlinkEndMs != 0) {
+    happyArc = false;
+    sleepyArc = true;
+    lovePupils = false;
+    surprisedRings = false;
+    excitedSparks = false;
+    opennessL = 0.08f;
+    opennessR = 0.08f;
+  }
+
+  pupilX = clampValue<int16_t>(pupilX, -max<int16_t>(2, eyeHalfW / 3), max<int16_t>(2, eyeHalfW / 3));
+  pupilY = clampValue<int16_t>(pupilY, -max<int16_t>(2, eyeHalfH / 3), max<int16_t>(2, eyeHalfH / 3));
+
+  if (happyArc) {
+    drawArcEye(leftEyeX, eyeCenterY + eyeHalfH / 5, eyeHalfW, max<int16_t>(2, eyeHalfH / 2), accent, true,
+               eyeHalfW > 14 ? 3 : 2);
+    drawArcEye(rightEyeX, eyeCenterY + eyeHalfH / 5, eyeHalfW, max<int16_t>(2, eyeHalfH / 2), accent, true,
+               eyeHalfW > 14 ? 3 : 2);
+  } else if (sleepyArc) {
+    drawArcEye(leftEyeX, eyeCenterY - eyeHalfH / 8, eyeHalfW, max<int16_t>(1, eyeHalfH / 5), accent, false,
+               eyeHalfW > 14 ? 3 : 2);
+    drawArcEye(rightEyeX, eyeCenterY - eyeHalfH / 8, eyeHalfW, max<int16_t>(1, eyeHalfH / 5), accent, false,
+               eyeHalfW > 14 ? 3 : 2);
+  } else {
+    drawEye(leftEyeX, eyeCenterY, eyeHalfW, eyeHalfH, opennessL, accent, pupilX, pupilY);
+    drawEye(rightEyeX, eyeCenterY, eyeHalfW, eyeHalfH, opennessR, accent, pupilX, pupilY);
+  }
+
+  if (lovePupils) {
+    drawHeartGlyph(leftEyeX + pupilX, eyeCenterY + pupilY + max<int16_t>(1, eyeHalfH / 10), max<int16_t>(2, eyeHalfW / 5), accent);
+    drawHeartGlyph(rightEyeX + pupilX, eyeCenterY + pupilY + max<int16_t>(1, eyeHalfH / 10), max<int16_t>(2, eyeHalfW / 5), accent);
+  }
+
+  if (surprisedRings) {
+    d.drawCircle(leftEyeX, eyeCenterY, max<int16_t>(3, eyeHalfH - 2), accent);
+    d.drawCircle(rightEyeX, eyeCenterY, max<int16_t>(3, eyeHalfH - 2), accent);
+  }
+
+  if (excitedSparks) {
+    drawSparkGlyph(leftEyeX - eyeHalfW + 1, eyeCenterY - eyeHalfH - 4, max<int16_t>(1, eyeHalfW / 5), accent);
+    drawSparkGlyph(rightEyeX + eyeHalfW - 1, eyeCenterY - eyeHalfH - 4, max<int16_t>(1, eyeHalfW / 5), accent);
+  }
+
+  int16_t browLift = max<int16_t>(3, eyeHalfH / 2);
+  if (angryBrows) {
+    drawBrowStroke(leftEyeX - eyeHalfW - 2, eyeCenterY - browLift - 2, leftEyeX + eyeHalfW / 2, eyeCenterY - eyeHalfH / 2, accent,
+                   eyeHalfW > 14 ? 3 : 2);
+    drawBrowStroke(rightEyeX + eyeHalfW + 2, eyeCenterY - browLift - 2, rightEyeX - eyeHalfW / 2, eyeCenterY - eyeHalfH / 2, accent,
+                   eyeHalfW > 14 ? 3 : 2);
+  } else if (sadBrows) {
+    drawBrowStroke(leftEyeX - eyeHalfW - 2, eyeCenterY - eyeHalfH / 2, leftEyeX + eyeHalfW / 2, eyeCenterY - browLift - 2, accent,
+                   eyeHalfW > 14 ? 3 : 2);
+    drawBrowStroke(rightEyeX + eyeHalfW + 2, eyeCenterY - eyeHalfH / 2, rightEyeX - eyeHalfW / 2, eyeCenterY - browLift - 2, accent,
+                   eyeHalfW > 14 ? 3 : 2);
+  }
+}
+
 const uint16_t* currentHeroFrame() {
   uint32_t tick = millis();
   switch (gFaceMode) {
@@ -3080,50 +3362,7 @@ void renderLauncherLivingPreview(int16_t x, int16_t y, int16_t w, int16_t h) {
   d.fillRoundRect(heroX, cellY, cellW, cellH, 8, 0x18C3);
   d.drawRoundRect(heroX, cellY, cellW, cellH, 8, 0x4208);
 
-  uint16_t accent = TFT_CYAN;
-  int16_t pupilX = 0;
-  int16_t pupilY = 0;
-  float openness = 1.0f;
-  switch (gFaceMode) {
-    case FaceMode::Listening:
-      accent = TFT_RED;
-      openness = 1.05f;
-      pupilY = -1;
-      break;
-    case FaceMode::Thinking:
-      accent = TFT_GOLD;
-      openness = 0.85f;
-      pupilY = -3;
-      pupilX = ((millis() / 180) % 3) - 1;
-      break;
-    case FaceMode::Speaking:
-      accent = 0x55FF;
-      openness = 0.95f;
-      pupilX = ((millis() / 140) % 3) - 1;
-      break;
-    case FaceMode::Error:
-      accent = TFT_ORANGE;
-      openness = 0.5f;
-      break;
-    case FaceMode::Idle:
-    default:
-      accent = TFT_CYAN;
-      pupilX = ((millis() / 500) % 3) - 1;
-      break;
-  }
-  if (gBlinkEndMs != 0) {
-    openness = 0.08f;
-  }
-
-  if (gFaceMode == FaceMode::Error) {
-    d.drawLine(eyeX + 8, cellY + 9, eyeX + 16, cellY + 27, accent);
-    d.drawLine(eyeX + 8, cellY + 27, eyeX + 16, cellY + 9, accent);
-    d.drawLine(eyeX + 22, cellY + 9, eyeX + 30, cellY + 27, accent);
-    d.drawLine(eyeX + 22, cellY + 27, eyeX + 30, cellY + 9, accent);
-  } else {
-    drawEye(eyeX + 12, cellY + 19, 7, 8, openness, accent, pupilX, pupilY);
-    drawEye(eyeX + 26, cellY + 19, 7, 8, openness, accent, pupilX, pupilY);
-  }
+  renderOmniEyePair(eyeX + 12, eyeX + 26, cellY + 19, 7, 8, 0x18C3);
 
   drawHeroSprite(heroX + 3, cellY + 3, 2, currentHeroFrame());
 
@@ -3132,14 +3371,7 @@ void renderLauncherLivingPreview(int16_t x, int16_t y, int16_t w, int16_t h) {
   d.print(uiModeName(gUiMode));
   d.setTextColor(TFT_WHITE, 0x0841);
   d.setCursor(x + 8, y + h - 8);
-  switch (gFaceMode) {
-    case FaceMode::Listening: d.print("listening"); break;
-    case FaceMode::Thinking: d.print("thinking"); break;
-    case FaceMode::Speaking: d.print("speaking"); break;
-    case FaceMode::Error: d.print("error"); break;
-    case FaceMode::Idle:
-    default: d.print("idle"); break;
-  }
+  d.print(gFaceMode == FaceMode::Error ? "error" : eyeEmotionName(currentEyeEmotion()));
 }
 
 void renderFacePanel(bool fullscreen = false) {
@@ -3151,76 +3383,19 @@ void renderFacePanel(bool fullscreen = false) {
   d.fillRoundRect(panelX, panelY, panelW, panelH, 18, 0x10A2);
   d.drawRoundRect(panelX, panelY, panelW, panelH, 18, 0x4208);
   d.fillRoundRect(panelX + 3, panelY + 3, panelW - 6, panelH - 6, 16, 0x0861);
-
-  uint16_t accent = TFT_CYAN;
-  int16_t pupilX = 0;
-  int16_t pupilY = 0;
-  float openness = 1.0f;
-
-  switch (gFaceMode) {
-    case FaceMode::Listening:
-      accent = TFT_RED;
-      openness = 1.08f;
-      pupilY = -1;
-      break;
-    case FaceMode::Thinking:
-      accent = TFT_GOLD;
-      openness = 0.9f;
-      pupilY = -5;
-      pupilX = ((millis() / 220) % 3) - 1;
-      break;
-    case FaceMode::Speaking:
-      accent = 0x55FF;
-      openness = 0.95f;
-      pupilX = ((millis() / 160) % 5) - 2;
-      break;
-    case FaceMode::Error:
-      accent = TFT_ORANGE;
-      openness = 0.6f;
-      break;
-    case FaceMode::Idle:
-    default:
-      accent = TFT_CYAN;
-      openness = 1.0f;
-      pupilX = ((millis() / 700) % 5) - 2;
-      break;
-  }
-
-  pupilX += static_cast<int16_t>(gEyeLookX);
-  pupilY += static_cast<int16_t>(gEyeLookY);
-  pupilX = clampValue<int16_t>(pupilX, -14, 14);
-  pupilY = clampValue<int16_t>(pupilY, -10, 10);
-
-  if (gBlinkEndMs != 0) {
-    openness = 0.08f;
-  }
-
-  if (gFaceMode == FaceMode::Error) {
-    int16_t leftStartX = fullscreen ? panelX + 24 : panelX + 30;
-    int16_t leftEndX = fullscreen ? panelX + 98 : panelX + 84;
-    int16_t rightStartX = fullscreen ? panelX + 138 : panelX + 148;
-    int16_t rightEndX = fullscreen ? panelX + 212 : panelX + 202;
-    int16_t topY = fullscreen ? panelY + 26 : panelY + 14;
-    int16_t bottomY = fullscreen ? panelY + 98 : panelY + 54;
-    d.drawLine(leftStartX, topY, leftEndX, bottomY, accent);
-    d.drawLine(leftStartX, bottomY, leftEndX, topY, accent);
-    d.drawLine(rightStartX, topY, rightEndX, bottomY, accent);
-    d.drawLine(rightStartX, bottomY, rightEndX, topY, accent);
-  } else {
-    int16_t eyeCenterY = fullscreen ? panelY + 63 : panelY + 35;
-    int16_t leftEyeX = fullscreen ? panelX + 64 : panelX + 60;
-    int16_t rightEyeX = fullscreen ? panelX + 172 : panelX + 172;
-    int16_t eyeHalfW = fullscreen ? 52 : 41;
-    int16_t eyeHalfH = fullscreen ? 36 : 25;
-    drawEye(leftEyeX, eyeCenterY, eyeHalfW, eyeHalfH, openness, accent, pupilX, pupilY);
-    drawEye(rightEyeX, eyeCenterY, eyeHalfW, eyeHalfH, openness, accent, pupilX, pupilY);
-  }
+  int16_t eyeCenterY = fullscreen ? panelY + 63 : panelY + 35;
+  int16_t leftEyeX = fullscreen ? panelX + 64 : panelX + 60;
+  int16_t rightEyeX = fullscreen ? panelX + 172 : panelX + 172;
+  int16_t eyeHalfW = fullscreen ? 52 : 41;
+  int16_t eyeHalfH = fullscreen ? 36 : 25;
+  renderOmniEyePair(leftEyeX, rightEyeX, eyeCenterY, eyeHalfW, eyeHalfH, 0x0861);
 
   if (gSubmitting || gThinking) {
     int16_t arrowY = fullscreen ? panelY + 12 : panelY + 10;
     int16_t centerX = panelX + panelW / 2;
-    d.fillTriangle(centerX - 16, arrowY + 10, centerX - 10, arrowY, centerX - 4, arrowY + 10, accent);
-    d.fillTriangle(centerX + 4, arrowY + 10, centerX + 10, arrowY, centerX + 16, arrowY + 10, accent);
+    uint16_t thinkingAccent = currentEyeEmotion() == EyeEmotion::Thinking ? TFT_GOLD : rgb565_local(120, 255, 170);
+    d.fillTriangle(centerX - 16, arrowY + 10, centerX - 10, arrowY, centerX - 4, arrowY + 10, thinkingAccent);
+    d.fillTriangle(centerX + 4, arrowY + 10, centerX + 10, arrowY, centerX + 16, arrowY + 10, thinkingAccent);
   }
 }
 
@@ -3291,7 +3466,7 @@ void renderLauncherOverlay() {
   if (!gLauncherVisible) {
     return;
   }
-  static const char* kEntries[] = {"Chat+Face", "Face", "Chat", "Clock", "Voice"};
+  static const char* kEntries[] = {"Chat+Face", "Face", "Hero", "Chat", "Clock", "Voice"};
   auto& d = gCanvas;
   d.fillRoundRect(12, 10, 216, 114, 14, 0x0000);
   d.drawRoundRect(12, 10, 216, 114, 14, 0x4228);
@@ -3302,8 +3477,8 @@ void renderLauncherOverlay() {
   d.setTextColor(TFT_DARKGREY, TFT_BLACK);
   d.setCursor(22, 32);
   d.print("modes");
-  for (int i = 0; i < 5; ++i) {
-    int y = 46 + i * 14;
+  for (int i = 0; i < kLauncherModeCount; ++i) {
+    int y = 44 + i * 11;
     bool selected = i == gLauncherSelection;
     if (selected) {
       d.fillRoundRect(20, y - 2, 96, 12, 6, 0x2945);
@@ -3333,6 +3508,52 @@ void renderFaceOnlyUi() {
   auto& d = gCanvas;
   d.fillScreen(0x0841);
   renderFacePanel(true);
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+void renderHeroUi() {
+  auto& d = gCanvas;
+  d.fillScreen(0x0210);
+
+  int16_t arenaX = 7;
+  int16_t arenaY = 5;
+  int16_t arenaW = 226;
+  int16_t arenaH = 125;
+  d.fillRoundRect(arenaX, arenaY, arenaW, arenaH, 16, 0x0841);
+  d.drawRoundRect(arenaX, arenaY, arenaW, arenaH, 16, 0x31C7);
+
+  for (int16_t gx = arenaX + 12; gx < arenaX + arenaW - 8; gx += 24) {
+    d.drawFastVLine(gx, arenaY + 14, arenaH - 28, 0x18C3);
+  }
+  for (int16_t gy = arenaY + 14; gy < arenaY + arenaH - 8; gy += 18) {
+    d.drawFastHLine(arenaX + 12, gy, arenaW - 24, 0x18C3);
+  }
+
+  int scale = 5;
+  int16_t heroW = kHeroSpriteW * scale;
+  int16_t heroH = kHeroSpriteH * scale;
+  int16_t margin = 8;
+  int16_t rangeX = max<int16_t>(0, arenaW - heroW - margin * 2);
+  int16_t rangeY = max<int16_t>(0, arenaH - heroH - margin * 2);
+  int16_t heroOffsetX = static_cast<int16_t>((gEyeLookX / 18.0f) * (rangeX / 2.0f));
+  int16_t heroOffsetY = static_cast<int16_t>((gEyeLookY / 14.0f) * (rangeY / 2.0f));
+  int16_t bob = abs(static_cast<int>((millis() / 170) % 10) - 5);
+  int16_t heroX = arenaX + margin + rangeX / 2 - heroW / 2 + heroOffsetX;
+  int16_t heroY = arenaY + margin + rangeY / 2 - heroH / 2 + heroOffsetY + bob / 2;
+  heroX = clampValue<int16_t>(heroX, arenaX + margin, arenaX + arenaW - margin - heroW);
+  heroY = clampValue<int16_t>(heroY, arenaY + margin, arenaY + arenaH - margin - heroH);
+
+  int16_t shadowW = heroW - 18;
+  int16_t shadowX = heroX + (heroW - shadowW) / 2;
+  int16_t shadowY = heroY + heroH - 6;
+  d.fillRoundRect(shadowX, shadowY, shadowW, 10, 5, 0x0000);
+  drawHeroSprite(heroX, heroY, scale, currentHeroFrame());
+
+  uint16_t accent = rgb565_local(90, 255, 185);
+  d.drawCircle(heroX + heroW / 2, heroY + heroH / 2, 52, 0x18C3);
+  d.drawCircle(heroX + heroW / 2, heroY + heroH / 2, 53, accent);
+
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -3520,6 +3741,9 @@ void render() {
       case UiMode::Face:
         renderFaceOnlyUi();
         break;
+      case UiMode::Hero:
+        renderHeroUi();
+        break;
       case UiMode::Clock:
         renderClockUi();
         break;
@@ -3568,6 +3792,7 @@ void setup() {
   pushSystem("Ctrl+Space = EN/RU");
   pushSystem("Ctrl x2 = voice");
   pushSystem("Tab + < > mode, Ctrl+D debug");
+  pushSystem("/hero = Klo screen");
   logf("[BOOT] device_id=%s", gDeviceId.c_str());
 
   if (ensureWifi()) {
