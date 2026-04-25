@@ -50,6 +50,7 @@ def transcribe_openai_audio(
     audio_bytes: bytes,
     filename: str = "cardputer.wav",
     model: str = "gpt-4o-mini-transcribe",
+    language: Optional[str] = None,
     timeout_sec: float = 180.0,
 ) -> str:
     if not audio_bytes:
@@ -58,7 +59,10 @@ def transcribe_openai_audio(
     with requests.post(
         f"{OPENAI_API_BASE}/audio/transcriptions",
         headers=_auth_headers(api_key),
-        data={"model": model},
+        data={
+            "model": model,
+            **({"language": str(language).strip()} if str(language or "").strip() else {}),
+        },
         files={"file": (filename, audio_bytes, "audio/wav")},
         timeout=(10.0, timeout_sec),
     ) as resp:

@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import socket
+from google.genai import errors as genai_errors
 import uvicorn
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,7 +14,7 @@ import numpy as np
 import imageio
 import asyncio # Added for non-blocking operations
 from collections import deque
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -90,7 +91,7 @@ from device_profiles import (
 # ==========================================
 
 # Settings file path is resolved in hub_config (not cwd-dependent).
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_TIMEZONE_RULE = "EST5EDT,M3.2.0/2,M11.1.0/2"
 DEFAULT_VISION_ENABLED = False
 DEFAULT_WAKE_WORD_ENABLED = True
@@ -117,7 +118,7 @@ VALID_PIXEL_TTS_VOICES = frozenset(
 )
 DEFAULT_OPENROUTER_TTS_SAMPLE_RATE = 24000
 DEFAULT_OPENAI_CHAT_MODEL = "gpt-4o-mini"
-DEFAULT_OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
+DEFAULT_OPENAI_STT_MODEL = "gpt-4o-transcribe"
 DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_OPENAI_TTS_VOICE = "alloy"
 DEFAULT_OPENAI_TTS_SAMPLE_RATE = 24000
@@ -1310,7 +1311,8 @@ def _openai_device_system_prompt(device_id: str) -> str:
     return (
         f"You are {display_name}, a compact AI assistant speaking through an M5Stack Cardputer ADV. "
         "The device has a screen, keyboard, microphone, and speaker, but no camera. "
-        "Reply naturally in the user's language. Keep spoken answers concise and easy to hear, usually 1 to 4 short sentences. "
+        "Reply naturally in the user's language. "
+        "Keep spoken answers concise and easy to hear, usually 1 to 4 short sentences. "
         "Do not use markdown unless the user explicitly asks for it. "
         "If the user asks for vision or camera actions, say that this device does not have a camera in the current firmware."
     )
@@ -1329,6 +1331,136 @@ def _append_openai_device_history(device_id: str, user_text: str, assistant_text
     if len(row) > MAX_OPENAI_DEVICE_HISTORY_MESSAGES:
         row = row[-MAX_OPENAI_DEVICE_HISTORY_MESSAGES:]
     openai_device_history_by_device[device_id] = row
+
+
+def _device_gemini_model(device_id: str) -> str:
+    configured = str(get_bot_settings(device_id).get("model") or "").strip()
+    if configured.lower().startswith("gemini-"):
+        return configured
+    return DEFAULT_MODEL
+
+
+def _device_history_as_gemini_contents(
+    history: list[dict[str, str]],
+    latest_user_text: str,
+) -> list[types.Content]:
+    contents: list[types.Content] = []
+    for item in history:
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        gemini_role = "model" if role == "assistant" else "user"
+        contents.append(types.Content(role=gemini_role, parts=[types.Part(text=content)]))
+    contents.append(types.Content(role="user", parts=[types.Part(text=latest_user_text)]))
+    return contents
+
+
+def _extract_gemini_text(response: Any) -> str:
+    text = str(getattr(response, "text", "") or "").strip()
+    if text:
+        return text
+    for candidate in getattr(response, "candidates", []) or []:
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) if content is not None else None
+        if not parts:
+            continue
+        chunks: list[str] = []
+        for part in parts:
+            chunk = str(getattr(part, "text", "") or "").strip()
+            if chunk:
+                chunks.append(chunk)
+        if chunks:
+            return "\n".join(chunks).strip()
+    return ""
+
+
+def _is_retryable_gemini_error(exc: Exception) -> bool:
+    if isinstance(exc, (genai_errors.ClientError, genai_errors.ServerError)):
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {429, 500, 502, 503, 504}:
+            return True
+    msg = str(exc).lower()
+    retry_markers = (
+        "resource_exhausted",
+        "quota",
+        "billing",
+        "high demand",
+        "unavailable",
+        "timed out",
+        "deadline",
+    )
+    return any(marker in msg for marker in retry_markers)
+
+
+async def _run_gemini_device_turn(device_id: str, message: str) -> str:
+    cleaned = str(message or "").strip()
+    if not cleaned:
+        return ""
+
+    gc = get_genai_client()
+    if gc is None:
+        raise RuntimeError("Gemini API key not configured. Set GEMINI_API_KEY in Hub settings.")
+
+    system_prompt = _openai_device_system_prompt(device_id)
+    contents = _device_history_as_gemini_contents(_openai_device_history(device_id), cleaned)
+    model = _device_gemini_model(device_id)
+
+    def _generate() -> str:
+        response = gc.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                systemInstruction=system_prompt,
+                temperature=0.6,
+                maxOutputTokens=512,
+                thinkingConfig=types.ThinkingConfig(thinkingBudget=0),
+            ),
+        )
+        return _extract_gemini_text(response)
+
+    reply = (await asyncio.to_thread(_generate)).strip()
+    if not reply:
+        raise RuntimeError("Gemini returned an empty device reply")
+    _append_openai_device_history(device_id, cleaned, reply)
+    return reply
+
+
+async def _transcribe_gemini_audio(device_id: str, audio_bytes: bytes) -> str:
+    if not audio_bytes:
+        return ""
+    gc = get_genai_client()
+    if gc is None:
+        raise RuntimeError("Gemini API key not configured. Set GEMINI_API_KEY in Hub settings.")
+
+    model = _device_gemini_model(device_id)
+
+    def _generate() -> str:
+        response = gc.models.generate_content(
+            model=model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            text=(
+                                "Transcribe this audio exactly as spoken. "
+                                "Return only the transcript text, without quotes or commentary."
+                            )
+                        ),
+                        types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+                    ],
+                )
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0,
+                maxOutputTokens=512,
+                thinkingConfig=types.ThinkingConfig(thinkingBudget=0),
+            ),
+        )
+        return _extract_gemini_text(response)
+
+    return (await asyncio.to_thread(_generate)).strip()
 
 
 async def _run_openai_device_turn(device_id: str, message: str) -> str:
@@ -3446,7 +3578,7 @@ async def voice_bridge_websocket(websocket: WebSocket):
 
 @app.post("/api/device-text-turn")
 async def device_text_turn(req: DeviceTextTurnRequest):
-    """Simple OpenAI-backed text turn for Cardputer-style devices."""
+    """OpenAI-backed text turn for Cardputer-style devices."""
     device_id = _sanitize_device_id(req.device_id) or "default_bot"
     message = str(req.message or "").strip()
     if not message:
@@ -3462,20 +3594,18 @@ async def device_text_turn(req: DeviceTextTurnRequest):
 
 @app.post("/api/device-audio-turn")
 async def device_audio_turn(device_id: str = Form("default_bot"), file: UploadFile = File(...)):
-    """Simple OpenAI-backed voice turn for Cardputer-style devices."""
+    """OpenAI-backed voice turn for Cardputer-style devices."""
     did = _sanitize_device_id(device_id) or "default_bot"
-    api_key = get_openai_api_key()
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="OpenAI API key not configured. Set OPENAI_API_KEY or configure in Hub settings.",
-        )
-
     audio_bytes = await file.read()
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Audio file cannot be empty")
 
     try:
+        api_key = get_openai_api_key()
+        if not api_key:
+            raise RuntimeError(
+                "OpenAI API key not configured. Set OPENAI_API_KEY or configure in Hub settings."
+            )
         transcript = await asyncio.to_thread(
             transcribe_openai_audio,
             api_key=api_key,
@@ -3486,8 +3616,54 @@ async def device_audio_turn(device_id: str = Form("default_bot"), file: UploadFi
         transcript = transcript.strip()
         if not transcript:
             raise HTTPException(status_code=422, detail="Could not transcribe speech")
-        await _send_activity_event_to_esp32(did, "device_audio_turn")
         reply = await _run_openai_device_turn(did, transcript)
+        await _send_activity_event_to_esp32(did, "device_audio_turn")
+        return {"status": "success", "transcript": transcript, "reply": reply}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/api/device-audio-turn-raw")
+async def device_audio_turn_raw(request: Request):
+    """OpenAI-backed raw audio turn for embedded devices that upload a single body."""
+    did = _sanitize_device_id(
+        request.headers.get("x-device-id") or request.query_params.get("device_id") or "default_bot"
+    ) or "default_bot"
+    audio_bytes = await request.body()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio body cannot be empty")
+
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    sample_rate_raw = request.headers.get("x-audio-sample-rate") or "16000"
+    try:
+        sample_rate = max(8000, min(48000, int(sample_rate_raw)))
+    except Exception:
+        sample_rate = 16000
+    if content_type in {"application/octet-stream", "audio/pcm", "audio/l16"}:
+        audio_bytes = create_wav_header(len(audio_bytes), sample_rate=sample_rate) + audio_bytes
+
+    api_key = get_openai_api_key()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenAI API key not configured. Set OPENAI_API_KEY or configure in Hub settings.",
+        )
+
+    try:
+        transcript = await asyncio.to_thread(
+            transcribe_openai_audio,
+            api_key=api_key,
+            audio_bytes=audio_bytes,
+            filename="cardputer.wav",
+            model=DEFAULT_OPENAI_STT_MODEL,
+        )
+        transcript = transcript.strip()
+        if not transcript:
+            raise HTTPException(status_code=422, detail="Could not transcribe speech")
+        reply = await _run_openai_device_turn(did, transcript)
+        await _send_activity_event_to_esp32(did, "device_audio_turn_raw")
         return {"status": "success", "transcript": transcript, "reply": reply}
     except HTTPException:
         raise
