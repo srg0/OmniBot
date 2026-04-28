@@ -12,7 +12,7 @@ Licensed under the [MIT License](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md
 - A **Google AI (Gemini) API key** from [Google AI Studio](https://aistudio.google.com/)
 - **Bluetooth** on the PC if you will use **Setup** to provision real hardware over BLE
 - **Wi‑Fi list during setup:** SSID scan works on **Windows** (`netsh`), **Linux** with NetworkManager (`nmcli`), or **macOS** (`airport` when available). Otherwise choose **Join Other Network** and type the SSID manually
-
+- **LINK TO CAD -** https://cad.onshape.com/documents/36ef3639f0adcbd215c2da2e/w/06b991eb4c1f6f28b2fd677f/e/884c5e41b396d185bfcf0efe
 ---
 
 ## Quick setup
