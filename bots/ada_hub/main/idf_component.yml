@@ -1,0 +1,6 @@
+## CrowPanel Advance 7" P4 — same dependency set as Elecrow Lesson09 (LVGL 8 + DSI + GT911)
+dependencies:
+  espressif/esp_lcd_ek79007: "^1.0.2"
+  espressif/esp_lvgl_port: "^2.6.0"
+  espressif/esp_lcd_touch_gt911: "^1.1.3"
+  lvgl/lvgl: "^8.3.11"
