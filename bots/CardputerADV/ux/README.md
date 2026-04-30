@@ -37,6 +37,7 @@ This is a static review artifact only. It does not drive the firmware build.
 Current UX decisions:
 
 - Voice Player stays as-is.
+- Companion now has two eye themes for review: Organic Eyes and primitive Glyph Eyes.
 - Clock Classic and Clock Split are removed from navigation.
 - Clock Neon is the primary fullscreen digital watchface with a lightweight animated mesh.
 - Launcher and Settings use a text-menu/pixel-cursor style adapted from the M5PORKCHOP visual language.

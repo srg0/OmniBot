@@ -647,7 +647,7 @@
 
     const appGroups = [
       { id: 'chat', title: 'Chat', hint: 'text + eyes', screens: ['chat-face', 'chat-full'] },
-      { id: 'companion', title: 'Companion', hint: 'face + hero', screens: ['face', 'hero'] },
+      { id: 'companion', title: 'Companion', hint: 'face + glyph + hero', screens: ['face', 'face-glyph', 'hero'] },
       { id: 'clock', title: 'Clock', hint: 'watchfaces', screens: ['clock-neon', 'clock-analog'] },
       { id: 'focus', title: 'Focus', hint: 'pomodoro', screens: ['focus'] },
       { id: 'audio', title: 'Audio', hint: 'voice library', screens: ['voice'] },
@@ -688,10 +688,16 @@
         draw: drawChatFull
       },
       face: {
-        title: 'Big Eyes',
-        desc: 'Fullscreen emotional eye mode, accelerometer-driven gaze.',
-        notes: 'Review focus: eye scale, emotion colors, no text noise, recording/speaking color contrast.',
+        title: 'Eyes Organic',
+        desc: 'Fullscreen organic eye theme: big eyelids, iris highlights, speaking waveform.',
+        notes: 'Theme A. Review focus: less boring than rectangles, emotion readable at 240x135, still cheap enough for firmware.',
         draw: drawFace
+      },
+      'face-glyph': {
+        title: 'Eyes Glyph',
+        desc: 'Primitive glyph theme: >.< / ^_^ style face, ultra-low visual complexity.',
+        notes: 'Theme B. Review focus: whether a deliberately simple ASCII/pixel face is stronger than detailed eyes.',
+        draw: drawGlyphFace
       },
       hero: {
         title: 'Klo Hero',
@@ -805,16 +811,35 @@
       const red = mood === 'recording';
       const speaking = mood === 'speaking';
       const accent = red ? COLORS.red : speaking ? COLORS.green : COLORS.cyan;
-      const white = red ? '#ffd9dd' : '#e9fbff';
-      box(ctx, 11, y, 218, 72 * scale, '#061522', 'round');
-      box(ctx, 16, y + 5, 98, 58 * scale, white, 'round');
-      box(ctx, 126, y + 5, 98, 58 * scale, white, 'round');
-      box(ctx, 54, y + 25 * scale, 24, 24, '#07131d', 'circle');
-      box(ctx, 164, y + 25 * scale, 24, 24, '#07131d', 'circle');
-      box(ctx, 61, y + 31 * scale, 6, 6, accent, 'circle');
-      box(ctx, 171, y + 31 * scale, 6, 6, accent, 'circle');
-      box(ctx, 28, y + 10, 75, 4, accent, 'round');
-      box(ctx, 138, y + 10, 75, 4, accent, 'round');
+      const white = red ? '#ffe1e5' : speaking ? '#d7ffe6' : '#e6f9ff';
+      const eyeH = 58 * scale;
+      const eyeW = 96;
+      const eyeY = y + 5;
+      box(ctx, 10, y, 220, 72 * scale, '#061522', 'round');
+      box(ctx, 18, eyeY, eyeW, eyeH, white, 'rect', {
+        borderRadius: `${28 * scale}px ${34 * scale}px ${30 * scale}px ${22 * scale}px`,
+        boxShadow: `0 0 10px ${accent}`
+      });
+      box(ctx, 126, eyeY, eyeW, eyeH, white, 'rect', {
+        borderRadius: `${34 * scale}px ${28 * scale}px ${22 * scale}px ${30 * scale}px`,
+        boxShadow: `0 0 10px ${accent}`
+      });
+      box(ctx, 25, eyeY + 4, 82, 8 * scale, accent, 'rect', {
+        borderRadius: '999px',
+        transform: 'rotate(-3deg)',
+        transformOrigin: '0 0'
+      });
+      box(ctx, 134, eyeY + 4, 82, 8 * scale, accent, 'rect', {
+        borderRadius: '999px',
+        transform: 'rotate(3deg)',
+        transformOrigin: '0 0'
+      });
+      box(ctx, 52, y + 25 * scale, 25 * scale, 25 * scale, '#07131d', 'circle');
+      box(ctx, 162, y + 25 * scale, 25 * scale, 25 * scale, '#07131d', 'circle');
+      box(ctx, 60, y + 32 * scale, 8 * scale, 8 * scale, accent, 'circle');
+      box(ctx, 170, y + 32 * scale, 8 * scale, 8 * scale, accent, 'circle');
+      box(ctx, 64, y + 28 * scale, 4 * scale, 4 * scale, COLORS.white, 'circle');
+      box(ctx, 174, y + 28 * scale, 4 * scale, 4 * scale, COLORS.white, 'circle');
       if (red) {
         text(ctx, 94, y + 55 * scale, 'REC', COLORS.red, 'pixel', { fontWeight: 800 });
       }
@@ -844,9 +869,27 @@
     }
 
     function drawFace(ctx) {
-      clear(ctx, '#030c15');
-      drawEyes(ctx, 14, 1.45, 'speaking');
-      text(ctx, 83, 116, 'Speaking', COLORS.green, 'medium');
+      clear(ctx, '#020914');
+      for (let x = 0; x < 240; x += 12) box(ctx, x, 0, 1, 135, 'rgba(56,231,255,.05)');
+      for (let y = 0; y < 135; y += 12) box(ctx, 0, y, 240, 1, 'rgba(56,231,255,.04)');
+      drawEyes(ctx, 7, 1.62, 'speaking');
+      const wave = [4, 9, 15, 7, 18, 11, 5, 13, 8, 16, 6, 10];
+      wave.forEach((h, i) => box(ctx, 76 + i * 8, 115 - h, 4, h, i % 2 ? COLORS.green : COLORS.cyan, 'round'));
+      text(ctx, 92, 118, 'SPEAKING', COLORS.green, 'medium', { textShadow: '0 0 7px #81ff72' });
+    }
+
+    function drawGlyphFace(ctx) {
+      clear(ctx, '#05070a');
+      box(ctx, 5, 5, 230, 125, '#080d12', 'rect', { border: '1px solid #81ff72' });
+      for (let y = 18; y < 118; y += 18) box(ctx, 12, y, 216, 1, 'rgba(129,255,114,.12)');
+      text(ctx, 32, 28, '>.<', COLORS.green, 'mega', {
+        fontSize: '68px',
+        letterSpacing: '4px',
+        textShadow: '0 0 9px #81ff72, 0 0 18px #81ff72'
+      });
+      box(ctx, 83, 91, 75, 5, COLORS.green, 'round');
+      text(ctx, 21, 109, 'GLYPH FACE  LOW CPU  ALT: ^_^  o_o  -_-', COLORS.muted);
+      text(ctx, 12, 12, 'THEME B', COLORS.green);
     }
 
     function drawHero(ctx) {

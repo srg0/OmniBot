@@ -38,7 +38,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.1-dev"
+#define APP_VERSION "0.2.2-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -108,7 +108,7 @@ constexpr uint32_t kLauncherToggleDebounceMs = 140;
 constexpr uint8_t kLauncherGroupCount = 7;
 constexpr uint8_t kLauncherMaxSubItems = 4;
 constexpr uint8_t kSettingsItemCount = 10;
-constexpr uint8_t kClockFaceCount = 4;
+constexpr uint8_t kClockFaceCount = 1;
 constexpr uint8_t kHidKeyEscape = 0x29;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr uint32_t kClockTickMs = 1000;
@@ -343,6 +343,7 @@ enum class KeyboardLayout : uint8_t {
 };
 
 enum class UiMode : uint8_t {
+  Home,
   ChatFace,
   Face,
   Hero,
@@ -380,6 +381,13 @@ enum class EyeEmotion : uint8_t {
   Confused,
   Excited,
   Love,
+};
+
+enum class AssistantPulseState : uint8_t {
+  Ready,
+  Recording,
+  Thinking,
+  Playback,
 };
 
 struct ChatLine {
@@ -522,12 +530,12 @@ struct LauncherGroup {
 };
 
 constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
-    {"Chat", "CHAT", "Talk and read", rgb565_local(80, 210, 255), 3,
-     {{"Eyes chat", UiMode::ChatFace}, {"Full chat", UiMode::ChatFull}, {"Eyes only", UiMode::Face}}},
-    {"Companion", "KLO", "Face, hero, clock", rgb565_local(255, 118, 82), 3,
-     {{"Klo hero", UiMode::Hero}, {"Big eyes", UiMode::Face}, {"Clock", UiMode::Clock}}},
+    {"Home", "PULSE", "Assistant pulse", rgb565_local(47, 227, 255), 3,
+     {{"Pulse", UiMode::Home}, {"Chat", UiMode::ChatFull}, {"Eyes chat", UiMode::ChatFace}}},
+    {"Companion", "KLO", "Face and hero", rgb565_local(255, 118, 82), 2,
+     {{"Klo hero", UiMode::Hero}, {"Big eyes", UiMode::Face}, {"Klo hero", UiMode::Hero}}},
     {"Focus", "25", "Pomodoro ritual", rgb565_local(255, 210, 70), 2,
-     {{"Timer", UiMode::Focus}, {"Clock", UiMode::Clock}, {"Timer", UiMode::Focus}}},
+     {{"Timer", UiMode::Focus}, {"Pulse", UiMode::Home}, {"Timer", UiMode::Focus}}},
     {"Audio", "WAV", "Voice and library", rgb565_local(130, 255, 125), 2,
      {{"Voice notes", UiMode::Voice}, {"Library", UiMode::Library}, {"Voice notes", UiMode::Voice}}},
     {"Update", "OTA", "Assets and firmware", rgb565_local(255, 90, 80), 2,
@@ -607,7 +615,7 @@ uint32_t gLastBatterySampleMs = 0;
 
 FaceMode gFaceMode = FaceMode::Idle;
 KeyboardLayout gKeyboardLayout = KeyboardLayout::En;
-UiMode gUiMode = UiMode::ChatFace;
+UiMode gUiMode = UiMode::Home;
 Keyboard_Class::KeysState gKeyboardState;
 int16_t* gRecordBuffer = nullptr;
 int16_t* gTtsBuffer = nullptr;
@@ -653,6 +661,8 @@ bool gPlaybackStreamRawPcm = false;
 uint8_t gPlaybackStreamBuffers[kPlaybackBufferCount][kPlaybackChunkBytes];
 int16_t gVoiceTickerX = 90;
 uint8_t gVoiceGraphSpeed = 0;
+uint8_t gVoiceLevel8 = 28;
+uint32_t gAssistantPulsePressUntilMs = 0;
 int gVoiceEqBars[14] = {};
 BatterySnapshot gBatterySnapshot;
 FocusSettings gFocusSettings;
@@ -832,6 +842,8 @@ String hubBaseUrl() {
 
 const char* uiModeName(UiMode mode) {
   switch (mode) {
+    case UiMode::Home:
+      return "Pulse";
     case UiMode::Face:
       return "Face";
     case UiMode::Hero:
@@ -839,7 +851,7 @@ const char* uiModeName(UiMode mode) {
     case UiMode::ChatFull:
       return "Chat";
     case UiMode::Clock:
-      return "Clock";
+      return "Pulse";
     case UiMode::Battery:
       return "Battery";
     case UiMode::Voice:
@@ -1097,6 +1109,42 @@ void setStatus(const String& text, uint32_t ttlMs = 0) {
 
 void setFaceMode(FaceMode mode) {
   gFaceMode = mode;
+}
+
+AssistantPulseState assistantPulseState() {
+  if (gRecording) {
+    return AssistantPulseState::Recording;
+  }
+  if (gSubmitting || gThinking) {
+    return AssistantPulseState::Thinking;
+  }
+  if (gPlaybackActive) {
+    return AssistantPulseState::Playback;
+  }
+  return AssistantPulseState::Ready;
+}
+
+void pulseButtonPress(uint32_t durationMs = 120) {
+  gAssistantPulsePressUntilMs = millis() + durationMs;
+}
+
+void updateVoiceLevelFromSamples(const int16_t* samples, size_t sampleCount) {
+  if (!samples || sampleCount == 0) {
+    return;
+  }
+  uint32_t acc = 0;
+  size_t reads = 0;
+  for (size_t i = 0; i < sampleCount; i += 16) {
+    int32_t v = samples[i];
+    acc += static_cast<uint32_t>(v < 0 ? -v : v);
+    reads++;
+  }
+  if (reads == 0) {
+    return;
+  }
+  uint32_t avg = acc / reads;
+  uint8_t level = static_cast<uint8_t>(min<uint32_t>(255, avg >> 4));
+  gVoiceLevel8 = static_cast<uint8_t>((static_cast<uint16_t>(gVoiceLevel8) * 3 + level) / 4);
 }
 
 void setVoiceDiag(const String& text) {
@@ -1830,8 +1878,13 @@ bool uploadRuntimeLogs() {
 bool applyOtaFromManifest() {
   if (!gOtaManifest.parsed || gOtaManifest.url.isEmpty() || gOtaManifest.sha256.isEmpty()) {
     setStatus("OTA manifest incomplete", 1500);
+    appendRuntimeLog("OTA", "manifest incomplete", true);
     return false;
   }
+  appendRuntimeLog("OTA", "apply start version=" + gOtaManifest.version +
+                            " size=" + String(gOtaManifest.size), true);
+  setStatus("OTA downloading...", 0);
+  render();
   updateBatterySnapshot(true);
   int level = gBatterySnapshot.level < 0 ? 100 : gBatterySnapshot.level;
   uint8_t minBattery = max<uint8_t>(gDeviceSettings.minBatteryForUpdate, gOtaManifest.minBattery);
@@ -1844,10 +1897,13 @@ bool applyOtaFromManifest() {
     appendRuntimeLog("OTA", "firmware download failed", true);
     return false;
   }
+  setStatus("OTA applying...", 0);
+  render();
   fs::FS* fs = activeVoiceFs();
   File firmware = fs ? fs->open(kOtaTempPath, "r") : File();
   if (!firmware) {
     setStatus("OTA file missing", 1200);
+    appendRuntimeLog("OTA", "file missing after download", true);
     return false;
   }
   size_t size = firmware.size();
@@ -2251,6 +2307,7 @@ bool startPlaybackStreamFromRawPcmFile(const String& path, uint32_t sampleRate, 
   gPlaybackStreamRawPcm = true;
   gPlaybackStreaming = true;
   gPlaybackActive = true;
+  pulseButtonPress();
   setFaceMode(FaceMode::Speaking);
   setStatus("Playing voice...", 1200);
   setVoiceDiag(diag);
@@ -2296,6 +2353,7 @@ bool startPlaybackStreamFromWavFile(const String& path, const String& diag) {
   gPlaybackStreamRawPcm = false;
   gPlaybackStreaming = true;
   gPlaybackActive = true;
+  pulseButtonPress();
   setFaceMode(FaceMode::Speaking);
   setStatus("Playing voice...", 1200);
   setVoiceDiag(diag);
@@ -3423,6 +3481,7 @@ void flushCompletedRecordChunksToFile(size_t completedCount) {
   for (size_t i = 0; i < completedCount && !gRecordInflightChunks.empty(); ++i) {
     uint8_t chunkIndex = gRecordInflightChunks.front();
     gRecordInflightChunks.pop_front();
+    updateVoiceLevelFromSamples(gRecordChunkBuffers[chunkIndex], kRecordChunkSamples);
     if (gActiveRecordFile) {
       gActiveRecordFile.write(reinterpret_cast<const uint8_t*>(gRecordChunkBuffers[chunkIndex]), kRecordChunkBytes);
       gActiveRecordBytes += kRecordChunkBytes;
@@ -3499,6 +3558,8 @@ void startRecording() {
   gRecordedSamples = 0;
   gRecording = true;
   gRecordStartMs = millis();
+  gVoiceLevel8 = 36;
+  pulseButtonPress();
 
   gRecordingToFile = gStorageReady && ensureVoiceStorage();
   if (gRecordingToFile) {
@@ -4447,6 +4508,7 @@ bool stopRecordingAndSend() {
     return false;
   }
   gRecording = false;
+  pulseButtonPress();
 
   float elapsed = (millis() - gRecordStartMs) / 1000.0f;
   size_t dataSize = 0;
@@ -5066,6 +5128,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/home" || cmd == "/pulse") {
+    setUiMode(UiMode::Home);
+    return true;
+  }
+
   if (cmd == "/status") {
     pushSystem("device_id=" + gDeviceId);
     pushSystem("wifi=" + String(gWifiReady ? WiFi.localIP().toString() : "offline"));
@@ -5110,7 +5177,7 @@ bool handleLocalCommand(const String& input) {
   }
 
   if (cmd == "/clock") {
-    setUiMode(UiMode::Clock);
+    setUiMode(UiMode::Home);
     return true;
   }
 
@@ -5464,7 +5531,7 @@ bool handleAssetsKey(char key) {
   return false;
 }
 
-bool handleOtaKey(char key) {
+bool handleOtaKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
   if (lowerKey == 'f') {
     fetchRemoteOtaManifest();
@@ -5475,7 +5542,10 @@ bool handleOtaKey(char key) {
     setStatus("OTA manifest reloaded", 900);
     return true;
   }
-  if (lowerKey == 'a') {
+  if (lowerKey == 'a' || keys.enter || key == '\n' || key == '\r') {
+    setStatus("OTA apply requested", 700);
+    appendRuntimeLog("OTA", "apply requested by keyboard", true);
+    render();
     applyOtaFromManifest();
     return true;
   }
@@ -5743,12 +5813,12 @@ bool handleGlobalEscape() {
   }
 
   if (!gBleActive) {
-    setUiMode(UiMode::ChatFace);
+    setUiMode(UiMode::Home);
   }
   setStatus("Ready", 1000);
   setKeyDiag("esc:reset");
   appendRuntimeLog("UI", "escape reset", false);
-  return changed || gUiMode != UiMode::ChatFace;
+  return changed || gUiMode != UiMode::Home;
 }
 
 void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
@@ -5810,7 +5880,7 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Assets && handleAssetsKey(key)) {
     return;
   }
-  if (gUiMode == UiMode::Ota && handleOtaKey(key)) {
+  if (gUiMode == UiMode::Ota && handleOtaKey(key, keys)) {
     return;
   }
   if (gUiMode == UiMode::Contexts && handleContextsKey(key, keys)) {
@@ -5822,13 +5892,19 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Logs && handleLogsKey(key)) {
     return;
   }
-  if (gInputBuffer.isEmpty() && (key == ',' || key == '<' || key == ';' ||
+  bool switchedHomeToChat = false;
+  if (gUiMode == UiMode::Home &&
+      (keys.enter || key == '\r' || key == '\n' || (key >= 32 && key < 127))) {
+    setUiMode(UiMode::ChatFull);
+    switchedHomeToChat = true;
+  }
+  if (!switchedHomeToChat && gInputBuffer.isEmpty() && (key == ',' || key == '<' || key == ';' ||
                                  (keys.ctrl && (lowerKey == 'p' || lowerKey == 'k')))) {
     logf("[CHAT] scroll up key=%d", static_cast<int>(key));
     scrollChatBy(1);
     return;
   }
-  if (gInputBuffer.isEmpty() && (key == '.' || key == '>' || key == '/' ||
+  if (!switchedHomeToChat && gInputBuffer.isEmpty() && (key == '.' || key == '>' || key == '/' ||
                                  (keys.ctrl && (lowerKey == 'n' || lowerKey == 'j')))) {
     logf("[CHAT] scroll down key=%d", static_cast<int>(key));
     scrollChatBy(-1);
@@ -5907,8 +5983,6 @@ void pollTyping() {
     switchLauncherGroupAndApply(-1);
   } else if (tabNextCombo) {
     switchLauncherGroupAndApply(1);
-  } else if (tabDown && gUiMode == UiMode::Clock && !gLauncherVisible) {
-    cycleClockFace(1);
   } else if (tabDown) {
     cycleCurrentAppScreen(1);
   } else if (gLauncherVisible && leftDown) {
@@ -6001,6 +6075,24 @@ void updateVoiceTrigger() {
 
 void updateG0VoiceTrigger() {
   bool pressed = M5.BtnA.isPressed();
+  if (gUiMode == UiMode::Ota) {
+    if (pressed && !gG0VoiceHeld) {
+      gG0VoiceHeld = true;
+      pulseButtonPress();
+      setStatus("Release G0 to apply OTA", 1200);
+      appendRuntimeLog("OTA", "G0 press", false);
+      return;
+    }
+    if (!pressed && gG0VoiceHeld) {
+      gG0VoiceHeld = false;
+      setStatus("OTA apply requested", 700);
+      appendRuntimeLog("OTA", "apply requested by G0", true);
+      render();
+      applyOtaFromManifest();
+      return;
+    }
+    return;
+  }
   if (pressed && !gG0VoiceHeld) {
     gG0VoiceHeld = true;
     gLastCtrlTapMs = 0;
@@ -6826,7 +6918,7 @@ void renderOtaUi() {
   d.print(gOtaManifest.confirmRequired ? "manual confirm" : "auto allowed");
   d.setTextColor(TFT_LIGHTGREY, 0x0841);
   d.setCursor(16, 112);
-  d.print("F fetch R load A apply SHA");
+  d.print("F fetch R load A/G0 apply");
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -7034,149 +7126,191 @@ void renderHeroUi() {
   renderDebugOverlay();
 }
 
-void renderClockUi() {
+void drawAssistantPulseArc(int16_t cx, int16_t cy, int16_t outerR, int16_t innerR,
+                           float startRad, float endRad, uint16_t color) {
+  int32_t startDeg = static_cast<int32_t>(startRad * 180.0f / kPi) % 360;
+  int32_t endDeg = static_cast<int32_t>(endRad * 180.0f / kPi) % 360;
+  if (startDeg < 0) startDeg += 360;
+  if (endDeg < 0) endDeg += 360;
+  gCanvas.drawArc(cx, cy, outerR, innerR, startDeg, endDeg, color);
+}
+
+void drawAssistantPulseButton(int16_t x, int16_t y, int16_t w, int16_t h,
+                              const char* label, uint16_t accent, bool pressed) {
+  auto& d = gCanvas;
+  int16_t py = y + (pressed ? 1 : 0);
+  uint16_t fill = pressed ? rgb565_local(16, 34, 42) : rgb565_local(7, 20, 26);
+  d.fillRoundRect(x, py, w, h, 5, fill);
+  d.drawRoundRect(x, py, w, h, 5, accent);
+  if (pressed) {
+    d.drawFastHLine(x + 8, py + 4, w - 16, rgb565_local(170, 200, 210));
+  }
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, fill);
+  int tw = d.textWidth(label);
+  d.setCursor(x + (w - tw) / 2, py + 6);
+  d.print(label);
+}
+
+void renderAssistantPulseChatHint() {
+  if (gInputBuffer.isEmpty()) {
+    return;
+  }
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(6, 16, 22);
+  d.fillRoundRect(9, 102, 222, 28, 8, bg);
+  d.drawRoundRect(9, 102, 222, 28, 8, rgb565_local(47, 227, 255));
+  d.setFont(&fonts::efontCN_12);
+  d.setTextColor(TFT_YELLOW, bg);
+  d.setCursor(16, 111);
+  d.print(tailUtf8ToFit("> " + gInputBuffer, 210));
+}
+
+void renderAssistantPulseUi() {
   auto& d = gCanvas;
   ensureBangkokTimezone();
-  d.fillScreen(0x0000);
+  AssistantPulseState state = assistantPulseState();
+
+  constexpr uint16_t bg = rgb565_local(2, 7, 10);
+  constexpr uint16_t white = rgb565_local(244, 251, 255);
+  constexpr uint16_t cyan = rgb565_local(47, 227, 255);
+  constexpr uint16_t violet = rgb565_local(157, 102, 255);
+  constexpr uint16_t red = rgb565_local(255, 63, 85);
+  constexpr uint16_t amber = rgb565_local(246, 194, 74);
+  constexpr uint16_t green = rgb565_local(88, 240, 141);
+  uint16_t c1 = cyan;
+  uint16_t c2 = violet;
+  uint16_t c3 = rgb565_local(23, 77, 90);
+  uint16_t fg = white;
+  const char* label = "LISTEN";
+
+  if (state == AssistantPulseState::Recording) {
+    c1 = red;
+    c2 = rgb565_local(255, 178, 59);
+    c3 = rgb565_local(88, 32, 42);
+    fg = rgb565_local(255, 241, 239);
+    label = "REC";
+  } else if (state == AssistantPulseState::Thinking) {
+    c1 = amber;
+    c2 = cyan;
+    c3 = rgb565_local(64, 52, 26);
+    fg = rgb565_local(255, 248, 232);
+    label = "THINK";
+  } else if (state == AssistantPulseState::Playback) {
+    c1 = green;
+    c2 = cyan;
+    c3 = rgb565_local(22, 73, 46);
+    fg = rgb565_local(241, 255, 246);
+    label = "PLAY";
+  }
+
+  d.fillScreen(bg);
+  d.fillRoundRect(0, 0, 240, 135, 6, bg);
+  d.fillCircle(70, 58, 86, rgb565_local(4, 16, 20));
+  d.drawRoundRect(0, 0, 240, 135, 6, rgb565_local(48, 54, 61));
+
+  uint32_t nowMs = millis();
+  float t = nowMs / 1000.0f;
+  float breathe = sinf(t * 2.2f) * 0.9f;
+  float spin = t * 0.55f;
+  if (state == AssistantPulseState::Thinking) {
+    spin = t * 1.9f;
+  } else if (state == AssistantPulseState::Recording) {
+    spin = t * 1.25f;
+  }
+  float level = max<uint8_t>(18, gVoiceLevel8) / 255.0f;
+  if (!gRecording && gVoiceLevel8 > 28) {
+    gVoiceLevel8 = static_cast<uint8_t>(max<int>(28, static_cast<int>(gVoiceLevel8) - 2));
+  }
+
+  const int16_t cx = 58;
+  const int16_t cy = 68;
+  d.fillCircle(cx, cy, 50 + static_cast<int16_t>(breathe), rgb565_local(4, 16, 21));
+  d.drawCircle(cx, cy, 49 + static_cast<int16_t>(breathe), c3);
+  drawAssistantPulseArc(cx, cy, 43, 36, -2.25f + spin, 1.00f + spin, c1);
+  drawAssistantPulseArc(cx, cy, 29, 23, 0.58f - spin * 1.08f, 4.54f - spin * 1.08f, c2);
+
+  if (state == AssistantPulseState::Recording) {
+    int16_t pulseR = 18 + static_cast<int16_t>(level * 14.0f + sinf(t * 12.0f));
+    d.fillCircle(cx, cy, pulseR, c1);
+    d.fillCircle(cx, cy, 9, fg);
+  } else if (state == AssistantPulseState::Thinking) {
+    drawAssistantPulseArc(cx, cy, 19, 14, 0.2f + spin * 1.7f, 5.3f + spin * 1.7f, fg);
+    d.fillCircle(cx + static_cast<int16_t>(cosf(spin * 2.4f) * 27.0f),
+                 cy + static_cast<int16_t>(sinf(spin * 2.4f) * 21.0f), 4, c1);
+    d.fillCircle(cx + static_cast<int16_t>(cosf(spin * 2.0f + 2.1f) * 26.0f),
+                 cy + static_cast<int16_t>(sinf(spin * 2.0f + 2.1f) * 23.0f), 3, c2);
+  } else if (state == AssistantPulseState::Playback) {
+    d.fillCircle(cx, cy, 16, fg);
+    d.fillTriangle(cx - 4, cy - 8, cx - 4, cy + 8, cx + 9, cy, bg);
+  } else {
+    d.fillCircle(cx, cy, 14 + static_cast<int16_t>(sinf(t * 2.2f) * 1.4f), fg);
+  }
+
   String hhmm = "--:--";
-  String hh = "--";
-  String mm = "--";
-  String ss = "--";
-  String date = "-- ---";
-  int hour = 0;
-  int minute = 0;
-  int second = 0;
   time_t now = time(nullptr);
   if (now > 100000) {
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
-    hour = timeinfo.tm_hour;
-    minute = timeinfo.tm_min;
-    second = timeinfo.tm_sec;
     char buf[6];
     strftime(buf, sizeof(buf), "%H:%M", &timeinfo);
     hhmm = buf;
-    char hBuf[3];
-    strftime(hBuf, sizeof(hBuf), "%H", &timeinfo);
-    hh = hBuf;
-    char mBuf[3];
-    strftime(mBuf, sizeof(mBuf), "%M", &timeinfo);
-    mm = mBuf;
-    char secBuf[3];
-    strftime(secBuf, sizeof(secBuf), "%S", &timeinfo);
-    ss = secBuf;
-    char dateBuf[12];
-    strftime(dateBuf, sizeof(dateBuf), "%d %b", &timeinfo);
-    date = dateBuf;
-  } else {
-    hhmm = "--:--";
-    hh = "--";
-    mm = "--";
-    ss = "--";
-    date = "SYNCING";
+  }
+  if (state == AssistantPulseState::Recording) {
+    uint32_t elapsed = (millis() - gRecordStartMs) / 1000;
+    char rec[6];
+    snprintf(rec, sizeof(rec), "%02u:%02u", static_cast<unsigned>(elapsed / 60),
+             static_cast<unsigned>(elapsed % 60));
+    hhmm = rec;
   }
 
-  uint8_t face = gDeviceSettings.clockFace % kClockFaceCount;
-  if (face == 0) {
-    d.fillScreen(rgb565_local(2, 8, 18));
-    d.fillRoundRect(8, 8, 224, 119, 18, rgb565_local(0, 18, 32));
-    d.drawRoundRect(8, 8, 224, 119, 18, rgb565_local(0, 190, 220));
-    d.setTextColor(TFT_CYAN, rgb565_local(0, 18, 32));
-    d.setFont(&fonts::Font7);
-    d.setCursor(18, 18);
-    d.print(hhmm);
-    d.setFont(&fonts::Font6);
-    d.setTextColor(TFT_ORANGE, rgb565_local(0, 18, 32));
-    d.setCursor(88, 84);
-    d.print(ss);
-  } else if (face == 1) {
-    const uint16_t bg = rgb565_local(3, 5, 13);
-    const uint16_t grid = rgb565_local(13, 36, 54);
-    d.fillScreen(bg);
-    for (int x = 0; x < 240; x += 16) {
-      d.drawFastVLine(x, 0, 135, grid);
+  d.setFont(&fonts::Font7);
+  d.setTextColor(fg, bg);
+  int tw = d.textWidth(hhmm);
+  d.setCursor(171 - tw / 2, state == AssistantPulseState::Recording ? 18 : 20);
+  d.print(hhmm);
+
+  int16_t waveX = state == AssistantPulseState::Ready ? 121 : 117;
+  int16_t waveY = state == AssistantPulseState::Ready ? 88 : 86;
+  int bars = state == AssistantPulseState::Ready ? 15 : 16;
+  for (int i = 0; i < bars; ++i) {
+    int16_t bx = waveX + i * 7;
+    if (state == AssistantPulseState::Thinking) {
+      int16_t dotY = waveY + static_cast<int16_t>(sinf(t * 5.0f + i * 0.7f) * 6.0f);
+      d.fillCircle(bx, dotY, (i % 3 == 0) ? 3 : 2, (i % 2) ? c1 : c2);
+      continue;
     }
-    for (int y = 0; y < 135; y += 15) {
-      d.drawFastHLine(0, y, 240, grid);
-    }
-    d.drawRoundRect(7, 7, 226, 121, 14, rgb565_local(252, 52, 183));
-    d.drawRoundRect(11, 11, 218, 113, 12, rgb565_local(34, 232, 255));
-    d.setFont(&fonts::Font4);
-    d.setTextColor(rgb565_local(34, 232, 255), bg);
-    String full = hhmm + ":" + ss;
-    int tw = d.textWidth(full);
-    d.setCursor((240 - tw) / 2, 45);
-    d.print(full);
-    d.setFont(&fonts::Font2);
-    d.setTextColor(rgb565_local(252, 220, 96), bg);
-    d.setCursor(66, 93);
-    d.print("BANGKOK  " + date);
-  } else if (face == 2) {
-    const uint16_t bg = rgb565_local(10, 12, 16);
-    const uint16_t edge = rgb565_local(210, 220, 235);
-    d.fillScreen(bg);
-    int cx = 120;
-    int cy = 66;
-    int radius = 56;
-    d.fillCircle(cx, cy, radius + 3, rgb565_local(18, 25, 34));
-    d.drawCircle(cx, cy, radius, edge);
-    d.drawCircle(cx, cy, radius - 6, rgb565_local(76, 110, 135));
-    for (int i = 0; i < 60; ++i) {
-      float a = (i / 60.0f) * 2.0f * kPi - kPi / 2.0f;
-      int r1 = radius - ((i % 5 == 0) ? 11 : 5);
-      int x1 = cx + static_cast<int>(cosf(a) * r1);
-      int y1 = cy + static_cast<int>(sinf(a) * r1);
-      int x2 = cx + static_cast<int>(cosf(a) * (radius - 2));
-      int y2 = cy + static_cast<int>(sinf(a) * (radius - 2));
-      d.drawLine(x1, y1, x2, y2, (i % 5 == 0) ? TFT_CYAN : rgb565_local(80, 96, 110));
-    }
-    float secA = (second / 60.0f) * 2.0f * kPi - kPi / 2.0f;
-    float minA = ((minute + second / 60.0f) / 60.0f) * 2.0f * kPi - kPi / 2.0f;
-    float hourA = (((hour % 12) + minute / 60.0f) / 12.0f) * 2.0f * kPi - kPi / 2.0f;
-    d.drawLine(cx, cy, cx + static_cast<int>(cosf(hourA) * 27), cy + static_cast<int>(sinf(hourA) * 27), TFT_WHITE);
-    d.drawLine(cx, cy, cx + static_cast<int>(cosf(minA) * 39), cy + static_cast<int>(sinf(minA) * 39), TFT_CYAN);
-    d.drawLine(cx, cy, cx + static_cast<int>(cosf(secA) * 48), cy + static_cast<int>(sinf(secA) * 48), TFT_ORANGE);
-    d.fillCircle(cx, cy, 4, TFT_ORANGE);
-    d.setFont(&fonts::Font2);
-    d.setTextColor(TFT_LIGHTGREY, bg);
-    d.setCursor(8, 118);
-    d.print(hhmm + ":" + ss);
-    d.setCursor(174, 118);
-    d.print(date);
-  } else {
-    const uint16_t bg = rgb565_local(234, 230, 212);
-    const uint16_t ink = rgb565_local(18, 28, 42);
-    const uint16_t soft = rgb565_local(218, 208, 184);
-    d.fillScreen(bg);
-    d.fillRoundRect(8, 12, 66, 94, 12, soft);
-    d.fillRoundRect(87, 12, 66, 94, 12, soft);
-    d.fillRoundRect(166, 12, 66, 94, 12, soft);
-    d.setFont(&fonts::Font7);
-    d.setTextColor(ink, soft);
-    d.setCursor(15, 30);
-    d.print(hh);
-    d.setCursor(94, 30);
-    d.print(mm);
-    d.setCursor(173, 30);
-    d.print(ss);
-    d.setFont(&fonts::Font2);
-    d.setTextColor(rgb565_local(96, 80, 54), bg);
-    d.setCursor(28, 111);
-    d.print("HH");
-    d.setCursor(107, 111);
-    d.print("MM");
-    d.setCursor(186, 111);
-    d.print("SS");
+    float amp = state == AssistantPulseState::Recording ? 1.05f :
+                state == AssistantPulseState::Playback ? 0.90f : 0.68f;
+    int16_t h = static_cast<int16_t>((8.0f + fabsf(sinf(t * 3.6f + i * 0.74f)) * 22.0f +
+                                      fabsf(cosf(t * 1.7f + i * 0.31f)) * 7.0f) *
+                                     amp * (0.65f + level * 0.75f));
+    h = clampValue<int16_t>(h, 3, 42);
+    d.fillRoundRect(bx - 1, waveY - h / 2, 3, h, 2, (i % 2) ? c1 : c2);
   }
 
-  d.setFont(&fonts::Font2);
-  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  d.setCursor(4, 2);
-  d.print(clockFaceName(face));
-  d.setCursor(166, 2);
-  d.print("Tab face");
+  if (state == AssistantPulseState::Playback) {
+    d.fillRoundRect(117, 110, 88, 2, 1, rgb565_local(23, 61, 69));
+    int16_t progress = 117 + static_cast<int16_t>(88.0f * fmodf(t * 0.17f, 1.0f));
+    d.fillRoundRect(117, 110, max<int16_t>(1, progress - 117), 3, 1, c1);
+  }
+  if (state == AssistantPulseState::Recording) {
+    d.fillCircle(133, 112, 4 + static_cast<int16_t>(sinf(t * 8.0f)), c1);
+  }
+  drawAssistantPulseButton(154, 105, 62, 21, label, c1, millis() < gAssistantPulsePressUntilMs);
+  if (gAssistantPendingVisible && state == AssistantPulseState::Thinking) {
+    d.setFont(&fonts::Font2);
+    d.setTextColor(amber, bg);
+    d.setCursor(123, 13);
+    d.print("agent thinking");
+  }
+  renderAssistantPulseChatHint();
   renderLauncherOverlay();
   renderDebugOverlay();
+}
+
+void renderClockUi() {
+  renderAssistantPulseUi();
 }
 
 void renderVoicePlayerUi() {
@@ -7408,6 +7542,9 @@ void render() {
     renderStatusBar();
   } else {
     switch (gUiMode) {
+      case UiMode::Home:
+        renderAssistantPulseUi();
+        break;
       case UiMode::Face:
         renderFaceOnlyUi();
         break;
