@@ -5722,25 +5722,16 @@ bool handleSettingsKey(char key) {
 }
 
 const char* clockFaceName(uint8_t face) {
-  switch (face % kClockFaceCount) {
-    case 1:
-      return "Neon";
-    case 2:
-      return "Analog";
-    case 3:
-      return "Split";
-    case 0:
-    default:
-      return "Classic";
-  }
+  (void)face;
+  return "Pulse";
 }
 
 void cycleClockFace(int delta = 1) {
-  gDeviceSettings.clockFace =
-      (gDeviceSettings.clockFace + kClockFaceCount + delta) % kClockFaceCount;
+  (void)delta;
+  gDeviceSettings.clockFace = 0;
   saveDeviceSettings();
-  setStatus(String("Clock: ") + clockFaceName(gDeviceSettings.clockFace), 900);
-  setKeyDiag(String("clockface:") + clockFaceName(gDeviceSettings.clockFace));
+  setStatus("Home face: Pulse", 900);
+  setKeyDiag("homeface:Pulse");
 }
 
 void cancelRecordingDiscard() {
@@ -6944,7 +6935,7 @@ String settingLabel(uint8_t index) {
     case 8:
       return "Audio lang";
     case 9:
-      return "Clock face";
+      return "Home face";
     default:
       return "-";
   }

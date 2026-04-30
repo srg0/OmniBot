@@ -572,7 +572,7 @@
       <div class="device-row">
         <div class="device-wrap">
           <div class="device-frame" id="deviceFrame">
-            <div id="screen" class="screen" data-screen="chat-face"></div>
+            <div id="screen" class="screen" data-screen="home"></div>
           </div>
           <div class="screen-context">
             <button data-action="prev-screen" id="prevScreenLabel">Prev</button>
@@ -592,7 +592,7 @@
               <button data-action="launcher">Launcher</button>
               <button data-action="prev-app">Prev App</button>
               <button data-action="next-app">Next App</button>
-              <button data-action="watchface">Face</button>
+              <button data-action="home">Home</button>
               <button data-action="scale-down">Scale -</button>
               <button data-action="scale-up">Scale +</button>
               <button data-action="copy-link">Copy</button>
@@ -640,15 +640,15 @@
     };
 
     const state = {
-      screen: location.hash ? location.hash.replace('#', '').split('@')[0] : 'chat-face',
+      screen: location.hash ? location.hash.replace('#', '').split('@')[0] : 'home',
       point: null,
       comments: JSON.parse(localStorage.getItem('cardputerUxComments') || '[]')
     };
 
     const appGroups = [
+      { id: 'home', title: 'Home', hint: 'assistant pulse', screens: ['home'] },
       { id: 'chat', title: 'Chat', hint: 'text + eyes', screens: ['chat-face', 'chat-full'] },
       { id: 'companion', title: 'Companion', hint: 'face + glyph + hero', screens: ['face', 'face-glyph', 'hero'] },
-      { id: 'clock', title: 'Clock', hint: 'watchfaces', screens: ['clock-neon', 'clock-analog'] },
       { id: 'focus', title: 'Focus', hint: 'pomodoro', screens: ['focus'] },
       { id: 'audio', title: 'Audio', hint: 'voice library', screens: ['voice'] },
       { id: 'update', title: 'Update', hint: 'assets + OTA', screens: ['assets', 'ota'] },
@@ -656,11 +656,10 @@
     ];
 
     const screenGroups = appGroups.map(group => group.screens);
-    const watchfaces = ['clock-neon', 'clock-analog'];
     let lastTabAt = 0;
 
     const globalHotkeys = [
-      ['Tab', 'next screen / next watchface'],
+      ['Tab', 'next screen'],
       ['Double Tab', 'launcher'],
       ['Shift+Tab', 'previous screen'],
       ['Alt+Down', 'next app group'],
@@ -675,6 +674,12 @@
     ];
 
     const screens = {
+      home: {
+        title: 'Assistant Pulse',
+        desc: 'Primary device home screen: voice orb, state waveform, one action pill; typing opens chat.',
+        notes: 'This replaces all watchfaces. Review focus: READY/REC/THINK/PLAY portability to C++ primitives and clear transition into chat on typing.',
+        draw: drawAssistantPulseHome
+      },
       'chat-face': {
         title: 'Chat + Eyes',
         desc: 'Main AI chat surface: eyes top, transcript and input below.',
@@ -716,18 +721,6 @@
         desc: 'Pomodoro/focus timer with ritual audio cues and metronome.',
         notes: 'Review focus: remaining time, state color, action keys, low cognitive load during focus.',
         draw: drawFocus
-      },
-      'clock-neon': {
-        title: 'Clock Neon',
-        desc: 'Fullscreen neon HH:MM:SS with a lightweight moving 3D mesh background.',
-        notes: 'Review focus: maximum legibility, low-noise animated mesh, no secondary chrome.',
-        draw: ctx => drawClock(ctx, 1)
-      },
-      'clock-analog': {
-        title: 'Clock Analog',
-        desc: 'Analog dial with small digital backup.',
-        notes: 'Review focus: hand thickness at 240x135 and whether it feels too dense.',
-        draw: ctx => drawClock(ctx, 2)
       },
       loading: {
         title: 'Loading',
@@ -805,6 +798,63 @@
     function clear(ctx, color = '#07121c') {
       ctx.innerHTML = '';
       box(ctx, 0, 0, 240, 135, color);
+    }
+
+    function drawAssistantPulseHome(ctx) {
+      ctx.innerHTML = '';
+      const t = Date.now() / 1000;
+      const breathe = Math.sin(t * 2.2) * 0.9;
+      const spin = t * 0.55;
+      const arc1Start = (-2.25 + spin) * 180 / Math.PI;
+      const arc1End = (1.00 + spin) * 180 / Math.PI;
+      const arc2Start = (0.58 - spin * 1.08) * 180 / Math.PI;
+      const arc2End = (4.54 - spin * 1.08) * 180 / Math.PI;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 240 135');
+      svg.setAttribute('width', '240');
+      svg.setAttribute('height', '135');
+      svg.style.position = 'absolute';
+      svg.style.left = '0';
+      svg.style.top = '0';
+      svg.innerHTML = `
+        <rect width="240" height="135" rx="6" fill="#02070a"/>
+        <circle cx="70" cy="58" r="86" fill="#041014"/>
+        <rect x=".5" y=".5" width="239" height="134" rx="6" fill="none" stroke="#30363d"/>
+        <circle cx="58" cy="68" r="${49 + breathe}" fill="#041015" stroke="#174d5a" stroke-width="2"/>
+        <path d="${arcPath(58, 68, 39 + breathe, arc1Start, arc1End)}" fill="none" stroke="#2fe3ff" stroke-width="7" stroke-linecap="round"/>
+        <path d="${arcPath(58, 68, 26 - breathe * .2, arc2Start, arc2End)}" fill="none" stroke="#9d66ff" stroke-width="6" stroke-linecap="round"/>
+        <circle cx="58" cy="68" r="${14 + Math.sin(t * 2.2) * 1.4}" fill="#f4fbff"/>
+        <text x="171" y="52" text-anchor="middle" fill="#f4fbff" font-family="Menlo,monospace" font-size="34" font-weight="900">09:42</text>
+        ${pulseWaveSvg(121, 88, 15, '#2fe3ff', '#9d66ff', t)}
+        <rect x="154" y="105" width="62" height="21" rx="5" fill="#07141a" stroke="#2fe3ff" stroke-width="2"/>
+        <text x="185" y="120" text-anchor="middle" fill="#2fe3ff" font-family="Menlo,monospace" font-size="10" font-weight="900">LISTEN</text>
+        <rect x="11" y="104" width="119" height="23" rx="7" fill="#061016" stroke="#163944"/>
+        <text x="18" y="119" fill="#82919b" font-family="Menlo,monospace" font-size="8">type to open chat</text>
+      `;
+      ctx.appendChild(svg);
+    }
+
+    function arcPath(cx, cy, r, startDeg, endDeg) {
+      const start = polar(cx, cy, r, startDeg);
+      const end = polar(cx, cy, r, endDeg);
+      let delta = ((endDeg - startDeg) % 360 + 360) % 360;
+      const large = delta > 180 ? 1 : 0;
+      return `M ${start.x.toFixed(2)} ${start.y.toFixed(2)} A ${r.toFixed(2)} ${r.toFixed(2)} 0 ${large} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`;
+    }
+
+    function polar(cx, cy, r, deg) {
+      const rad = deg * Math.PI / 180;
+      return { x: cx + Math.cos(rad) * r, y: cy + Math.sin(rad) * r };
+    }
+
+    function pulseWaveSvg(x, y, bars, c1, c2, t) {
+      let out = '';
+      for (let i = 0; i < bars; i++) {
+        const bx = x + i * 6.7;
+        const h = (8 + Math.abs(Math.sin(t * 3.6 + i * .74)) * 22 + Math.abs(Math.cos(t * 1.7 + i * .31)) * 7) * .75;
+        out += `<line x1="${bx.toFixed(1)}" y1="${(y - h / 2).toFixed(1)}" x2="${bx.toFixed(1)}" y2="${(y + h / 2).toFixed(1)}" stroke="${i % 2 ? c1 : c2}" stroke-width="3" stroke-linecap="round"/>`;
+      }
+      return out;
     }
 
     function drawEyes(ctx, y = 4, scale = 1, mood = 'idle') {
@@ -1132,7 +1182,7 @@
     }
 
     function render(screenId = state.screen) {
-      state.screen = screens[screenId] ? screenId : 'chat-face';
+      state.screen = screens[screenId] ? screenId : 'home';
       const spec = screens[state.screen];
       document.querySelectorAll('.screen-link').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.screen === state.screen);
@@ -1224,11 +1274,6 @@
     }
 
     function moveWithinApp(delta) {
-      if (watchfaces.includes(state.screen)) {
-        const index = watchfaces.indexOf(state.screen);
-        render(watchfaces[(index + delta + watchfaces.length) % watchfaces.length]);
-        return;
-      }
       const group = currentGroup();
       const index = group.indexOf(state.screen);
       render(group[(index + delta + group.length) % group.length]);
@@ -1282,10 +1327,6 @@
       const target = document.getElementById('activeHotkeys');
       target.innerHTML = '';
       const specific = [];
-      if (watchfaces.includes(state.screen)) {
-        specific.push(['Tab', 'cycle watchface']);
-        specific.push(['W', 'cycle watchface']);
-      }
       if (state.screen === 'assets') {
         specific.push(['F', 'fetch manifest']);
         specific.push(['S', 'sync assets']);
@@ -1384,11 +1425,7 @@
         if (action === 'launcher') render('launcher');
         if (action === 'prev-app') moveApp(-1);
         if (action === 'next-app') moveApp(1);
-        if (action === 'watchface') {
-          render(watchfaces.includes(state.screen)
-            ? watchfaces[(watchfaces.indexOf(state.screen) + 1) % watchfaces.length]
-            : 'clock-neon');
-        }
+        if (action === 'home') render('home');
         if (action === 'scale-down') setScale(-1);
         if (action === 'scale-up') setScale(1);
         if (action === 'copy-link') copyCurrentLink();
@@ -1415,7 +1452,7 @@
         const match = point.match(/x(\d+),y(\d+)/);
         if (match) state.point = { screen: screenId, x: Number(match[1]), y: Number(match[2]) };
       }
-      render(screenId || 'chat-face');
+      render(screenId || 'home');
     });
 
     window.addEventListener('keydown', event => {
@@ -1500,9 +1537,7 @@
         return;
       }
       if (lower === 'w') {
-        render(watchfaces.includes(state.screen)
-          ? watchfaces[(watchfaces.indexOf(state.screen) + 1) % watchfaces.length]
-          : 'clock-neon');
+        render('home');
         event.preventDefault();
         return;
       }
@@ -1538,7 +1573,7 @@
     });
 
     setInterval(() => {
-      if (state.screen === 'clock-neon') redrawScreenOnly();
+      if (state.screen === 'home') redrawScreenOnly();
     }, 240);
 
     renderGallery();
