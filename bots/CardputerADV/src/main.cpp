@@ -105,7 +105,7 @@ constexpr size_t kHttpStageChunkBytes = 1024;
 constexpr uint32_t kVoiceSocketSettleMs = 300;
 constexpr uint32_t kCtrlDoubleTapWindowMs = 420;
 constexpr uint32_t kLauncherToggleDebounceMs = 140;
-constexpr uint8_t kLauncherGroupCount = 7;
+constexpr uint8_t kLauncherGroupCount = 6;
 constexpr uint8_t kLauncherMaxSubItems = 4;
 constexpr uint8_t kSettingsItemCount = 10;
 constexpr uint8_t kClockFaceCount = 1;
@@ -125,18 +125,21 @@ constexpr uint32_t kFocusSnoozeSec = 5UL * 60UL;
 constexpr uint16_t kFocusMinBpm = 30;
 constexpr uint16_t kFocusMaxBpm = 160;
 constexpr uint32_t kTextTurnTaskStackSize = 8192;
+constexpr uint32_t kTopicTaskStackSize = 8192;
 constexpr size_t kMaxFlashVoiceNotes = 12;
 constexpr size_t kMaxSdVoiceNotes = 256;
 constexpr size_t kMaxStoredPreviewChars = 84;
 constexpr size_t kMaxAudioAssets = 96;
 constexpr size_t kMaxRuntimeLogLines = 36;
-constexpr size_t kMaxContexts = 12;
+constexpr size_t kMaxContexts = 32;
+constexpr size_t kMaxContextPreviewLines = 5;
 constexpr size_t kVoicePreviewLineThreshold = 5;
 constexpr const char* kVoiceDir = "/voice";
 constexpr const char* kVoiceMetaExt = ".json";
 constexpr const char* kVoiceAudioExt = ".wav";
 constexpr const char* kPomodoroDir = "/pomodoro";
 constexpr const char* kPomodoroAudioDir = "/pomodoro/audio";
+constexpr const char* kSdAudioDir = "/audio";
 constexpr const char* kPomodoroLogsDir = "/pomodoro/logs";
 constexpr const char* kAssetManifestPath = "/pomodoro/manifest.json";
 constexpr const char* kAudioIndexPath = "/pomodoro/audio/index.json";
@@ -356,6 +359,7 @@ enum class UiMode : uint8_t {
   Voice,
   Focus,
   Library,
+  AudioFolders,
   Assets,
   Ota,
   Contexts,
@@ -424,6 +428,13 @@ struct AudioAsset {
   uint32_t durationMs = 0;
 };
 
+struct AudioFolder {
+  String label;
+  String category;
+  uint16_t count = 0;
+  uint32_t totalBytes = 0;
+};
+
 struct AssetManifestSummary {
   bool present = false;
   bool parsed = false;
@@ -451,6 +462,17 @@ struct ConversationContext {
   String label;
   String key;
   String shortName;
+  String topicKey;
+  int32_t threadId = 0;
+  uint32_t headSeq = 0;
+  uint16_t unread = 0;
+  bool remote = false;
+};
+
+struct ContextPreviewLine {
+  String role;
+  String text;
+  bool voice = false;
 };
 
 struct BatterySnapshot {
@@ -483,6 +505,19 @@ struct TextTurnTaskResult {
   uint32_t audioSize = 0;
   String error;
   String response;
+};
+
+struct TopicTaskPayload {
+  bool syncCatalog = false;
+  bool selectCurrent = false;
+  bool loadHistory = false;
+};
+
+struct TopicTaskResult {
+  bool catalogOk = false;
+  bool selectOk = false;
+  bool historyOk = false;
+  String label;
 };
 
 struct FocusSettings {
@@ -541,20 +576,18 @@ struct EmojiCacheEntry {
 };
 
 constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
-    {"Home", "PULSE", "Assistant pulse", rgb565_local(47, 227, 255), 3,
-     {{"Pulse", UiMode::Home}, {"Chat", UiMode::ChatFull}, {"Eyes chat", UiMode::ChatFace}}},
-    {"Companion", "KLO", "Face and hero", rgb565_local(255, 118, 82), 2,
-     {{"Klo hero", UiMode::Hero}, {"Big eyes", UiMode::Face}, {"Klo hero", UiMode::Hero}}},
-    {"Focus", "25", "Pomodoro ritual", rgb565_local(255, 210, 70), 2,
-     {{"Timer", UiMode::Focus}, {"Pulse", UiMode::Home}, {"Timer", UiMode::Focus}}},
-    {"Audio", "WAV", "Voice and library", rgb565_local(130, 255, 125), 2,
-     {{"Voice notes", UiMode::Voice}, {"Library", UiMode::Library}, {"Voice notes", UiMode::Voice}}},
-    {"Update", "OTA", "Assets and firmware", rgb565_local(255, 90, 80), 2,
-     {{"Assets", UiMode::Assets}, {"Firmware", UiMode::Ota}, {"Assets", UiMode::Assets}}},
-    {"OpenClaw", "CTX", "Topic and logs", rgb565_local(180, 150, 255), 2,
-     {{"Contexts", UiMode::Contexts}, {"Logs", UiMode::Logs}, {"Contexts", UiMode::Contexts}}},
-    {"System", "SYS", "Settings and debug", rgb565_local(190, 205, 225), 4,
-     {{"Settings", UiMode::Settings}, {"Battery", UiMode::Battery}, {"Logs", UiMode::Logs}, {"Debug", UiMode::Logs}}},
+    {"Assistant", "AI", "Voice, face, hero", rgb565_local(47, 227, 255), 4,
+     {{"Pulse", UiMode::Home}, {"Big Eyes", UiMode::Face}, {"Klo Hero", UiMode::Hero}, {"Chat Eyes", UiMode::ChatFace}}},
+    {"Chat", "CH", "Chat in active topic", rgb565_local(88, 210, 255), 2,
+     {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}}},
+    {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
+     {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice}, {"Assets", UiMode::Assets}}},
+    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 1,
+     {{"Focus Space", UiMode::Focus}}},
+    {"OpenClaw", "OC", "Bridge runtime", rgb565_local(180, 150, 255), 2,
+     {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}}},
+    {"System", "SYS", "Power and settings", rgb565_local(203, 216, 226), 3,
+     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Firmware", UiMode::Ota}}},
 };
 
 Preferences gPrefs;
@@ -576,7 +609,9 @@ String gInputBuffer;
 String gStatusText = "Booting";
 std::vector<VoiceNote> gVoiceNotes;
 std::vector<AudioAsset> gAudioAssets;
+std::vector<AudioFolder> gAudioFolders;
 std::vector<ConversationContext> gContexts;
+std::deque<ContextPreviewLine> gContextPreview;
 std::deque<String> gRuntimeLogs;
 
 bool gWifiReady = false;
@@ -604,7 +639,19 @@ int gLauncherSubSelection = 0;
 uint8_t gLauncherLastSub[kLauncherGroupCount] = {};
 int gSelectedVoiceNote = 0;
 int gSelectedAudioAsset = 0;
+int gSelectedAudioFolder = 0;
+String gAudioFolderFilter;
 int gSelectedContext = 0;
+String gSavedContextKey;
+String gContextHistoryKey;
+String gContextError;
+bool gContextsRemoteLoaded = false;
+uint32_t gContextsFetchedAtMs = 0;
+uint32_t gContextHistoryFetchedAtMs = 0;
+uint32_t gContextAnimStartMs = 0;
+uint32_t gTopicOverlayUntilMs = 0;
+uint32_t gTopicOverlayActionMs = 0;
+int8_t gContextAnimDir = 0;
 int gLogScrollOffset = 0;
 int gSelectedSetting = 0;
 
@@ -687,6 +734,9 @@ OtaManifestSummary gOtaManifest;
 TaskHandle_t gTextTurnTaskHandle = nullptr;
 portMUX_TYPE gTextTurnMux = portMUX_INITIALIZER_UNLOCKED;
 TextTurnTaskResult* gCompletedTextTurn = nullptr;
+TaskHandle_t gTopicTaskHandle = nullptr;
+portMUX_TYPE gTopicTaskMux = portMUX_INITIALIZER_UNLOCKED;
+TopicTaskResult* gCompletedTopicTask = nullptr;
 std::deque<String> gPendingTextTurns;
 String gActiveTextTurn;
 
@@ -730,9 +780,20 @@ void loadAssetManifestSummary();
 void loadOtaManifestSummary();
 void loadConversationContexts();
 String currentConversationKey();
+bool fetchRemoteTopicCatalog();
+bool fetchSelectedTopicHistory();
+bool selectRemoteCurrentTopic();
+bool switchTopicRelative(int delta, bool selectAndLoad);
+bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, const char* statusText = nullptr);
+void processCompletedTopicTask();
+void showTopicOverlay(int8_t direction = 0, uint32_t ttlMs = 1600);
+bool isEmojiAssetCodepoint(uint32_t codepoint);
 bool fetchRemoteAssetManifest();
 bool fetchRemoteOtaManifest();
 bool syncAssetsFromManifest();
+String fitCurrentFontToWidth(String text, int32_t pixelLimit);
+void drawTinyFooter(uint16_t bg, uint16_t fg, const String& text, int16_t x = 12, int16_t y = 124,
+                    int16_t w = 216);
 bool applyOtaFromManifest();
 bool uploadRuntimeLogs();
 void processCompletedTextTurn();
@@ -839,10 +900,27 @@ uint16_t compileTimeHubPort() {
   return static_cast<uint16_t>(parsed);
 }
 
+bool isLocalOrPrivateBridgeHost(const String& host) {
+  if (host == "localhost" || host == "127.0.0.1" || host.startsWith("192.168.") || host.startsWith("10.")) {
+    return true;
+  }
+  if (!host.startsWith("172.")) {
+    return false;
+  }
+  int firstDot = host.indexOf('.');
+  int secondDot = firstDot >= 0 ? host.indexOf('.', firstDot + 1) : -1;
+  if (firstDot < 0 || secondDot < 0) {
+    return false;
+  }
+  int secondOctet = host.substring(firstDot + 1, secondDot).toInt();
+  return secondOctet >= 16 && secondOctet <= 31;
+}
+
 void migrateBridgeEndpoint() {
   bool legacyBridge = gHubHost == kLegacyBridgeHost && gHubPort == kLegacyBridgePort;
   bool staleDomainPort = gHubHost == kProdBridgeHost && (gHubPort == 80 || gHubPort == kLegacyBridgePort);
-  if (legacyBridge || staleDomainPort) {
+  bool localBridge = isLocalOrPrivateBridgeHost(gHubHost);
+  if (legacyBridge || staleDomainPort || localBridge) {
     saveHubEndpoint(kProdBridgeHost, kProdBridgePort);
     logf("[CFG] migrated bridge endpoint host=%s port=%u", gHubHost.c_str(), gHubPort);
   }
@@ -876,12 +954,14 @@ const char* uiModeName(UiMode mode) {
       return "Focus";
     case UiMode::Library:
       return "Library";
+    case UiMode::AudioFolders:
+      return "Folders";
     case UiMode::Assets:
       return "Assets";
     case UiMode::Ota:
       return "OTA";
     case UiMode::Contexts:
-      return "Contexts";
+      return "Topics";
     case UiMode::Settings:
       return "Settings";
     case UiMode::Logs:
@@ -1144,6 +1224,16 @@ void pulseButtonPress(uint32_t durationMs = 120) {
   gAssistantPulsePressUntilMs = millis() + durationMs;
 }
 
+void showTopicOverlay(int8_t direction, uint32_t ttlMs) {
+  uint32_t now = millis();
+  gTopicOverlayActionMs = now;
+  gTopicOverlayUntilMs = now + ttlMs;
+  if (direction != 0) {
+    gContextAnimDir = direction;
+    gContextAnimStartMs = now;
+  }
+}
+
 void updateVoiceLevelFromSamples(const int16_t* samples, size_t sampleCount) {
   if (!samples || sampleCount == 0) {
     return;
@@ -1285,6 +1375,53 @@ String normalizeEmojiDisplayText(const String& raw) {
     }
     i += consumed;
   }
+  return out;
+}
+
+bool emojiAssetAvailable(uint32_t codepoint) {
+  if (!gSdReady || !isEmojiAssetCodepoint(codepoint)) {
+    return false;
+  }
+  char path[40];
+  snprintf(path, sizeof(path), "%s/u%lX.png", kEmojiDir, static_cast<unsigned long>(codepoint));
+  if (SD.exists(path)) {
+    return true;
+  }
+  snprintf(path, sizeof(path), "%s/u%lx.png", kEmojiDir, static_cast<unsigned long>(codepoint));
+  return SD.exists(path);
+}
+
+String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji = true) {
+  String cleaned = raw;
+  cleaned.replace("to:root-main", "");
+  cleaned.replace("root-main", "");
+  cleaned.trim();
+
+  String out;
+  out.reserve(cleaned.length());
+  int i = 0;
+  while (i < cleaned.length()) {
+    uint32_t codepoint = 0;
+    int consumed = 1;
+    bool ok = decodeUtf8At(cleaned, i, codepoint, consumed);
+    if (ok && shouldSuppressEmojiModifier(codepoint)) {
+      i += consumed;
+      continue;
+    }
+    if (ok && isEmojiAssetCodepoint(codepoint) && !emojiAssetAvailable(codepoint)) {
+      i += consumed;
+      continue;
+    }
+    for (int n = 0; n < consumed && i + n < cleaned.length(); ++n) {
+      out += cleaned[i + n];
+    }
+    i += consumed;
+  }
+  out.trim();
+  if (out.isEmpty()) {
+    out = "Topic";
+  }
+  (void)keepAvailableEmoji;
   return out;
 }
 
@@ -1561,33 +1698,9 @@ void scanEmojiAssets() {
     logf("[EMOJI] SD not mounted; emoji assets disabled");
     return;
   }
-  File dir = SD.open(kEmojiDir);
-  if (!dir || !dir.isDirectory()) {
-    if (dir) {
-      dir.close();
-    }
-    logf("[EMOJI] missing %s on SD", kEmojiDir);
-    return;
-  }
-
-  uint64_t totalBytes = 0;
-  while (true) {
-    File file = dir.openNextFile();
-    if (!file) {
-      break;
-    }
-    String path = file.path();
-    path.toLowerCase();
-    if (!file.isDirectory() && path.endsWith(".png")) {
-      ++gEmojiAssetCount;
-      totalBytes += file.size();
-    }
-    file.close();
-  }
-  dir.close();
-  logf("[EMOJI] SD assets count=%u bytes=%llu",
-       static_cast<unsigned>(gEmojiAssetCount),
-       static_cast<unsigned long long>(totalBytes));
+  // Directory enumeration can block boot on large or fragmented SD cards.
+  // Emoji PNG files are loaded by exact codepoint path on demand.
+  logf("[EMOJI] lazy SD lookup enabled");
 }
 
 String bytesToHex(const uint8_t* bytes, size_t len) {
@@ -1854,16 +1967,144 @@ String filenameFromPath(const String& path) {
 }
 
 String audioCategoryFromPath(const String& path) {
-  String prefix = String(kPomodoroAudioDir) + "/";
-  if (!path.startsWith(prefix)) {
+  String tail;
+  String pomodoroPrefix = String(kPomodoroAudioDir) + "/";
+  String userPrefix = String(kSdAudioDir) + "/";
+  if (path.startsWith(userPrefix)) {
+    tail = path.substring(userPrefix.length());
+  } else if (path.startsWith(pomodoroPrefix)) {
+    tail = path.substring(pomodoroPrefix.length());
+  } else {
     return "voice";
   }
-  String tail = path.substring(prefix.length());
   int slash = tail.indexOf('/');
   if (slash > 0) {
     return tail.substring(0, slash);
   }
   return "root";
+}
+
+String audioFolderLabel(const String& category) {
+  if (category.isEmpty()) {
+    return "All audio";
+  }
+  if (category == "root") {
+    return "Root";
+  }
+  return category;
+}
+
+bool audioAssetMatchesFolder(const AudioAsset& asset) {
+  return gAudioFolderFilter.isEmpty() || asset.category == gAudioFolderFilter;
+}
+
+int audioAssetCountForCurrentFolder() {
+  if (gAudioFolderFilter.isEmpty()) {
+    return static_cast<int>(gAudioAssets.size());
+  }
+  int count = 0;
+  for (const auto& asset : gAudioAssets) {
+    if (audioAssetMatchesFolder(asset)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+int firstAudioAssetInCurrentFolder() {
+  for (int i = 0; i < static_cast<int>(gAudioAssets.size()); ++i) {
+    if (audioAssetMatchesFolder(gAudioAssets[i])) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int audioAssetRankInCurrentFolder(int assetIndex) {
+  int rank = 0;
+  for (int i = 0; i < static_cast<int>(gAudioAssets.size()); ++i) {
+    if (!audioAssetMatchesFolder(gAudioAssets[i])) {
+      continue;
+    }
+    if (i == assetIndex) {
+      return rank;
+    }
+    rank++;
+  }
+  return -1;
+}
+
+void clampSelectedAudioAssetToFolder() {
+  if (gAudioAssets.empty()) {
+    gSelectedAudioAsset = 0;
+    return;
+  }
+  gSelectedAudioAsset = clampValue<int>(gSelectedAudioAsset, 0, static_cast<int>(gAudioAssets.size()) - 1);
+  if (!audioAssetMatchesFolder(gAudioAssets[gSelectedAudioAsset])) {
+    int first = firstAudioAssetInCurrentFolder();
+    if (first >= 0) {
+      gSelectedAudioAsset = first;
+    }
+  }
+}
+
+void moveSelectedAudioAssetInFolder(int delta) {
+  if (gAudioAssets.empty() || audioAssetCountForCurrentFolder() == 0) {
+    return;
+  }
+  clampSelectedAudioAssetToFolder();
+  int index = gSelectedAudioAsset;
+  int total = static_cast<int>(gAudioAssets.size());
+  for (int step = 0; step < total; ++step) {
+    index = (index + delta + total) % total;
+    if (audioAssetMatchesFolder(gAudioAssets[index])) {
+      gSelectedAudioAsset = index;
+      return;
+    }
+  }
+}
+
+void rebuildAudioFolders() {
+  gAudioFolders.clear();
+  AudioFolder all;
+  all.label = "All audio";
+  all.category = "";
+  for (const auto& asset : gAudioAssets) {
+    all.count++;
+    all.totalBytes += asset.size;
+    int folderIndex = -1;
+    for (int i = 0; i < static_cast<int>(gAudioFolders.size()); ++i) {
+      if (gAudioFolders[i].category == asset.category) {
+        folderIndex = i;
+        break;
+      }
+    }
+    if (folderIndex < 0) {
+      AudioFolder folder;
+      folder.category = asset.category;
+      folder.label = audioFolderLabel(asset.category);
+      gAudioFolders.push_back(folder);
+      folderIndex = static_cast<int>(gAudioFolders.size()) - 1;
+    }
+    gAudioFolders[folderIndex].count++;
+    gAudioFolders[folderIndex].totalBytes += asset.size;
+  }
+  gAudioFolders.insert(gAudioFolders.begin(), all);
+  gSelectedAudioFolder = clampValue<int>(gSelectedAudioFolder, 0, max<int>(0, static_cast<int>(gAudioFolders.size()) - 1));
+  if (!gAudioFolderFilter.isEmpty()) {
+    bool filterStillExists = false;
+    for (const auto& folder : gAudioFolders) {
+      if (folder.category == gAudioFolderFilter) {
+        filterStillExists = true;
+        break;
+      }
+    }
+    if (!filterStillExists) {
+      gAudioFolderFilter = "";
+      gSelectedAudioFolder = 0;
+    }
+  }
+  clampSelectedAudioAssetToFolder();
 }
 
 void scanAudioAssetsRecursive(fs::FS& fs, const String& dirPath, uint8_t depth) {
@@ -1906,13 +2147,19 @@ void scanAudioAssets() {
   gAudioAssets.clear();
   fs::FS* fs = activeVoiceFs();
   if (!fs || !ensurePomodoroStorageOn(*fs)) {
+    rebuildAudioFolders();
     appendRuntimeLog("ASSET", "storage unavailable", true);
     return;
   }
+  if (fsExists(*fs, kSdAudioDir)) {
+    scanAudioAssetsRecursive(*fs, kSdAudioDir, 0);
+  }
   scanAudioAssetsRecursive(*fs, kPomodoroAudioDir, 0);
+  rebuildAudioFolders();
   if (gSelectedAudioAsset >= static_cast<int>(gAudioAssets.size())) {
     gSelectedAudioAsset = max<int>(0, static_cast<int>(gAudioAssets.size()) - 1);
   }
+  clampSelectedAudioAssetToFolder();
   appendRuntimeLog("LIB", "audio scan count=" + String(gAudioAssets.size()), true);
 }
 
@@ -2084,6 +2331,7 @@ bool uploadRuntimeLogs() {
     return false;
   }
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Conversation-Key", currentConversationKey());
   if (!gDeviceToken.isEmpty()) {
     http.addHeader("Authorization", "Bearer " + gDeviceToken);
   }
@@ -2113,6 +2361,12 @@ bool applyOtaFromManifest() {
     appendRuntimeLog("OTA", "battery too low", true);
     return false;
   }
+  if (!gSdReady) {
+    pushError("SD card required for OTA.");
+    setStatus("Insert SD card", 2500);
+    appendRuntimeLog("OTA", "sd required", true);
+    return false;
+  }
   if (!downloadUrlToFile(gOtaManifest.url, kOtaTempPath, gOtaManifest.sha256, gOtaManifest.size)) {
     appendRuntimeLog("OTA", "firmware download failed", true);
     return false;
@@ -2128,16 +2382,28 @@ bool applyOtaFromManifest() {
   }
   size_t size = firmware.size();
   if (!Update.begin(size)) {
+    uint8_t updateError = Update.getError();
     firmware.close();
-    setStatus("OTA begin failed", 1600);
-    appendRuntimeLog("OTA", "begin failed", true);
+    setStatus("OTA begin err " + String(updateError), 1800);
+    appendRuntimeLog("OTA", "begin failed err=" + String(updateError) +
+                              " size=" + String(static_cast<unsigned>(size)), true);
     return false;
   }
   size_t written = Update.writeStream(firmware);
   firmware.close();
-  if (written != size || !Update.end(true)) {
-    setStatus("OTA apply failed", 1600);
-    appendRuntimeLog("OTA", "apply failed", true);
+  if (written != size) {
+    uint8_t updateError = Update.getError();
+    Update.abort();
+    setStatus("OTA short err " + String(updateError), 1800);
+    appendRuntimeLog("OTA", "short write err=" + String(updateError) +
+                              " written=" + String(static_cast<unsigned>(written)) +
+                              " size=" + String(static_cast<unsigned>(size)), true);
+    return false;
+  }
+  if (!Update.end(true)) {
+    uint8_t updateError = Update.getError();
+    setStatus("OTA end err " + String(updateError), 1800);
+    appendRuntimeLog("OTA", "end failed err=" + String(updateError), true);
     return false;
   }
   appendRuntimeLog("OTA", "apply ok reboot", true);
@@ -2147,18 +2413,95 @@ bool applyOtaFromManifest() {
   return true;
 }
 
-void addDefaultContext(const String& label, const String& key, const String& shortName) {
-  if (gContexts.size() >= kMaxContexts) {
-    return;
+String urlEncodePathSegment(const String& raw) {
+  static const char* hex = "0123456789ABCDEF";
+  String out;
+  out.reserve(raw.length() + 8);
+  for (size_t i = 0; i < raw.length(); ++i) {
+    uint8_t c = static_cast<uint8_t>(raw[i]);
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+        c == '-' || c == '_' || c == '.' || c == '~') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += hex[(c >> 4) & 0x0F];
+      out += hex[c & 0x0F];
+    }
   }
-  gContexts.push_back({label, key, shortName});
+  return out;
+}
+
+String makeTopicShortName(const String& title, int32_t threadId) {
+  (void)threadId;
+  String displayTitle = normalizeTopicTitleForDisplay(title, false);
+  String out;
+  for (size_t i = 0; i < displayTitle.length() && out.length() < 4; ++i) {
+    char c = displayTitle[i];
+    if (isalnum(static_cast<unsigned char>(c))) {
+      out += static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    }
+  }
+  if (!out.isEmpty()) {
+    return out;
+  }
+  return "TG";
+}
+
+void clearContextPreviewIfSelectionChanged() {
+  String selectedKey = currentConversationKey();
+  if (gContextHistoryKey != selectedKey) {
+    gContextPreview.clear();
+    gContextHistoryKey = "";
+    gContextHistoryFetchedAtMs = 0;
+  }
+}
+
+bool addContextItem(const String& label, const String& key, const String& shortName,
+                    const String& topicKey, int32_t threadId, uint32_t headSeq,
+                    uint16_t unread, bool remote) {
+  if (gContexts.size() >= kMaxContexts) {
+    return false;
+  }
+  ConversationContext ctx;
+  ctx.label = label;
+  ctx.key = key;
+  ctx.shortName = shortName.isEmpty() ? makeTopicShortName(label, threadId) : shortName;
+  ctx.topicKey = topicKey.isEmpty() ? key : topicKey;
+  ctx.threadId = threadId;
+  ctx.headSeq = headSeq;
+  ctx.unread = unread;
+  ctx.remote = remote;
+  gContexts.push_back(ctx);
+  return true;
+}
+
+bool addDefaultContext(const String& label, const String& key, const String& shortName) {
+  return addContextItem(label, key, shortName, key, 0, 0, 0, false);
+}
+
+void loadDefaultConversationContexts() {
+  gContexts.clear();
+  addDefaultContext("Помощник", "tg:root-main:default:-1003665527854:54", "TG");
+  addDefaultContext("Marathon", "tg:root-main:default:-1003665527854:741", "RUN");
+  addDefaultContext("Cardputer", "tg:root-main:default:-1003665527854:323", "ADV");
+}
+
+void selectSavedContextOrDefault(const String& savedKey) {
+  if (!savedKey.isEmpty()) {
+    for (size_t i = 0; i < gContexts.size(); ++i) {
+      if (gContexts[i].key == savedKey || gContexts[i].topicKey == savedKey) {
+        gSelectedContext = static_cast<int>(i);
+        return;
+      }
+    }
+  }
+  if (gSelectedContext >= static_cast<int>(gContexts.size())) {
+    gSelectedContext = 0;
+  }
 }
 
 void loadConversationContexts() {
-  gContexts.clear();
-  addDefaultContext("Adv Cardputer", "telegram:-1003665527854:topic:2921", "ADV");
-  addDefaultContext("Marathon", "telegram:-1003665527854:topic:741", "RUN");
-  addDefaultContext("Body", "telegram:-1003665527854:topic:3400", "BODY");
+  loadDefaultConversationContexts();
 
   fs::FS* fs = activeVoiceFs();
   if (fs && fsExists(*fs, kContextRegistryPath)) {
@@ -2168,20 +2511,32 @@ void loadConversationContexts() {
       auto err = deserializeJson(doc, file);
       file.close();
       if (!err && doc["contexts"].is<JsonArray>()) {
-        gContexts.clear();
+        std::vector<ConversationContext> loaded;
         for (JsonObject item : doc["contexts"].as<JsonArray>()) {
-          if (gContexts.size() >= kMaxContexts) {
+          if (loaded.size() >= kMaxContexts) {
             break;
           }
           String label = item["label"] | item["name"] | "";
-          String key = item["key"] | item["conversation_key"] | "";
+          String topicKey = item["topic_key"] | "";
+          String key = item["key"] | item["conversation_key"] | topicKey;
+          int32_t threadId = item["thread_id"] | 0;
           String shortName = item["short"] | "";
+          label = normalizeTopicTitleForDisplay(label);
           if (!label.isEmpty() && !key.isEmpty()) {
-            if (shortName.isEmpty()) {
-              shortName = label.substring(0, min<int>(4, label.length()));
-            }
-            gContexts.push_back({label, key, shortName});
+            ConversationContext ctx;
+            ctx.label = label;
+            ctx.key = key;
+            ctx.shortName = shortName.isEmpty() ? makeTopicShortName(label, threadId) : shortName;
+            ctx.topicKey = topicKey.isEmpty() ? key : topicKey;
+            ctx.threadId = threadId;
+            ctx.headSeq = item["head_seq"] | 0;
+            ctx.unread = item["unread"] | 0;
+            ctx.remote = item["remote"] | false;
+            loaded.push_back(ctx);
           }
+        }
+        if (!loaded.empty()) {
+          gContexts = loaded;
         }
       }
     }
@@ -2190,17 +2545,12 @@ void loadConversationContexts() {
   gPrefs.begin(kPrefsContextNs, true);
   String savedKey = gPrefs.getString("key", "");
   gPrefs.end();
-  if (!savedKey.isEmpty()) {
-    for (size_t i = 0; i < gContexts.size(); ++i) {
-      if (gContexts[i].key == savedKey) {
-        gSelectedContext = static_cast<int>(i);
-        break;
-      }
-    }
+  gSavedContextKey = savedKey;
+  selectSavedContextOrDefault(savedKey);
+  if (gSavedContextKey.isEmpty() && !gContexts.empty()) {
+    gSavedContextKey = currentConversationKey();
   }
-  if (gSelectedContext >= static_cast<int>(gContexts.size())) {
-    gSelectedContext = 0;
-  }
+  clearContextPreviewIfSelectionChanged();
   appendRuntimeLog("CTX", "loaded count=" + String(gContexts.size()), true);
 }
 
@@ -2211,15 +2561,213 @@ void saveCurrentContext() {
   gPrefs.begin(kPrefsContextNs, false);
   gPrefs.putString("key", currentConversationKey());
   gPrefs.end();
+  gSavedContextKey = currentConversationKey();
   appendRuntimeLog("CTX", "selected " + gContexts[gSelectedContext].shortName, true);
 }
 
 String currentConversationKey() {
   if (gContexts.empty()) {
-    return "telegram:-1003665527854:topic:2921";
+    return "tg:root-main:default:-1003665527854:54";
   }
   gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
   return gContexts[gSelectedContext].key;
+}
+
+bool fetchRemoteTopicCatalog() {
+  if ((!gWifiReady && !ensureWifiForHttp("topics", 3000)) || gHubHost.isEmpty()) {
+    gContextError = "Bridge offline";
+    setStatus("Topics offline", 1200);
+    return false;
+  }
+
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  String url = hubBaseUrl() + "/api/cardputer/v1/topics";
+  if (!configureHttpClient(http, secureClient, url, 15000)) {
+    gContextError = "Connect failed";
+    setStatus("Topics connect failed", 1200);
+    return false;
+  }
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  int code = http.GET();
+  String body = code > 0 ? http.getString() : "";
+  http.end();
+  if (code < 200 || code >= 300) {
+    gContextError = "HTTP " + String(code);
+    setStatus("Topics HTTP " + String(code), 1400);
+    appendRuntimeLog("CTX", "topics http " + String(code), true);
+    return false;
+  }
+
+  DynamicJsonDocument doc(16384);
+  auto err = deserializeJson(doc, body);
+  if (err || !doc["items"].is<JsonArray>()) {
+    gContextError = err ? String(err.c_str()) : "Bad topics";
+    setStatus("Topics parse failed", 1400);
+    appendRuntimeLog("CTX", "topics parse failed", true);
+    return false;
+  }
+
+  std::vector<ConversationContext> loaded;
+  for (JsonObject item : doc["items"].as<JsonArray>()) {
+    if (loaded.size() >= kMaxContexts) {
+      break;
+    }
+    String topicKey = item["topic_key"] | "";
+    String title = item["title"] | "";
+    int32_t threadId = item["thread_id"] | 0;
+    if (topicKey.isEmpty()) {
+      continue;
+    }
+    if (title.isEmpty()) {
+      title = "Topic " + String(threadId > 0 ? threadId : static_cast<int>(loaded.size() + 1));
+    }
+    title = normalizeTopicTitleForDisplay(title);
+    ConversationContext ctx;
+    ctx.label = title;
+    ctx.key = topicKey;
+    ctx.shortName = makeTopicShortName(title, threadId);
+    ctx.topicKey = topicKey;
+    ctx.threadId = threadId;
+    ctx.headSeq = item["head_seq"] | 0;
+    ctx.unread = item["unread_count"] | 0;
+    ctx.remote = true;
+    loaded.push_back(ctx);
+  }
+  if (loaded.empty()) {
+    gContextError = "No topics";
+    setStatus("No topics", 1200);
+    return false;
+  }
+
+  gContexts = loaded;
+  gContextsRemoteLoaded = true;
+  gContextsFetchedAtMs = millis();
+  gContextError = "";
+  selectSavedContextOrDefault(gSavedContextKey);
+  clearContextPreviewIfSelectionChanged();
+  appendRuntimeLog("CTX", "remote topics=" + String(gContexts.size()), true);
+  setStatus("Topics synced", 900);
+  return true;
+}
+
+bool selectRemoteCurrentTopic() {
+  if (gContexts.empty() || (!gWifiReady && !ensureWifiForHttp("topic-select", 2000)) || gHubHost.isEmpty()) {
+    return false;
+  }
+  String topicKey = gContexts[gSelectedContext].topicKey.isEmpty() ? gContexts[gSelectedContext].key : gContexts[gSelectedContext].topicKey;
+  if (!topicKey.startsWith("tg:")) {
+    return false;
+  }
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) + "/select";
+  if (!configureHttpClient(http, secureClient, url, 8000)) {
+    appendRuntimeLog("CTX", "select connect failed", true);
+    return false;
+  }
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST("{}");
+  http.end();
+  bool ok = code >= 200 && code < 300;
+  appendRuntimeLog("CTX", ok ? "remote selected" : ("select http " + String(code)), true);
+  return ok;
+}
+
+bool fetchSelectedTopicHistory() {
+  if (gContexts.empty()) {
+    return false;
+  }
+  if ((!gWifiReady && !ensureWifiForHttp("topic-history", 3000)) || gHubHost.isEmpty()) {
+    gContextError = "Bridge offline";
+    setStatus("History offline", 1200);
+    return false;
+  }
+  gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
+  String topicKey = gContexts[gSelectedContext].topicKey.isEmpty() ? gContexts[gSelectedContext].key : gContexts[gSelectedContext].topicKey;
+  String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) + "/history?limit=5";
+
+  auto getHistoryBody = [&](String& outBody) -> int {
+    HTTPClient http;
+    std::unique_ptr<WiFiClientSecure> secureClient;
+    if (!configureHttpClient(http, secureClient, url, 15000)) {
+      return -1000;
+    }
+    if (!gDeviceToken.isEmpty()) {
+      http.addHeader("Authorization", "Bearer " + gDeviceToken);
+    }
+    int httpCode = http.GET();
+    outBody = httpCode > 0 ? http.getString() : "";
+    if (httpCode <= 0) {
+      appendRuntimeLog("CTX", "history transport " + String(httpCode), true);
+      setHttpDiag("history transport " + String(httpCode));
+    }
+    http.end();
+    return httpCode;
+  };
+
+  String body;
+  int code = getHistoryBody(body);
+  if (code <= 0) {
+    ensureWifiForHttp("topic-history-retry", 3000);
+    delay(80);
+    code = getHistoryBody(body);
+  }
+  if (code < 200 || code >= 300) {
+    gContextError = "History HTTP " + String(code);
+    setStatus("History HTTP " + String(code), 1400);
+    appendRuntimeLog("CTX", "history http " + String(code), true);
+    return false;
+  }
+
+  DynamicJsonDocument doc(8192);
+  auto err = deserializeJson(doc, body);
+  if (err || !doc["items"].is<JsonArray>()) {
+    gContextError = err ? String(err.c_str()) : "Bad history";
+    setStatus("History parse failed", 1400);
+    return false;
+  }
+
+  gContextPreview.clear();
+  for (JsonObject item : doc["items"].as<JsonArray>()) {
+    if (gContextPreview.size() >= kMaxContextPreviewLines) {
+      break;
+    }
+    JsonObject sender = item["sender"].as<JsonObject>();
+    JsonObject content = item["content"].as<JsonObject>();
+    String kind = content["kind"] | "";
+    ContextPreviewLine line;
+    line.role = sender["kind"] | "";
+    line.voice = kind == "voice";
+    if (line.role.isEmpty()) {
+      line.role = "msg";
+    }
+    if (kind == "voice") {
+      line.text = content["transcript"] | "";
+      if (line.text.isEmpty()) {
+        uint32_t durationMs = content["voice"]["duration_ms"] | 0;
+        line.text = "Voice " + String(durationMs / 1000) + "s";
+      }
+    } else {
+      line.text = content["text"] | "";
+    }
+    line.text = trimPreview(line.text, 92);
+    if (!line.text.isEmpty()) {
+      gContextPreview.push_back(line);
+    }
+  }
+  gContextHistoryKey = topicKey;
+  gContextHistoryFetchedAtMs = millis();
+  gContextError = "";
+  appendRuntimeLog("CTX", "history " + gContexts[gSelectedContext].shortName +
+                            " lines=" + String(gContextPreview.size()), true);
+  setStatus("History loaded", 800);
+  return true;
 }
 
 bool saveVoiceNoteMetadata(const VoiceNote& note) {
@@ -2672,6 +3220,13 @@ void setUiMode(UiMode mode) {
     syncLauncherToMode(mode);
   }
   setStatus(String("Mode: ") + uiModeName(mode), 900);
+  if (mode == UiMode::Contexts) {
+    bool needCatalog = !gContextsRemoteLoaded;
+    bool needHistory = !gContexts.empty() && gContextHistoryKey != currentConversationKey();
+    if (needCatalog || needHistory) {
+      startTopicTask(needCatalog, false, true, needCatalog ? "Syncing topics..." : "Loading history...");
+    }
+  }
 }
 
 void moveLauncherSelection(int delta) {
@@ -2684,6 +3239,10 @@ void moveLauncherSelection(int delta) {
 void moveLauncherSubSelection(int delta) {
   gLauncherVisible = true;
   uint8_t count = kLauncherGroups[gLauncherSelection].count;
+  if (count <= 1) {
+    moveLauncherSelection(delta);
+    return;
+  }
   gLauncherSubSelection = (gLauncherSubSelection + delta + count) % count;
   gLauncherLastSub[gLauncherSelection] = gLauncherSubSelection;
 }
@@ -2694,12 +3253,6 @@ void applyLauncherSelection() {
   gLauncherSubSelection = clampValue<int>(gLauncherSubSelection, 0, count - 1);
   gLauncherLastSub[gLauncherSelection] = gLauncherSubSelection;
   UiMode target = kLauncherGroups[gLauncherSelection].items[gLauncherSubSelection].mode;
-  if (gLauncherSelection == 6 && gLauncherSubSelection == 3) {
-    gDebugOverlayVisible = !gDebugOverlayVisible;
-    setStatus(gDebugOverlayVisible ? "Debug overlay on" : "Debug overlay off", 1000);
-    gLauncherVisible = false;
-    return;
-  }
   setUiMode(target);
 }
 
@@ -3636,11 +4189,13 @@ void migrateLittleFsVoiceNotesToSd() {
 }
 
 void initStorage() {
+  Serial.println("[BOOT] storage: LittleFS begin");
   gLittleFsReady = LittleFS.begin(true);
   if (!gLittleFsReady) {
     pushError("LittleFS init failed.");
   }
 
+  Serial.println("[BOOT] storage: SD begin");
   gSdSpi.begin(kSdSckPin, kSdMisoPin, kSdMosiPin, kSdCsPin);
   gSdReady = SD.begin(kSdCsPin, gSdSpi, kSdFrequencyHz);
   if (gSdReady && SD.cardType() == CARD_NONE) {
@@ -3658,11 +4213,13 @@ void initStorage() {
          static_cast<unsigned>(kSdMisoPin),
          static_cast<unsigned>(kSdMosiPin),
          static_cast<unsigned>(kSdCsPin));
-    migrateLittleFsVoiceNotesToSd();
+    // Keep boot deterministic: migration can stall on corrupted LittleFS/SD metadata.
+    logf("[SD] LittleFS voice migration skipped on boot");
   } else {
     logf("[SD] not mounted; using LittleFS fallback");
   }
 
+  Serial.println("[BOOT] storage: scan emoji");
   scanEmojiAssets();
   gStorageReady = gSdReady || gLittleFsReady;
   gStorageLabel = activeVoiceStorageLabel();
@@ -3670,19 +4227,25 @@ void initStorage() {
     setStatus("Storage unavailable", 1000);
     return;
   }
+  Serial.println("[BOOT] storage: ensure voice");
   ensureVoiceStorage();
   if (!gSdReady && gLittleFsReady) {
     ensurePomodoroStorageOn(LittleFS);
   }
+  Serial.println("[BOOT] storage: load voice notes");
   loadVoiceNotes();
+  Serial.println("[BOOT] storage: scan audio");
   scanAudioAssets();
+  Serial.println("[BOOT] storage: load manifests");
   loadAssetManifestSummary();
   loadOtaManifestSummary();
+  Serial.println("[BOOT] storage: load contexts");
   loadConversationContexts();
   pushSystem("Storage: " + gStorageLabel);
   if (gEmojiAssetCount > 0) {
     pushSystem("Emoji SD: " + String(gEmojiAssetCount));
   }
+  Serial.println("[BOOT] storage: ready");
 }
 
 void startMic() {
@@ -4557,6 +5120,7 @@ void textTurnTask(void* arg) {
       String body;
       serializeJson(doc, body);
       http.addHeader("Content-Type", "application/json");
+      http.addHeader("X-Conversation-Key", payload->conversationKey);
       if (!payload->deviceToken.isEmpty()) {
         http.addHeader("Authorization", "Bearer " + payload->deviceToken);
       }
@@ -5348,7 +5912,7 @@ bool handleLocalCommand(const String& input) {
     pushSystem("Voice: Ctrl x2, Ctrl+V, or hold G0");
     pushSystem("Tab = next screen, Tab+Down/Right = next app");
     pushSystem("Ctrl+L = launcher map, arrows = group/item");
-    pushSystem("Ctrl+D = debug, /voice /focus /contexts");
+    pushSystem("Ctrl+D = debug, /voice /focus /topics");
     return true;
   }
 
@@ -5445,9 +6009,10 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
-  if (cmd == "/contexts") {
+  if (cmd == "/contexts" || cmd == "/topics") {
     loadConversationContexts();
     setUiMode(UiMode::Contexts);
+    startTopicTask(true, false, true, "Syncing topics...");
     return true;
   }
 
@@ -5514,8 +6079,12 @@ void submitInput() {
 
 void handleLauncherKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
-  if (key >= '1' && key <= '7') {
-    gLauncherSelection = key - '1';
+  if (key >= '1' && key <= '9') {
+    int target = key - '1';
+    if (target >= kLauncherGroupCount) {
+      return;
+    }
+    gLauncherSelection = target;
     uint8_t count = kLauncherGroups[gLauncherSelection].count;
     if (gLauncherSubSelection >= count) {
       gLauncherSubSelection = count - 1;
@@ -5526,20 +6095,20 @@ void handleLauncherKey(char key, const Keyboard_Class::KeysState& keys) {
     applyLauncherSelection();
     return;
   }
-  if (key == ',' || key == ';') {
-    moveLauncherSelection(-1);
-    return;
-  }
-  if (key == '.' || key == '/') {
-    moveLauncherSelection(1);
-    return;
-  }
-  if (lowerKey == 'w' || lowerKey == 'k') {
+  if (key == ',' || key == ';' || lowerKey == 'a' || lowerKey == 'h') {
     moveLauncherSubSelection(-1);
     return;
   }
-  if (lowerKey == 's' || lowerKey == 'j') {
+  if (key == '.' || key == '/' || lowerKey == 'd' || lowerKey == 'l') {
     moveLauncherSubSelection(1);
+    return;
+  }
+  if (lowerKey == 'w' || lowerKey == 'k') {
+    moveLauncherSelection(-1);
+    return;
+  }
+  if (lowerKey == 's' || lowerKey == 'j') {
+    moveLauncherSelection(1);
     return;
   }
 }
@@ -5706,17 +6275,22 @@ bool handleLibraryKey(char key, const Keyboard_Class::KeysState& keys) {
     setStatus("Library rescanned", 900);
     return true;
   }
-  if (gAudioAssets.empty()) {
-    return lowerKey == 'r';
+  if (lowerKey == 'f') {
+    setUiMode(UiMode::AudioFolders);
+    return true;
+  }
+  int folderCount = audioAssetCountForCurrentFolder();
+  if (gAudioAssets.empty() || folderCount == 0) {
+    return lowerKey == 'r' || lowerKey == 'f';
   }
   if (key == ',' || key == ';') {
-    gSelectedAudioAsset = max<int>(0, gSelectedAudioAsset - 1);
-    setStatus("Asset " + String(gSelectedAudioAsset + 1), 500);
+    moveSelectedAudioAssetInFolder(-1);
+    setStatus("Asset " + String(audioAssetRankInCurrentFolder(gSelectedAudioAsset) + 1) + "/" + String(folderCount), 500);
     return true;
   }
   if (key == '.' || key == '/') {
-    gSelectedAudioAsset = min<int>(static_cast<int>(gAudioAssets.size()) - 1, gSelectedAudioAsset + 1);
-    setStatus("Asset " + String(gSelectedAudioAsset + 1), 500);
+    moveSelectedAudioAssetInFolder(1);
+    setStatus("Asset " + String(audioAssetRankInCurrentFolder(gSelectedAudioAsset) + 1) + "/" + String(folderCount), 500);
     return true;
   }
   if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
@@ -5726,10 +6300,40 @@ bool handleLibraryKey(char key, const Keyboard_Class::KeysState& keys) {
       setStatus("Playback stopped", 800);
       return true;
     }
-    gSelectedAudioAsset = clampValue<int>(gSelectedAudioAsset, 0, static_cast<int>(gAudioAssets.size()) - 1);
+    clampSelectedAudioAssetToFolder();
     if (!startPlaybackStreamFromWavFile(gAudioAssets[gSelectedAudioAsset].path, "asset: " + gAudioAssets[gSelectedAudioAsset].title)) {
       setStatus("Asset play failed", 1200);
     }
+    return true;
+  }
+  return false;
+}
+
+bool handleAudioFoldersKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'r') {
+    scanAudioAssets();
+    setStatus("Folders rescanned", 900);
+    return true;
+  }
+  if (gAudioFolders.empty()) {
+    rebuildAudioFolders();
+  }
+  if (key == ',' || key == ';') {
+    gSelectedAudioFolder = max<int>(0, gSelectedAudioFolder - 1);
+    setStatus(audioFolderLabel(gAudioFolders[gSelectedAudioFolder].category), 700);
+    return true;
+  }
+  if (key == '.' || key == '/') {
+    gSelectedAudioFolder = min<int>(static_cast<int>(gAudioFolders.size()) - 1, gSelectedAudioFolder + 1);
+    setStatus(audioFolderLabel(gAudioFolders[gSelectedAudioFolder].category), 700);
+    return true;
+  }
+  if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+    gSelectedAudioFolder = clampValue<int>(gSelectedAudioFolder, 0, max<int>(0, static_cast<int>(gAudioFolders.size()) - 1));
+    gAudioFolderFilter = gAudioFolders.empty() ? "" : gAudioFolders[gSelectedAudioFolder].category;
+    clampSelectedAudioAssetToFolder();
+    setUiMode(UiMode::Library);
     return true;
   }
   return false;
@@ -5779,29 +6383,123 @@ bool handleOtaKey(char key, const Keyboard_Class::KeysState& keys) {
 bool handleContextsKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
   if (lowerKey == 'r') {
-    loadConversationContexts();
-    setStatus("Contexts reloaded", 900);
+    startTopicTask(true, false, true, "Syncing topics...");
+    return true;
+  }
+  if (lowerKey == 'h') {
+    startTopicTask(false, false, true, "Loading history...");
     return true;
   }
   if (gContexts.empty()) {
     return lowerKey == 'r';
   }
   if (key == ',' || key == ';') {
-    gSelectedContext = max<int>(0, gSelectedContext - 1);
-    setStatus(gContexts[gSelectedContext].shortName, 700);
-    return true;
+    return switchTopicRelative(-1, false);
   }
   if (key == '.' || key == '/') {
-    gSelectedContext = min<int>(static_cast<int>(gContexts.size()) - 1, gSelectedContext + 1);
-    setStatus(gContexts[gSelectedContext].shortName, 700);
-    return true;
+    return switchTopicRelative(1, false);
   }
   if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
     saveCurrentContext();
-    setStatus("Context " + gContexts[gSelectedContext].shortName, 1200);
+    startTopicTask(false, true, true, "Topic loading...");
     return true;
   }
   return false;
+}
+
+bool switchTopicRelative(int delta, bool selectAndLoad) {
+  if (gContexts.empty()) {
+    startTopicTask(true, false, true, "Syncing topics...");
+    setStatus("No topics", 900);
+    return false;
+  }
+  gSelectedContext = (gSelectedContext + delta + static_cast<int>(gContexts.size())) %
+                     static_cast<int>(gContexts.size());
+  showTopicOverlay(delta < 0 ? -1 : 1, 1800);
+  clearContextPreviewIfSelectionChanged();
+  if (selectAndLoad) {
+    saveCurrentContext();
+    startTopicTask(!gContextsRemoteLoaded, true, true, "Topic loading...");
+    setStatus("Topic " + normalizeTopicTitleForDisplay(gContexts[gSelectedContext].label), 900);
+  } else {
+    setStatus(normalizeTopicTitleForDisplay(gContexts[gSelectedContext].label), 700);
+  }
+  return true;
+}
+
+void topicTask(void* arg) {
+  std::unique_ptr<TopicTaskPayload> payload(static_cast<TopicTaskPayload*>(arg));
+  std::unique_ptr<TopicTaskResult> result(new TopicTaskResult());
+  if (!result) {
+    gTopicTaskHandle = nullptr;
+    vTaskDelete(nullptr);
+    return;
+  }
+  if (payload->syncCatalog) {
+    result->catalogOk = fetchRemoteTopicCatalog();
+  }
+  if (payload->selectCurrent) {
+    result->selectOk = selectRemoteCurrentTopic();
+  }
+  if (payload->loadHistory) {
+    result->historyOk = fetchSelectedTopicHistory();
+  }
+  if (!gContexts.empty()) {
+    result->label = gContexts[gSelectedContext].shortName;
+  }
+
+  portENTER_CRITICAL(&gTopicTaskMux);
+  if (gCompletedTopicTask == nullptr) {
+    gCompletedTopicTask = result.release();
+  } else {
+    delete gCompletedTopicTask;
+    gCompletedTopicTask = result.release();
+  }
+  portEXIT_CRITICAL(&gTopicTaskMux);
+  vTaskDelete(nullptr);
+}
+
+bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, const char* statusText) {
+  if (gTopicTaskHandle != nullptr || gCompletedTopicTask != nullptr) {
+    setStatus("Topic busy", 500);
+    return false;
+  }
+  std::unique_ptr<TopicTaskPayload> payload(new TopicTaskPayload());
+  if (!payload) {
+    setStatus("Topic alloc failed", 900);
+    return false;
+  }
+  payload->syncCatalog = syncCatalog;
+  payload->selectCurrent = selectCurrent;
+  payload->loadHistory = loadHistory;
+  setStatus(statusText ? statusText : "Topic sync...");
+  BaseType_t ok = xTaskCreate(topicTask, "topic-sync", kTopicTaskStackSize, payload.release(), 1, &gTopicTaskHandle);
+  if (ok != pdPASS) {
+    gTopicTaskHandle = nullptr;
+    setStatus("Topic task failed", 1200);
+    return false;
+  }
+  return true;
+}
+
+void processCompletedTopicTask() {
+  TopicTaskResult* result = nullptr;
+  portENTER_CRITICAL(&gTopicTaskMux);
+  result = gCompletedTopicTask;
+  gCompletedTopicTask = nullptr;
+  portEXIT_CRITICAL(&gTopicTaskMux);
+  if (!result) {
+    return;
+  }
+  std::unique_ptr<TopicTaskResult> done(result);
+  gTopicTaskHandle = nullptr;
+  if (done->historyOk) {
+    setStatus(done->label.isEmpty() ? "History loaded" : ("Topic " + done->label), 900);
+  } else if (done->catalogOk) {
+    setStatus("Topics synced", 900);
+  } else if (!gContextError.isEmpty()) {
+    setStatus(gContextError, 1200);
+  }
 }
 
 bool handleLogsKey(char key) {
@@ -6075,7 +6773,14 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (keys.tab) {
-    cycleCurrentAppScreen(1);
+    if (gLauncherVisible) {
+      moveLauncherSubSelection(1);
+      const LauncherGroup& group = kLauncherGroups[gLauncherSelection];
+      setStatus(group.items[gLauncherSubSelection].label, 500);
+    } else {
+      gLauncherVisible = true;
+      setStatus("Menu", 700);
+    }
     return;
   }
   if (gLauncherVisible) {
@@ -6090,6 +6795,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (gUiMode == UiMode::Library && handleLibraryKey(key, keys)) {
+    return;
+  }
+  if (gUiMode == UiMode::AudioFolders && handleAudioFoldersKey(key, keys)) {
     return;
   }
   if (gUiMode == UiMode::Assets && handleAssetsKey(key)) {
@@ -6107,19 +6815,27 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Logs && handleLogsKey(key)) {
     return;
   }
-  bool switchedHomeToChat = false;
-  if (gUiMode == UiMode::Home &&
-      (keys.enter || key == '\r' || key == '\n' || (key >= 32 && key < 127))) {
-    setUiMode(UiMode::ChatFull);
-    switchedHomeToChat = true;
+  if (gUiMode == UiMode::Home) {
+    if (keys.enter || key == '\r' || key == '\n') {
+      if (gInputBuffer.isEmpty()) {
+        setUiMode(UiMode::ChatFull);
+      } else {
+        submitInput();
+      }
+      return;
+    }
+    if (key >= 32 && key < 127 && gInputBuffer.length() < static_cast<int>(kMaxInputChars)) {
+      gInputBuffer += translateInputChar(key);
+      return;
+    }
   }
-  if (!switchedHomeToChat && gInputBuffer.isEmpty() && (key == ',' || key == '<' || key == ';' ||
+  if (gInputBuffer.isEmpty() && (key == ',' || key == '<' || key == ';' ||
                                  (keys.ctrl && (lowerKey == 'p' || lowerKey == 'k')))) {
     logf("[CHAT] scroll up key=%d", static_cast<int>(key));
     scrollChatBy(1);
     return;
   }
-  if (!switchedHomeToChat && gInputBuffer.isEmpty() && (key == '.' || key == '>' || key == '/' ||
+  if (gInputBuffer.isEmpty() && (key == '.' || key == '>' || key == '/' ||
                                  (keys.ctrl && (lowerKey == 'n' || lowerKey == 'j')))) {
     logf("[CHAT] scroll down key=%d", static_cast<int>(key));
     scrollChatBy(-1);
@@ -6191,23 +6907,52 @@ void pollTyping() {
                                    (charDown && (curWordChar == ',' || curWordChar == ';' || curWordChar == '<')));
   bool tabNextCombo = keys.tab && (rightDown || downDown ||
                                    (charDown && (curWordChar == '.' || curWordChar == '/' || curWordChar == '>')));
+  bool topicPrevCombo = (keys.alt || keys.opt) &&
+                        (leftDown || (charDown && (curWordChar == ',' || curWordChar == ';' ||
+                                                   curWordChar == '<' || curWordChar == '[')));
+  bool topicNextCombo = (keys.alt || keys.opt) &&
+                        (rightDown || (charDown && (curWordChar == '.' || curWordChar == '/' ||
+                                                    curWordChar == '>' || curWordChar == ']')));
 
   if (escDown) {
     handleGlobalEscape();
+  } else if (topicPrevCombo) {
+    bool ok = switchTopicRelative(-1, true);
+    if (ok && gUiMode != UiMode::Contexts) {
+      setStatus("Topic " + gContexts[gSelectedContext].shortName, 900);
+    }
+  } else if (topicNextCombo) {
+    bool ok = switchTopicRelative(1, true);
+    if (ok && gUiMode != UiMode::Contexts) {
+      setStatus("Topic " + gContexts[gSelectedContext].shortName, 900);
+    }
   } else if (tabPrevCombo) {
     switchLauncherGroupAndApply(-1);
   } else if (tabNextCombo) {
     switchLauncherGroupAndApply(1);
   } else if (tabDown) {
-    cycleCurrentAppScreen(1);
+    if (gLauncherVisible) {
+      moveLauncherSubSelection(1);
+      const LauncherGroup& group = kLauncherGroups[gLauncherSelection];
+      setStatus(group.items[gLauncherSubSelection].label, 500);
+      setKeyDiag("menu:sub");
+    } else {
+      gLauncherVisible = true;
+      setStatus("Menu", 700);
+      setKeyDiag("menu:on");
+    }
   } else if (gLauncherVisible && leftDown) {
-    handleLauncherKey(',', keys);
-  } else if (gLauncherVisible && rightDown) {
-    handleLauncherKey('.', keys);
-  } else if (gLauncherVisible && upDown) {
     moveLauncherSubSelection(-1);
-  } else if (gLauncherVisible && downDown) {
+  } else if (gLauncherVisible && rightDown) {
     moveLauncherSubSelection(1);
+  } else if (gLauncherVisible && upDown) {
+    moveLauncherSelection(-1);
+  } else if (gLauncherVisible && downDown) {
+    moveLauncherSelection(1);
+  } else if (gUiMode == UiMode::Contexts && (leftDown || upDown)) {
+    handleTypingKey(',', keys);
+  } else if (gUiMode == UiMode::Contexts && (rightDown || downDown)) {
+    handleTypingKey('.', keys);
   } else if (spaceDown && keys.ctrl) {
     handleTypingKey(' ', keys);
   } else if (enterDown) {
@@ -6777,44 +7522,78 @@ void renderLauncherOverlay() {
   const LauncherGroup& group = kLauncherGroups[gLauncherSelection];
   gLauncherSubSelection = clampValue<int>(gLauncherSubSelection, 0, group.count - 1);
 
-  const uint16_t bg = rgb565_local(7, 10, 20);
-  const uint16_t panel = rgb565_local(18, 24, 42);
-  const uint16_t selected = rgb565_local(36, 54, 82);
-  d.fillRoundRect(5, 5, 230, 125, 16, bg);
-  d.drawRoundRect(5, 5, 230, 125, 16, group.accent);
-  d.fillRoundRect(12, 12, 82, 94, 14, panel);
-  drawLauncherIcon(gLauncherSelection, 19, 18, 68, group.accent, panel);
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(5, 13, 18);
+  const uint16_t rowBg = rgb565_local(8, 17, 23);
+  const uint16_t selectedBg = rgb565_local(14, 31, 39);
+  const uint16_t line = rgb565_local(42, 55, 63);
+  const uint16_t muted = rgb565_local(128, 145, 155);
+
+  d.fillRoundRect(5, 5, 230, 125, 8, bg);
+  d.drawRoundRect(5, 5, 230, 125, 8, rgb565_local(48, 54, 61));
+  d.fillRoundRect(10, 10, 220, 18, 5, panel);
 
   d.setFont(&fonts::Font2);
-  d.setTextColor(group.accent, bg);
-  d.setCursor(19, 92);
+  d.setTextColor(group.accent, panel);
+  d.setCursor(17, 14);
   d.print(group.title);
-  d.setTextColor(TFT_DARKGREY, bg);
-  d.setCursor(14, 111);
-  d.print("< group >");
+  String page = String(gLauncherSelection + 1) + "/" + String(kLauncherGroupCount);
+  d.setTextColor(muted, panel);
+  d.setCursor(220 - d.textWidth(page), 14);
+  d.print(page);
 
-  d.setTextColor(TFT_WHITE, bg);
-  d.setCursor(106, 14);
-  d.print("Launcher");
-  d.setTextColor(TFT_DARKGREY, bg);
-  d.setCursor(182, 14);
-  d.print(String(gLauncherSelection + 1) + "/" + String(kLauncherGroupCount));
-  d.setTextColor(TFT_LIGHTGREY, bg);
-  d.setCursor(106, 28);
-  d.print(group.hint);
+  const int16_t railX = 10;
+  const int16_t railY = 33;
+  const int16_t railW = 78;
+  const int16_t railH = 13;
+  const int16_t railGap = 3;
 
-  for (uint8_t i = 0; i < group.count; ++i) {
-    int y = 48 + i * 24;
-    bool isSelected = i == gLauncherSubSelection;
-    d.fillRoundRect(104, y, 120, 20, 8, isSelected ? selected : panel);
-    d.drawRoundRect(104, y, 120, 20, 8, isSelected ? group.accent : rgb565_local(42, 48, 68));
-    d.setTextColor(isSelected ? TFT_WHITE : TFT_LIGHTGREY, isSelected ? selected : panel);
-    d.setCursor(114, y + 5);
-    d.print(group.items[i].label);
+  for (int idx = 0; idx < kLauncherGroupCount; ++idx) {
+    const LauncherGroup& item = kLauncherGroups[idx];
+    const bool isSelected = idx == gLauncherSelection;
+    const int16_t y = railY + idx * (railH + railGap);
+    const uint16_t fill = isSelected ? selectedBg : rowBg;
+    d.fillRoundRect(railX, y, railW, railH, 4, fill);
+    d.drawRoundRect(railX, y, railW, railH, 4, isSelected ? item.accent : line);
+
+    d.setTextColor(isSelected ? TFT_WHITE : muted, fill);
+    d.setCursor(railX + 5, y + 1);
+    d.print(String(idx + 1));
+
+    d.setTextColor(isSelected ? item.accent : TFT_LIGHTGREY, fill);
+    d.setCursor(railX + 19, y + 1);
+    d.print(trimPreview(item.title, 8));
+
+    if (isSelected) {
+      d.fillCircle(railX + railW - 7, y + railH / 2, 3, item.accent);
+    }
   }
-  d.setTextColor(TFT_DARKGREY, bg);
-  d.setCursor(108, 116);
-  d.print("^/v item Enter open Ctrl+V voice");
+
+  d.fillRoundRect(94, 33, 136, 78, 7, panel);
+  d.drawRoundRect(94, 33, 136, 78, 7, group.accent);
+
+  d.setTextColor(group.accent, panel);
+  d.setCursor(102, 40);
+  d.print(group.glyph);
+  d.setTextColor(muted, panel);
+  d.setCursor(102, 54);
+  d.print(trimPreview(group.hint, 18));
+
+  for (int i = 0; i < group.count; ++i) {
+    const int16_t y = 68 + i * 10;
+    const bool selected = i == gLauncherSubSelection;
+    const uint16_t fill = selected ? rgb565_local(18, 39, 48) : panel;
+    if (selected) {
+      d.fillRoundRect(100, y - 1, 124, 10, 3, fill);
+    }
+    d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, fill);
+    d.setCursor(104, y);
+    d.print(selected ? "> " : "  ");
+    d.print(trimPreview(group.items[i].label, 16));
+  }
+
+  d.fillRoundRect(10, 116, 220, 10, 4, panel);
+  drawTinyFooter(panel, muted, "Up/Down app  Left/Right screen  Ent", 15, 118, 210);
 }
 
 void renderBatteryUi() {
@@ -6879,10 +7658,11 @@ void renderBatteryUi() {
   d.setTextColor(TFT_WHITE, 0x0841);
   d.print(String(gBatterySnapshot.currentMa) + "mA");
 
+  d.setFont(&fonts::Font0);
   d.setTextColor(TFT_CYAN, 0x0841);
-  d.setCursor(22, 112);
+  d.setCursor(22, 113);
   d.print("Storage");
-  d.setCursor(92, 112);
+  d.setCursor(92, 113);
   d.setTextColor(TFT_WHITE, 0x0841);
   if (gStorageReady) {
     uint64_t totalKb = activeStorageTotalBytes() / 1024ULL;
@@ -6900,6 +7680,7 @@ void renderBatteryUi() {
   } else {
     d.print("off");
   }
+  d.setFont(&fonts::Font2);
 
   renderLauncherOverlay();
   renderDebugOverlay();
@@ -6914,6 +7695,23 @@ void drawCardHeader(const String& title, uint16_t accent) {
   d.setTextColor(accent, 0x0841);
   d.setCursor(14, 14);
   d.print(title);
+}
+
+void renderSdRequiredBanner(const String& title) {
+  drawCardHeader(title, rgb565_local(255, 180, 60));
+  auto& d = gCanvas;
+  d.setFont(&fonts::Font2);
+  d.fillRoundRect(18, 34, 204, 72, 10, rgb565_local(26, 18, 6));
+  d.drawRoundRect(18, 34, 204, 72, 10, rgb565_local(255, 180, 60));
+  d.setTextColor(TFT_ORANGE, rgb565_local(26, 18, 6));
+  d.setCursor(32, 45);
+  d.print("SD card required");
+  d.setTextColor(TFT_WHITE, rgb565_local(26, 18, 6));
+  d.setCursor(32, 62);
+  d.print("Insert FAT32 card");
+  d.setCursor(32, 76);
+  d.print("then reboot device");
+  drawTinyFooter(0x0841, TFT_LIGHTGREY, "Pulse/chat still work without SD", 18, 116, 204);
 }
 
 String compactBytes(uint32_t bytes) {
@@ -6938,6 +7736,26 @@ String marqueeText(const String& text, int32_t pixelLimit, uint16_t stepMs = 240
     out.remove(out.length() - 1);
   }
   return out;
+}
+
+String fitCurrentFontToWidth(String text, int32_t pixelLimit) {
+  if (gCanvas.textWidth(text) <= pixelLimit) {
+    return text;
+  }
+  while (text.length() > 1 && gCanvas.textWidth(text + "..") > pixelLimit) {
+    text.remove(text.length() - 1);
+  }
+  return text + "..";
+}
+
+void drawTinyFooter(uint16_t bg, uint16_t fg, const String& text, int16_t x, int16_t y, int16_t w) {
+  auto& d = gCanvas;
+  d.fillRect(max<int16_t>(0, x - 2), max<int16_t>(0, y - 2), min<int16_t>(240, w + 4), 10, bg);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(fg, bg);
+  d.setCursor(x, y);
+  d.print(fitCurrentFontToWidth(text, w));
+  d.setFont(&fonts::Font2);
 }
 
 void renderFocusUi() {
@@ -7009,17 +7827,12 @@ void renderFocusUi() {
   d.drawRoundRect(16, 96, 208, 9, 5, soft);
   d.fillRoundRect(17, 97, max<int>(1, progress), 7, 4, accent);
 
-  d.setFont(&fonts::Font2);
-  d.setTextColor(TFT_LIGHTGREY, panel);
-  d.setCursor(16, 111);
   if (gFocus.helpVisible) {
-    d.print("Enter pause R reset S +5 N next");
+    drawTinyFooter(panel, TFT_LIGHTGREY, "Ent pause  R reset  S +5  N next", 16, 114, 208);
   } else {
-    d.print("Enter start  M ");
-    d.print(gFocusSettings.metronome ? "metro" : "quiet");
-    d.print("  ");
-    d.print(gFocusSettings.bpm);
-    d.print("bpm  ? help");
+    String footer = String("Ent start  M ") + (gFocusSettings.metronome ? "metro" : "quiet") +
+                    "  " + String(gFocusSettings.bpm) + "bpm  H setup";
+    drawTinyFooter(panel, TFT_LIGHTGREY, footer, 16, 114, 208);
   }
 
   if (gFocus.helpVisible) {
@@ -7027,16 +7840,23 @@ void renderFocusUi() {
     d.drawRoundRect(18, 28, 204, 86, 10, accent);
     d.setTextColor(TFT_WHITE, 0x0000);
     d.setCursor(28, 38);
-    d.print("Focus controls");
+    d.print("Focus setup");
     d.setTextColor(TFT_LIGHTGREY, 0x0000);
     d.setCursor(28, 54);
-    d.print("Space/Enter start/pause");
+    d.print("Q/W focus ");
+    d.print(gFocusSettings.focusSec / 60);
+    d.print("m");
     d.setCursor(28, 68);
-    d.print("R reset  S +5m  N next");
+    d.print("A auto ");
+    d.print(gFocusSettings.autoStart ? "on" : "off");
+    d.print("  M ");
+    d.print(gFocusSettings.metronome ? "metro" : "quiet");
     d.setCursor(28, 82);
-    d.print("Q/W focus min  A auto");
+    d.print("Z/X bpm ");
+    d.print(gFocusSettings.bpm);
+    d.print("  S +5m");
     d.setCursor(28, 96);
-    d.print("Z/X bpm  +/- volume");
+    d.print("Enter pause  R reset  N next");
   }
 
   renderLauncherOverlay();
@@ -7044,46 +7864,179 @@ void renderFocusUi() {
 }
 
 void renderLibraryUi() {
-  drawCardHeader("Audio Library", 0xFD20);
-  auto& d = gCanvas;
-  d.setTextColor(TFT_WHITE, 0x0841);
-  d.setCursor(16, 34);
-  d.print("assets ");
-  d.print(gAudioAssets.size());
-  d.print("  voice ");
-  d.print(gVoiceNotes.size());
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(16, 48);
-  d.print(kPomodoroAudioDir);
-  if (gAudioAssets.empty()) {
-    d.setTextColor(0xFD20, 0x0841);
-    d.setCursor(16, 70);
-    d.print("No WAV assets yet");
-    d.setTextColor(TFT_LIGHTGREY, 0x0841);
-    d.setCursor(16, 96);
-    d.print("R rescan, put files on SD");
-  } else {
-    gSelectedAudioAsset = clampValue<int>(gSelectedAudioAsset, 0, static_cast<int>(gAudioAssets.size()) - 1);
-    int start = max<int>(0, min<int>(gSelectedAudioAsset - 2, static_cast<int>(gAudioAssets.size()) - 5));
-    int end = min<int>(static_cast<int>(gAudioAssets.size()), start + 5);
-    for (int i = start; i < end; ++i) {
-      int y = 64 + (i - start) * 12;
-      bool selected = i == gSelectedAudioAsset;
-      uint16_t bg = selected ? 0x4208 : 0x0841;
-      d.fillRoundRect(14, y - 1, 212, 12, 4, bg);
-      d.setTextColor(selected ? TFT_WHITE : TFT_CYAN, bg);
-      d.setCursor(18, y);
-      d.print((selected ? "> " : "  ") + trimPreview(gAudioAssets[i].category + "/" + gAudioAssets[i].title, 28));
-    }
+  if (!gSdReady) {
+    renderSdRequiredBanner("Audio Library");
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
   }
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(16, 116);
-  d.print("</> pick Enter play R scan");
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(6, 16, 22);
+  const uint16_t line = rgb565_local(34, 78, 88);
+  const uint16_t accent = rgb565_local(88, 240, 141);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t amber = rgb565_local(246, 194, 74);
+  const uint16_t muted = rgb565_local(130, 145, 155);
+  d.fillScreen(bg);
+  d.fillRoundRect(4, 4, 232, 127, 8, panel);
+  d.drawRoundRect(4, 4, 232, 127, 8, rgb565_local(48, 54, 61));
+
+  int folderCount = audioAssetCountForCurrentFolder();
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, panel);
+  d.setCursor(13, 12);
+  d.print("AUDIO");
+  String folder = audioFolderLabel(gAudioFolderFilter);
+  String folderLabel = trimPreview(folder, 14);
+  d.setTextColor(muted, panel);
+  d.setCursor(226 - d.textWidth(folderLabel), 12);
+  d.print(folderLabel);
+
+  if (gAudioAssets.empty() || folderCount == 0) {
+    d.drawRoundRect(20, 38, 54, 54, 27, line);
+    d.drawArc(47, 65, 21, 15, 220, 35, accent);
+    d.setTextColor(accent, panel);
+    d.setCursor(88, 44);
+    d.print("No WAV assets");
+    d.setTextColor(muted, panel);
+    d.setCursor(88, 60);
+    d.print("Put files in /audio");
+    d.setCursor(88, 76);
+    d.print("or /pomodoro/audio");
+    d.setCursor(88, 92);
+    d.print("Press R to rescan");
+  } else {
+    clampSelectedAudioAssetToFolder();
+    const AudioAsset& asset = gAudioAssets[gSelectedAudioAsset];
+    int rank = max<int>(0, audioAssetRankInCurrentFolder(gSelectedAudioAsset));
+    int cx = 48;
+    int cy = 66;
+    d.fillCircle(cx, cy, 35, bg);
+    d.drawCircle(cx, cy, 35, line);
+    d.drawCircle(cx, cy, 26, rgb565_local(14, 41, 48));
+    d.drawArc(cx, cy, 29, 23, 210, 55, gPlaybackActive ? accent : cyan);
+    d.drawArc(cx, cy, 18, 13, 25, 295, amber);
+    d.fillCircle(cx, cy, 9 + ((gPlaybackActive && ((millis() / 260) % 2)) ? 1 : 0), TFT_WHITE);
+    if (gPlaybackActive) {
+      for (int i = 0; i < 9; ++i) {
+        int h = 4 + ((i * 9 + millis() / 70) % 18);
+        d.fillRoundRect(17 + i * 7, 112 - h, 4, h, 2, i % 2 ? accent : cyan);
+      }
+    }
+
+    d.setFont(&fonts::Font2);
+    d.setTextColor(TFT_WHITE, panel);
+    d.setCursor(92, 34);
+    d.print(marqueeText(asset.title, 126, 260));
+    d.setTextColor(muted, panel);
+    d.setCursor(92, 49);
+    d.print(trimPreview(asset.category, 13));
+    d.setTextColor(accent, panel);
+    String countText = String(rank + 1) + "/" + String(folderCount);
+    d.setCursor(224 - d.textWidth(countText), 49);
+    d.print(countText);
+
+    d.drawRoundRect(92, 64, 132, 8, 4, line);
+    int progress = gPlaybackActive ? 10 + ((millis() / 140) % 100) : 18;
+    d.fillRoundRect(95, 67, min<int>(126, progress), 3, 2, gPlaybackActive ? accent : muted);
+
+    d.fillRoundRect(92, 82, 33, 22, 6, bg);
+    d.drawRoundRect(92, 82, 33, 22, 6, line);
+    d.fillRoundRect(132, 79, 48, 27, 8, bg);
+    d.drawRoundRect(132, 79, 48, 27, 8, gPlaybackActive ? accent : cyan);
+    d.fillRoundRect(187, 82, 33, 22, 6, bg);
+    d.drawRoundRect(187, 82, 33, 22, 6, line);
+    d.setTextColor(muted, bg);
+    d.setCursor(102, 89);
+    d.print("<<");
+    d.setTextColor(gPlaybackActive ? accent : cyan, bg);
+    d.setCursor(148, 88);
+    d.print(gPlaybackActive ? "PAU" : "PLAY");
+    d.setTextColor(muted, bg);
+    d.setCursor(197, 89);
+    d.print(">>");
+  }
+  drawTinyFooter(panel, muted, "< > track  Ent play  F folder  R scan", 14, 118, 210);
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+void renderAudioFoldersUi() {
+  if (!gSdReady) {
+    renderSdRequiredBanner("Audio Folders");
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(6, 16, 22);
+  const uint16_t rowBg = rgb565_local(7, 17, 22);
+  const uint16_t line = rgb565_local(39, 51, 58);
+  const uint16_t accent = rgb565_local(34, 209, 189);
+  const uint16_t selected = rgb565_local(12, 32, 34);
+  const uint16_t muted = rgb565_local(130, 145, 155);
+  d.fillScreen(bg);
+  d.fillRoundRect(5, 5, 230, 125, 6, panel);
+  d.drawRoundRect(5, 5, 230, 125, 6, rgb565_local(48, 54, 61));
+
+  if (gAudioFolders.empty()) {
+    rebuildAudioFolders();
+  }
+  gSelectedAudioFolder = clampValue<int>(gSelectedAudioFolder, 0, max<int>(0, static_cast<int>(gAudioFolders.size()) - 1));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(15, 14);
+  d.print("Meditation folders");
+  d.setTextColor(accent, panel);
+  d.setCursor(196, 14);
+  d.print(gSdReady ? "SD" : "FS");
+
+  d.fillCircle(44, 68, 36, bg);
+  d.drawCircle(44, 68, 36, rgb565_local(23, 77, 90));
+  d.drawArc(44, 68, 28, 23, 220, 38, accent);
+  d.drawArc(44, 68, 17, 13, 35, 300, rgb565_local(47, 227, 255));
+  d.fillCircle(44, 68, 9, TFT_WHITE);
+  d.setTextColor(bg, TFT_WHITE);
+  d.setCursor(38, 64);
+  d.print("DIR");
+
+  int first = gSelectedAudioFolder - 1;
+  first = clampValue<int>(first, 0, max<int>(0, static_cast<int>(gAudioFolders.size()) - 4));
+  for (int r = 0; r < 4; ++r) {
+    int idx = first + r;
+    if (idx >= static_cast<int>(gAudioFolders.size())) {
+      break;
+    }
+    const AudioFolder& folder = gAudioFolders[idx];
+    bool isSelected = idx == gSelectedAudioFolder;
+    int y = 35 + r * 20;
+    uint16_t fill = isSelected ? selected : rowBg;
+    d.fillRoundRect(84, y, 137, 17, 6, fill);
+    d.drawRoundRect(84, y, 137, 17, 6, isSelected ? accent : line);
+    d.setTextColor(isSelected ? TFT_WHITE : TFT_LIGHTGREY, fill);
+    d.setCursor(92, y + 3);
+    d.print(trimPreview(folder.label, 13));
+    String count = String(folder.count);
+    d.setTextColor(isSelected ? accent : muted, fill);
+    d.setCursor(214 - d.textWidth(count), y + 3);
+    d.print(count);
+  }
+
+  drawTinyFooter(panel, muted, "< > folder  Ent open  R scan", 15, 118, 210);
   renderLauncherOverlay();
   renderDebugOverlay();
 }
 
 void renderAssetsUi() {
+  if (!gSdReady) {
+    renderSdRequiredBanner("Asset Sync");
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
   drawCardHeader("Asset Sync", 0x07E0);
   auto& d = gCanvas;
   d.setTextColor(TFT_WHITE, 0x0841);
@@ -7105,14 +8058,18 @@ void renderAssetsUi() {
   d.print("audio index ");
   fs::FS* fs = activeVoiceFs();
   d.print((fs && fsExists(*fs, kAudioIndexPath)) ? "yes" : "no");
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(16, 112);
-  d.print("F fetch S sync R load");
+  drawTinyFooter(0x0841, TFT_LIGHTGREY, "F fetch  S sync  R load", 16, 116, 208);
   renderLauncherOverlay();
   renderDebugOverlay();
 }
 
 void renderOtaUi() {
+  if (!gSdReady) {
+    renderSdRequiredBanner("Firmware OTA");
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
   drawCardHeader("Firmware OTA", 0xF800);
   auto& d = gCanvas;
   d.setTextColor(TFT_WHITE, 0x0841);
@@ -7131,9 +8088,7 @@ void renderOtaUi() {
   d.setCursor(16, 90);
   d.print("policy ");
   d.print(gOtaManifest.confirmRequired ? "manual confirm" : "auto allowed");
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(16, 112);
-  d.print("F fetch R load A/G0 apply");
+  drawTinyFooter(0x0841, TFT_LIGHTGREY, "F fetch  R load  A/G0 apply", 16, 116, 208);
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -7214,37 +8169,142 @@ void renderSettingsUi() {
     d.setCursor(max<int>(120, 222 - w), y);
     d.print(value);
   }
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(16, 112);
-  d.print("</> pick +/- edit Space toggle S save");
+  drawTinyFooter(0x0841, TFT_LIGHTGREY, "< > pick  +/- edit  Space toggle", 16, 116, 208);
   renderLauncherOverlay();
   renderDebugOverlay();
 }
 
 void renderContextsUi() {
-  drawCardHeader("OpenClaw Context", 0x7BEF);
   auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(3, 6, 12);
+  const uint16_t panel = rgb565_local(8, 14, 24);
+  const uint16_t panel2 = rgb565_local(12, 22, 34);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t violet = rgb565_local(170, 130, 255);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t green = rgb565_local(100, 255, 170);
+  const uint16_t muted = rgb565_local(135, 151, 166);
+
+  d.fillScreen(bg);
+  uint32_t now = millis();
+  int meshPhase = static_cast<int>((now / 90) % 24);
+  for (int x = -24; x < 260; x += 24) {
+    d.drawFastVLine(x + meshPhase, 0, 135, rgb565_local(7, 18, 28));
+  }
+  for (int y = 10; y < 135; y += 18) {
+    int offset = static_cast<int>(sin((now + y * 31) * 0.0015f) * 5.0f);
+    d.drawFastHLine(0, y + offset, 240, rgb565_local(8, 22, 34));
+  }
+  d.drawRoundRect(4, 4, 232, 127, 14, rgb565_local(24, 46, 68));
+  d.drawRoundRect(5, 5, 230, 125, 13, rgb565_local(8, 18, 30));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, bg);
+  d.setCursor(12, 10);
+  d.print("OPENCLAW TOPIC");
+  String source = gContextsRemoteLoaded ? "LIVE" : "LOCAL";
+  d.setTextColor(gContextsRemoteLoaded ? green : amber, bg);
+  d.setCursor(232 - d.textWidth(source), 10);
+  d.print(source);
+
   if (gContexts.empty()) {
-    d.setTextColor(TFT_ORANGE, 0x0841);
-    d.setCursor(16, 42);
+    d.fillRoundRect(20, 42, 200, 54, 10, panel);
+    d.drawRoundRect(20, 42, 200, 54, 10, amber);
+    d.setTextColor(amber, panel);
+    d.setCursor(42, 60);
     d.print("No contexts");
-  } else {
-    gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
-    int start = max<int>(0, min<int>(gSelectedContext - 2, static_cast<int>(gContexts.size()) - 5));
-    int end = min<int>(static_cast<int>(gContexts.size()), start + 5);
-    for (int i = start; i < end; ++i) {
-      int y = 36 + (i - start) * 15;
-      bool selected = i == gSelectedContext;
-      uint16_t bg = selected ? 0x4208 : 0x0841;
-      d.fillRoundRect(14, y - 2, 212, 14, 4, bg);
-      d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, bg);
+    drawTinyFooter(bg, muted, "R sync topics  Esc home", 30, 116, 180);
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
+
+  gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
+  const ConversationContext& ctx = gContexts[gSelectedContext];
+  d.setTextColor(muted, bg);
+  d.setCursor(12, 24);
+  d.print("Alt+<> switch topic");
+  if (ctx.unread > 0) {
+    String unread = String(ctx.unread) + " new";
+    d.setTextColor(amber, bg);
+    d.setCursor(232 - d.textWidth(unread), 24);
+    d.print(unread);
+  }
+
+  float animT = min<float>(1.0f, (now - gContextAnimStartMs) / 260.0f);
+  float ease = 1.0f - (1.0f - animT) * (1.0f - animT);
+  int cardDx = (gContextAnimDir == 0 || animT >= 1.0f) ? 0 : static_cast<int>(gContextAnimDir * (1.0f - ease) * 34.0f);
+  int cardX = 12 + cardDx;
+  d.fillRoundRect(cardX, 35, 216, 47, 13, panel);
+  d.drawRoundRect(cardX, 35, 216, 47, 13, ctx.key == gSavedContextKey ? green : violet);
+  d.fillRoundRect(cardX + 8, 42, 52, 33, 10, panel2);
+  d.drawRoundRect(cardX + 8, 42, 52, 33, 10, cyan);
+  d.setTextColor(TFT_WHITE, panel2);
+  d.setTextDatum(middle_center);
+  d.setFont(&fonts::Font4);
+  d.drawString(ctx.shortName, cardX + 34, 59);
+  d.setTextDatum(top_left);
+  d.setFont(&fonts::efontCN_12);
+
+  d.setTextColor(TFT_WHITE, panel);
+  String title = marqueeText(normalizeTopicTitleForDisplay(ctx.label), 146, 260);
+  d.setCursor(cardX + 70, 43);
+  d.print(title);
+  d.setTextColor(muted, panel);
+  d.setCursor(cardX + 70, 58);
+  d.print(gTopicTaskHandle != nullptr ? "syncing..." : "chat context");
+  d.setFont(&fonts::Font2);
+  d.setTextColor(ctx.key == gSavedContextKey ? green : muted, panel);
+  d.setCursor(cardX + 70, 70);
+  d.print(ctx.key == gSavedContextKey ? "selected" : "Enter select");
+
+  d.setTextColor(cyan, bg);
+  d.setCursor(8, 58);
+  d.print("<");
+  d.setCursor(226, 58);
+  d.print(">");
+
+  d.fillRoundRect(12, 86, 216, 37, 8, rgb565_local(4, 10, 16));
+  d.drawRoundRect(12, 86, 216, 37, 8, rgb565_local(20, 42, 58));
+  d.setFont(&fonts::Font0);
+  if (gContextHistoryKey == currentConversationKey() && !gContextPreview.empty()) {
+    int y = 90;
+    int shown = 0;
+    for (const auto& line : gContextPreview) {
+      if (shown >= 5) {
+        break;
+      }
+      uint16_t roleColor = line.role == "assistant" ? green : (line.voice ? amber : cyan);
+      d.setTextColor(roleColor, rgb565_local(4, 10, 16));
       d.setCursor(18, y);
-      d.print((selected ? "> " : "  ") + trimPreview(gContexts[i].label, 24));
+      String prefix = line.role == "assistant" ? "AI" : (line.voice ? "VO" : "ME");
+      d.print(prefix);
+      d.setTextColor(TFT_LIGHTGREY, rgb565_local(4, 10, 16));
+      d.setCursor(34, y);
+      d.print(trimPreview(line.text, 34));
+      y += 6;
+      shown++;
+    }
+    if (gContextPreview.size() > 5) {
+      d.setTextColor(muted, rgb565_local(4, 10, 16));
+      d.setFont(&fonts::Font0);
+      d.setCursor(205, 115);
+      d.print("+");
+      d.print(static_cast<int>(gContextPreview.size()) - 5);
+      d.setFont(&fonts::Font2);
+    }
+  } else {
+    d.setTextColor(muted, rgb565_local(4, 10, 16));
+    d.setCursor(18, 99);
+    if (!gContextError.isEmpty()) {
+      d.setTextColor(amber, rgb565_local(4, 10, 16));
+      d.print(trimPreview(gContextError, 38));
+    } else {
+      d.print("Enter loads last 5 messages");
     }
   }
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(16, 112);
-  d.print("</> select Enter save");
+
+  drawTinyFooter(bg, muted, "Alt+<> topic  Ent select  R sync", 12, 124, 216);
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -7270,25 +8330,81 @@ void renderLogsUi() {
     d.setCursor(16, 50 + i * 12);
     d.print(trimPreview(gRuntimeLogs[idx], 34));
   }
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(16, 116);
-  d.print("</> scroll R reload U upload");
+  drawTinyFooter(0x0841, TFT_LIGHTGREY, "< > scroll  R reload  U upload", 16, 116, 208);
   renderLauncherOverlay();
   renderDebugOverlay();
+}
+
+void renderTopicOverlayIfVisible() {
+  if (millis() > gTopicOverlayUntilMs || gContexts.empty()) {
+    return;
+  }
+  auto& d = gCanvas;
+  gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
+  const ConversationContext& ctx = gContexts[gSelectedContext];
+
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(5, 13, 18);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t violet = rgb565_local(157, 102, 255);
+  const uint16_t muted = rgb565_local(128, 145, 155);
+  const uint16_t amber = rgb565_local(246, 194, 74);
+
+  uint32_t now = millis();
+  float animT = min<float>(1.0f, (now - gContextAnimStartMs) / 220.0f);
+  float ease = 1.0f - (1.0f - animT) * (1.0f - animT);
+  int16_t dx = (gContextAnimDir == 0 || animT >= 1.0f)
+                   ? 0
+                   : static_cast<int16_t>(gContextAnimDir * (1.0f - ease) * 28.0f);
+
+  d.fillRoundRect(6, 5, 228, 35, 8, bg);
+  d.drawRoundRect(6, 5, 228, 35, 8, cyan);
+  d.fillRoundRect(10, 9, 42, 23, 7, panel);
+  d.drawRoundRect(10, 9, 42, 23, 7, violet);
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(16, 16);
+  d.print(fitCurrentFontToWidth(ctx.shortName, 30));
+
+  d.setFont(&fonts::efontCN_12);
+  d.setTextColor(cyan, bg);
+  d.setCursor(60 + dx, 9);
+  d.print(fitCurrentFontToWidth(normalizeTopicTitleForDisplay(ctx.label), 132));
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, bg);
+  d.setCursor(61 + dx, 25);
+  String sub;
+  if (ctx.unread > 0) {
+    sub += "  +" + String(ctx.unread);
+  } else if (gTopicTaskHandle != nullptr) {
+    sub = "syncing...";
+  } else {
+    sub = "active chat topic";
+  }
+  d.print(fitCurrentFontToWidth(sub, 132));
+
+  d.setTextColor(gTopicTaskHandle != nullptr ? amber : cyan, bg);
+  d.setCursor(204, 14);
+  d.print("<>");
+  d.fillRect(12, 38, 216, 2, gTopicTaskHandle != nullptr ? amber : cyan);
+  d.setFont(&fonts::Font2);
 }
 
 void renderModeFooter(const String& left, const String& right = "") {
   auto& d = gCanvas;
   d.fillRect(0, 123, 240, 12, 0x18C3);
-  d.setFont(&fonts::Font2);
+  d.setFont(&fonts::Font0);
   d.setTextColor(TFT_LIGHTGREY, 0x18C3);
-  d.setCursor(4, 125);
-  d.print(left);
+  d.setCursor(4, 124);
+  d.print(fitCurrentFontToWidth(left, right.isEmpty() ? 230 : 132));
   if (!right.isEmpty()) {
     int rightWidth = d.textWidth(right);
-    d.setCursor(max<int>(4, 236 - rightWidth), 125);
-    d.print(right);
+    d.setCursor(max<int>(4, 236 - rightWidth), 124);
+    d.print(fitCurrentFontToWidth(right, 96));
   }
+  d.setFont(&fonts::Font2);
 }
 
 void renderFaceOnlyUi() {
@@ -7368,17 +8484,20 @@ void drawAssistantPulseButton(int16_t x, int16_t y, int16_t w, int16_t h,
 }
 
 void renderAssistantPulseChatHint() {
-  if (gInputBuffer.isEmpty()) {
+  const bool hasInput = !gInputBuffer.isEmpty();
+  if (!hasInput && assistantPulseState() != AssistantPulseState::Ready) {
     return;
   }
   auto& d = gCanvas;
   const uint16_t bg = rgb565_local(6, 16, 22);
-  d.fillRoundRect(9, 102, 222, 28, 8, bg);
-  d.drawRoundRect(9, 102, 222, 28, 8, rgb565_local(47, 227, 255));
+  const uint16_t edge = hasInput ? rgb565_local(47, 227, 255) : rgb565_local(42, 78, 88);
+  const uint16_t text = hasInput ? TFT_YELLOW : rgb565_local(128, 145, 155);
+  d.fillRoundRect(10, 107, 132, 19, 7, bg);
+  d.drawRoundRect(10, 107, 132, 19, 7, edge);
   d.setFont(&fonts::efontCN_12);
-  d.setTextColor(TFT_YELLOW, bg);
-  d.setCursor(16, 111);
-  d.print(tailUtf8ToFit("> " + gInputBuffer, 210));
+  d.setTextColor(text, bg);
+  d.setCursor(17, 112);
+  d.print(hasInput ? tailUtf8ToFit("> " + gInputBuffer, 116) : "> type to chat");
 }
 
 void renderAssistantPulseUi() {
@@ -7520,6 +8639,7 @@ void renderAssistantPulseUi() {
     d.print("agent thinking");
   }
   renderAssistantPulseChatHint();
+  renderTopicOverlayIfVisible();
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -7529,6 +8649,12 @@ void renderClockUi() {
 }
 
 void renderVoicePlayerUi() {
+  if (!gSdReady) {
+    renderSdRequiredBanner("Voice Notes");
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
   auto& d = gCanvas;
   const uint16_t bg = rgb565_local(74, 78, 94);
   const uint16_t panel = TFT_BLACK;
@@ -7641,9 +8767,7 @@ void renderVoicePlayerUi() {
   d.print("N");
   d.setCursor(220, 97);
   d.print("B");
-  d.setTextColor(TFT_LIGHTGREY, bg);
-  d.setCursor(149, 119);
-  d.print("Enter play  V vol");
+  drawTinyFooter(bg, TFT_LIGHTGREY, "Ent play  V vol", 149, 122, 84);
 
   renderLauncherOverlay();
   renderDebugOverlay();
@@ -7666,7 +8790,7 @@ void renderChatUi() {
   int visibleRows = 0;
   int y = 0;
   if (showFace) {
-    visibleRows = showStatus ? 3 : 4;
+    visibleRows = showStatus ? 2 : 4;
     y = 80;
   } else {
     visibleRows = showStatus ? 7 : 8;
@@ -7691,17 +8815,18 @@ void renderChatUi() {
   }
 
   if (showStatus) {
-    d.setFont(&fonts::Font2);
+    d.setFont(&fonts::Font0);
     d.setTextColor(TFT_LIGHTGREY, 0x0841);
-    d.setCursor(4, showFace ? 112 : 106);
-    d.print(gStatusText);
+    d.setCursor(4, showFace ? 111 : 109);
+    d.print(fitCurrentFontToWidth(gStatusText, 228));
   }
 
   d.setFont(&fonts::efontCN_12);
   d.setTextColor(TFT_YELLOW, 0x0841);
-  d.setCursor(4, 120);
+  d.setCursor(4, 121);
   String inputLine = tailUtf8ToFit("> " + gInputBuffer, 232);
   d.print(inputLine);
+  renderTopicOverlayIfVisible();
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -7718,24 +8843,27 @@ void renderBleUi() {
   d.setTextSize(1);
   d.setTextColor(TFT_WHITE, TFT_BLACK);
   d.setCursor(10, 52);
-  d.print("Open OmniBot hub -> Add New Bot");
+  d.print("Open OmniBot hub");
   d.setCursor(10, 64);
-  d.print("Select this device over BLE.");
+  d.print("Add New Bot over BLE");
   d.setCursor(10, 88);
-  d.print("The hub can send Wi-Fi + endpoint.");
+  d.print("Sends Wi-Fi + endpoint.");
   d.setCursor(10, 100);
   d.print("After provisioning, device reboots.");
+  d.setFont(&fonts::Font0);
   d.setCursor(10, 124);
-  d.print("Use /clearwifi later to reset.");
+  d.print("Use /clearwifi later to reset");
+  d.setFont(&fonts::Font2);
 }
 
 void renderStatusBar() {
   auto& d = gCanvas;
   d.fillRect(0, 126, 240, 9, 0x18C3);
-  d.setFont(&fonts::Font2);
+  d.setFont(&fonts::Font0);
   d.setTextColor(TFT_LIGHTGREY, 0x18C3);
   d.setCursor(4, 127);
-  d.print(gStatusText);
+  d.print(fitCurrentFontToWidth(gStatusText, 230));
+  d.setFont(&fonts::Font2);
 }
 
 void render() {
@@ -7781,6 +8909,9 @@ void render() {
       case UiMode::Library:
         renderLibraryUi();
         break;
+      case UiMode::AudioFolders:
+        renderAudioFoldersUi();
+        break;
       case UiMode::Assets:
         renderAssetsUi();
         break;
@@ -7806,10 +8937,115 @@ void render() {
   gCanvas.pushSprite(0, 0);
 }
 
+void renderBootSplash(const char* stage) {
+  auto& d = M5Cardputer.Display;
+  const uint16_t bg = rgb565_local(3, 8, 14);
+  const uint16_t panel = rgb565_local(2, 6, 7);
+  const uint16_t panelLine = rgb565_local(38, 53, 50);
+  const uint16_t mint = rgb565_local(111, 255, 230);
+  const uint16_t mintDim = rgb565_local(32, 94, 89);
+  const uint16_t gold = rgb565_local(255, 211, 106);
+  const uint16_t goldDim = rgb565_local(117, 82, 32);
+  const uint16_t rungFront = rgb565_local(154, 169, 164);
+  const uint16_t rungBack = rgb565_local(54, 70, 65);
+  const uint16_t muted = rgb565_local(135, 154, 149);
+
+  auto line = [&](int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color, bool thick) {
+    d.drawLine(x1, y1, x2, y2, color);
+    if (thick) {
+      d.drawLine(x1, y1 + 1, x2, y2 + 1, color);
+    }
+  };
+
+  auto drawHelix = [&]() {
+    constexpr int16_t axisY = 66;
+    constexpr int16_t startX = 41;
+    constexpr int16_t step = 14;
+    constexpr int16_t count = 12;
+    constexpr float amp = 24.0f;
+    float phase = millis() * 0.0021f;
+
+    for (int i = 0; i < count; ++i) {
+      float theta = phase + i * 0.72f;
+      float s = sinf(theta);
+      float c = cosf(theta);
+      int16_t x = startX + i * step;
+      int16_t yA = axisY + static_cast<int16_t>(s * amp);
+      int16_t yB = axisY - static_cast<int16_t>(s * amp);
+      bool frontA = c > 0.0f;
+      line(x, yA, x, yB, frontA ? rungFront : rungBack, frontA);
+    }
+
+    for (int pass = 0; pass < 2; ++pass) {
+      for (int i = 0; i < count; ++i) {
+        float theta = phase + i * 0.72f;
+        float s = sinf(theta);
+        float c = cosf(theta);
+        int16_t x = startX + i * step;
+        int16_t y = axisY + static_cast<int16_t>((pass == 0 ? s : -s) * amp);
+        bool front = pass == 0 ? c > 0.0f : c < 0.0f;
+        uint16_t color = pass == 0 ? (front ? mint : mintDim) : (front ? gold : goldDim);
+        int16_t r = front ? 5 : 3;
+        d.fillCircle(x, y, r, color);
+        if (front) {
+          d.fillCircle(x - 1, y - 1, 1, TFT_WHITE);
+        }
+        if (i < count - 1) {
+          float nextTheta = phase + (i + 1) * 0.72f;
+          float nextS = sinf(nextTheta);
+          float nextC = cosf(nextTheta);
+          int16_t nx = startX + (i + 1) * step;
+          int16_t ny = axisY + static_cast<int16_t>((pass == 0 ? nextS : -nextS) * amp);
+          bool nextMostlyFront = pass == 0 ? nextC > -0.25f : nextC < 0.25f;
+          line(x, y, nx, ny, color, front && nextMostlyFront);
+        }
+      }
+    }
+  };
+
+  d.fillScreen(bg);
+  d.fillTriangle(0, 92, 240, 28, 240, 135, rgb565_local(6, 21, 20));
+  d.fillRoundRect(7, 7, 226, 121, 9, panel);
+  d.drawRoundRect(7, 7, 226, 121, 9, panelLine);
+
+  drawHelix();
+  d.drawEllipse(120, 66, 82, 42 + static_cast<int16_t>((millis() / 320) % 3), mintDim);
+
+  d.setFont(&fonts::Font2);
+  d.setTextSize(1);
+  d.fillRoundRect(15, 14, 50, 17, 7, rgb565_local(6, 16, 13));
+  d.drawRoundRect(15, 14, 50, 17, 7, mint);
+  d.setTextColor(TFT_WHITE, rgb565_local(6, 16, 13));
+  d.setCursor(32, 18);
+  d.print("ADV");
+
+  uint8_t pct = static_cast<uint8_t>(18 + ((millis() / 95) % 78));
+  String pctText = String(pct) + "%";
+  d.setTextColor(gold, panel);
+  d.setCursor(220 - d.textWidth(pctText), 18);
+  d.print(pctText);
+  d.drawRoundRect(74, 17, 93, 4, 2, panelLine);
+  d.fillRoundRect(77 + pct / 2, 18, 22 + ((millis() / 180) % 10), 2, 1, TFT_WHITE);
+
+  const char* states[] = {"DNA", "LINK", "SYNC", "READY"};
+  const char* label = states[(millis() / 900) % 4];
+  d.setFont(&fonts::Font4);
+  d.setTextColor(TFT_WHITE, panel);
+  int16_t tw = d.textWidth(label);
+  d.setCursor((240 - tw) / 2, 101);
+  d.print(label);
+  d.setFont(&fonts::Font2);
+  d.setTextColor(muted, panel);
+  String subtitle = stage && stage[0] ? String("molecular context / ") + stage : "molecular context";
+  d.setCursor((240 - d.textWidth(subtitle)) / 2, 121);
+  d.print(subtitle);
+}
+
 }  // namespace
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("[BOOT] serial ready");
   delay(800);
   ensureBangkokTimezone();
 
@@ -7817,16 +9053,21 @@ void setup() {
   cfg.internal_imu = true;
   M5Cardputer.begin(cfg, false);
   M5Cardputer.Display.setRotation(1);
+  M5Cardputer.Display.setBrightness(180);
   M5Cardputer.Display.setFont(&fonts::Font2);
   M5Cardputer.Display.setTextSize(1);
+  renderBootSplash("Display");
   gCanvas.createSprite(240, 135);
   gCanvas.setTextWrap(false);
   gCanvas.setFont(&fonts::Font2);
   gCanvas.setTextSize(1);
   configureEmojiRendering();
 
+  renderBootSplash("Audio");
   initSpeaker();
+  renderBootSplash("Storage");
   initStorage();
+  renderBootSplash("Input");
   randomSeed(micros());
   scheduleBlink();
   gImuEnabled = M5.Imu.isEnabled();
@@ -7834,6 +9075,7 @@ void setup() {
   setupKeyboardInput();
   gTimeValid = hasValidSystemTime();
 
+  renderBootSplash("Config");
   loadConfig();
   loadFocusSettings();
   loadDeviceSettings();
@@ -7846,9 +9088,13 @@ void setup() {
   logf("[BOOT] device_id=%s", gDeviceId.c_str());
   logf("[BOOT] version=%s git=%s build=%s", kAppVersion, kBuildGitSha, kBuildTime);
 
+  renderBootSplash("Wi-Fi");
   if (ensureWifi()) {
+    render();
     startHubWebSocket();
     if (gDeviceSettings.checkUpdatesOnBoot) {
+      setStatus("Checking updates...", 900);
+      render();
       fetchRemoteOtaManifest();
       fetchRemoteAssetManifest();
     }
@@ -7856,6 +9102,7 @@ void setup() {
         !gOtaManifest.url.isEmpty() && gOtaManifest.version != kAppVersion) {
       applyOtaFromManifest();
     }
+    startTopicTask(true, false, false, "Topics preload...");
   }
 
   render();
@@ -7882,6 +9129,7 @@ void loop() {
     updateBatterySnapshot();
     updateFocusTimer();
     serviceFocusMetronome();
+    processCompletedTopicTask();
     processCompletedTextTurn();
     updateG0VoiceTrigger();
     updateVoiceTrigger();
