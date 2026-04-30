@@ -9,7 +9,7 @@ open /Users/s1z0v/kd-projects/adv_cardputer/worktrees/omnibot-adv-cardputer/bots
 Purpose:
 
 - review firmware screens at exact `240x135` coordinates;
-- switch between current screens and watchfaces;
+- switch between current screens;
 - see the exact current location as `App / Screen` in the top breadcrumb;
 - use the left navigation map grouped by app, with active app and active screen highlighted;
 - use the `Prev / Current / Next` strip under the device for local navigation;
@@ -20,7 +20,7 @@ Purpose:
 
 Main hotkeys:
 
-- `Tab` / `Shift+Tab`: next/previous screen inside current app, or next/previous watchface on clock screens.
+- `Tab` / `Shift+Tab`: next/previous screen inside current app.
 - `Double Tab`: open the launcher.
 - `Alt+Down` / `Alt+Up`: next/previous app group.
 - `Ctrl+L`: open launcher screen.
@@ -37,7 +37,7 @@ This is a static review artifact only. It does not drive the firmware build.
 Current UX decisions:
 
 - Voice Player stays as-is.
+- Assistant Pulse is the only primary home/watch screen and replaces the previous watchface set.
 - Companion now has two eye themes for review: Organic Eyes and primitive Glyph Eyes.
-- Clock Classic and Clock Split are removed from navigation.
-- Clock Neon is the primary fullscreen digital watchface with a lightweight animated mesh.
+- Typing from Assistant Pulse opens chat/composer flow.
 - Launcher and Settings use a text-menu/pixel-cursor style adapted from the M5PORKCHOP visual language.
