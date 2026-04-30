@@ -2,7 +2,10 @@
 #include <Adafruit_TCA8418.h>
 #include <M5Cardputer.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <SPI.h>
+#include <SD.h>
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
@@ -12,8 +15,12 @@
 #include <BLEUtils.h>
 #include <WiFiClient.h>
 #include <Wire.h>
+#include <Update.h>
 #include <esp_heap_caps.h>
 #include <esp_wifi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <mbedtls/sha256.h>
 
 #include <cctype>
 #include <algorithm>
@@ -21,22 +28,46 @@
 #include <cstdarg>
 #include <cstring>
 #include <deque>
+#include <cmath>
 #include <time.h>
 #include <vector>
+#include <memory>
 
 namespace {
 
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
+#ifndef APP_VERSION
+#define APP_VERSION "0.2.1-dev"
+#endif
+#ifndef BUILD_GIT_SHA
+#define BUILD_GIT_SHA "local"
+#endif
+#ifndef BUILD_TIME
+#define BUILD_TIME __DATE__ " " __TIME__
+#endif
+constexpr const char* kAppVersion = APP_VERSION;
+constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
+constexpr const char* kBuildTime = BUILD_TIME;
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
 constexpr const char* kDeviceAudioTurnRawPath = "/api/device-audio-turn-raw";
 constexpr const char* kDeviceTtsPath = "/api/device-tts";
+constexpr const char* kCardputerCommandPath = "/api/cardputer/command";
+constexpr const char* kCardputerLogsPath = "/api/cardputer/logs";
+constexpr const char* kAssetManifestFetchPath = "/api/cardputer/assets/manifest";
+constexpr const char* kFirmwareManifestFetchPath = "/api/cardputer/firmware/manifest";
 
 constexpr const char* kPrefsWifiNs = "wifi_creds";
 constexpr const char* kPrefsHubNs = "hub_ep";
 constexpr const char* kPrefsDeviceNs = "device_cfg";
+constexpr const char* kPrefsFocusNs = "focus_cfg";
+constexpr const char* kPrefsContextNs = "ctx_cfg";
+constexpr const char* kLegacyBridgeHost = "109.199.103.176";
+constexpr uint16_t kLegacyBridgePort = 31889;
+constexpr const char* kProdBridgeHost = "bridge.ai.k-digital.pro";
+constexpr uint16_t kProdBridgePort = 443;
 
 constexpr const char* kBleServiceName = "OmniBot Cardputer ADV";
 constexpr const char* kBleServiceUuid = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
@@ -70,25 +101,63 @@ constexpr size_t kMaxHeapRecordFallbackBytes = 160 * 1024;
 constexpr size_t kMaxHeapTtsFallbackBytes = 160 * 1024;
 constexpr size_t kHeapReserveBytes = 48 * 1024;
 constexpr size_t kHttpWriteChunkBytes = 512;
-constexpr size_t kHttpStageChunkBytes = 256;
+constexpr size_t kHttpStageChunkBytes = 1024;
 constexpr uint32_t kVoiceSocketSettleMs = 300;
 constexpr uint32_t kCtrlDoubleTapWindowMs = 420;
 constexpr uint32_t kLauncherToggleDebounceMs = 140;
-constexpr uint8_t kLauncherModeCount = 6;
+constexpr uint8_t kLauncherGroupCount = 7;
+constexpr uint8_t kLauncherMaxSubItems = 4;
+constexpr uint8_t kSettingsItemCount = 10;
+constexpr uint8_t kClockFaceCount = 4;
+constexpr uint8_t kHidKeyEscape = 0x29;
+constexpr float kPi = 3.14159265358979323846f;
 constexpr uint32_t kClockTickMs = 1000;
+constexpr uint32_t kBatterySampleIntervalMs = 2000;
 constexpr uint32_t kTimeSyncRetryMs = 15000;
 constexpr uint32_t kTimeResyncMs = 6UL * 60UL * 60UL * 1000UL;
-constexpr size_t kMaxStoredVoiceNotes = 12;
+constexpr uint32_t kFocusMinDurationSec = 60;
+constexpr uint32_t kFocusMaxDurationSec = 60UL * 60UL;
+constexpr uint32_t kFocusDefaultSec = 25UL * 60UL;
+constexpr uint32_t kFocusShortBreakDefaultSec = 5UL * 60UL;
+constexpr uint32_t kFocusLongBreakDefaultSec = 15UL * 60UL;
+constexpr uint8_t kFocusDefaultCycles = 4;
+constexpr uint32_t kFocusSnoozeSec = 5UL * 60UL;
+constexpr uint16_t kFocusMinBpm = 30;
+constexpr uint16_t kFocusMaxBpm = 160;
+constexpr uint32_t kTextTurnTaskStackSize = 8192;
+constexpr size_t kMaxFlashVoiceNotes = 12;
+constexpr size_t kMaxSdVoiceNotes = 256;
 constexpr size_t kMaxStoredPreviewChars = 84;
+constexpr size_t kMaxAudioAssets = 96;
+constexpr size_t kMaxRuntimeLogLines = 36;
+constexpr size_t kMaxContexts = 12;
 constexpr size_t kVoicePreviewLineThreshold = 5;
 constexpr const char* kVoiceDir = "/voice";
 constexpr const char* kVoiceMetaExt = ".json";
 constexpr const char* kVoiceAudioExt = ".wav";
+constexpr const char* kPomodoroDir = "/pomodoro";
+constexpr const char* kPomodoroAudioDir = "/pomodoro/audio";
+constexpr const char* kPomodoroLogsDir = "/pomodoro/logs";
+constexpr const char* kAssetManifestPath = "/pomodoro/manifest.json";
+constexpr const char* kAudioIndexPath = "/pomodoro/audio/index.json";
+constexpr const char* kOtaManifestPath = "/pomodoro/firmware.json";
+constexpr const char* kContextRegistryPath = "/pomodoro/contexts.json";
+constexpr const char* kRuntimeLogPath = "/pomodoro/logs/runtime.ndjson";
+constexpr const char* kOtaTempPath = "/pomodoro/firmware.tmp.bin";
+constexpr const char* kFocusCuePath = "/pomodoro/audio/focus_ru.wav";
+constexpr const char* kBreakCuePath = "/pomodoro/audio/break_ru.wav";
+constexpr const char* kReflectionCuePath = "/pomodoro/audio/reflection_ru.wav";
 constexpr const char* kActiveRecordPcmPath = "/voice/__active_record.pcm";
 constexpr const char* kActiveTtsPcmPath = "/voice/__active_tts.pcm";
-constexpr size_t kRecordChunkSamples = 2048;
+constexpr uint8_t kSdSckPin = 40;
+constexpr uint8_t kSdMisoPin = 39;
+constexpr uint8_t kSdMosiPin = 14;
+constexpr uint8_t kSdCsPin = 12;
+constexpr uint32_t kSdFrequencyHz = 25000000;
+constexpr size_t kRecordChunkSamples = 1024;
 constexpr size_t kRecordChunkBytes = kRecordChunkSamples * sizeof(int16_t);
 constexpr size_t kRecordChunkBufferCount = 3;
+constexpr uint32_t kRecordDrainTimeoutMs = 900;
 constexpr size_t kPlaybackChunkSamples = 2048;
 constexpr size_t kPlaybackChunkBytes = kPlaybackChunkSamples * sizeof(int16_t);
 constexpr size_t kPlaybackBufferCount = 2;
@@ -116,6 +185,10 @@ constexpr uint16_t rgb565_local(uint8_t r, uint8_t g, uint8_t b) {
 
 #ifndef DEFAULT_HUB_PORT_STR
 #define DEFAULT_HUB_PORT_STR ""
+#endif
+
+#ifndef DEFAULT_DEVICE_ID
+#define DEFAULT_DEVICE_ID ""
 #endif
 
 #ifndef DEFAULT_DEVICE_TOKEN
@@ -275,7 +348,24 @@ enum class UiMode : uint8_t {
   Hero,
   ChatFull,
   Clock,
+  Battery,
   Voice,
+  Focus,
+  Library,
+  Assets,
+  Ota,
+  Contexts,
+  Settings,
+  Logs,
+};
+
+enum class FocusState : uint8_t {
+  Stopped,
+  Focus,
+  ShortBreak,
+  LongBreak,
+  Reflect,
+  Paused,
 };
 
 enum class EyeEmotion : uint8_t {
@@ -314,10 +404,145 @@ struct VoiceNote {
   bool assistant = false;
 };
 
+struct AudioAsset {
+  String path;
+  String title;
+  String category;
+  String language;
+  uint32_t size = 0;
+  uint32_t durationMs = 0;
+};
+
+struct AssetManifestSummary {
+  bool present = false;
+  bool parsed = false;
+  String version;
+  String generatedAt;
+  uint16_t fileCount = 0;
+  uint32_t totalBytes = 0;
+  String error;
+};
+
+struct OtaManifestSummary {
+  bool present = false;
+  bool parsed = false;
+  String version;
+  String channel;
+  String url;
+  String sha256;
+  uint32_t size = 0;
+  uint8_t minBattery = 50;
+  bool confirmRequired = true;
+  String error;
+};
+
+struct ConversationContext {
+  String label;
+  String key;
+  String shortName;
+};
+
+struct BatterySnapshot {
+  int32_t level = -1;
+  int16_t voltageMv = -1;
+  int32_t currentMa = 0;
+  m5::Power_Class::is_charging_t charging = m5::Power_Class::charge_unknown;
+};
+
+struct TextTurnTaskPayload {
+  String text;
+  String url;
+  String deviceId;
+  String deviceToken;
+  String conversationKey;
+};
+
+struct TextTurnTaskResult {
+  int statusCode = 0;
+  bool ok = false;
+  bool parsed = false;
+  bool hasReply = false;
+  bool telegramDelivered = false;
+  String reply;
+  String shortText;
+  String audioUrl;
+  String audioPath;
+  String audioTitle;
+  String audioSha256;
+  uint32_t audioSize = 0;
+  String error;
+  String response;
+};
+
+struct FocusSettings {
+  uint32_t focusSec = kFocusDefaultSec;
+  uint32_t shortBreakSec = kFocusShortBreakDefaultSec;
+  uint32_t longBreakSec = kFocusLongBreakDefaultSec;
+  uint8_t cyclesPerRound = kFocusDefaultCycles;
+  bool autoStart = false;
+  bool metronome = false;
+  uint16_t bpm = 60;
+};
+
+struct DeviceSettings {
+  bool autoUpdateFirmware = false;
+  bool checkUpdatesOnBoot = true;
+  bool beepOnUpdate = true;
+  uint8_t minBatteryForUpdate = 40;
+  uint8_t clockFace = 0;
+  String updateChannel = "dev";
+  String audioLanguage = "ru";
+};
+
+struct FocusRuntime {
+  FocusState state = FocusState::Stopped;
+  FocusState stateBeforePause = FocusState::Focus;
+  uint32_t remainingSec = kFocusDefaultSec;
+  uint32_t sessionTotalSec = kFocusDefaultSec;
+  uint32_t lastTickMs = 0;
+  uint16_t cycle = 1;
+  uint16_t completedToday = 0;
+  uint32_t focusedTodaySec = 0;
+  uint32_t nextMetronomeMs = 0;
+  bool helpVisible = false;
+};
+
+struct LauncherSubItem {
+  const char* label;
+  UiMode mode;
+};
+
+struct LauncherGroup {
+  const char* title;
+  const char* glyph;
+  const char* hint;
+  uint16_t accent;
+  uint8_t count;
+  LauncherSubItem items[kLauncherMaxSubItems];
+};
+
+constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
+    {"Chat", "CHAT", "Talk and read", rgb565_local(80, 210, 255), 3,
+     {{"Eyes chat", UiMode::ChatFace}, {"Full chat", UiMode::ChatFull}, {"Eyes only", UiMode::Face}}},
+    {"Companion", "KLO", "Face, hero, clock", rgb565_local(255, 118, 82), 3,
+     {{"Klo hero", UiMode::Hero}, {"Big eyes", UiMode::Face}, {"Clock", UiMode::Clock}}},
+    {"Focus", "25", "Pomodoro ritual", rgb565_local(255, 210, 70), 2,
+     {{"Timer", UiMode::Focus}, {"Clock", UiMode::Clock}, {"Timer", UiMode::Focus}}},
+    {"Audio", "WAV", "Voice and library", rgb565_local(130, 255, 125), 2,
+     {{"Voice notes", UiMode::Voice}, {"Library", UiMode::Library}, {"Voice notes", UiMode::Voice}}},
+    {"Update", "OTA", "Assets and firmware", rgb565_local(255, 90, 80), 2,
+     {{"Assets", UiMode::Assets}, {"Firmware", UiMode::Ota}, {"Assets", UiMode::Assets}}},
+    {"OpenClaw", "CTX", "Topic and logs", rgb565_local(180, 150, 255), 2,
+     {{"Contexts", UiMode::Contexts}, {"Logs", UiMode::Logs}, {"Contexts", UiMode::Contexts}}},
+    {"System", "SYS", "Settings and debug", rgb565_local(190, 205, 225), 4,
+     {{"Settings", UiMode::Settings}, {"Battery", UiMode::Battery}, {"Logs", UiMode::Logs}, {"Debug", UiMode::Logs}}},
+};
+
 Preferences gPrefs;
 WebSocketsClient gWs;
 M5Canvas gCanvas(&M5Cardputer.Display);
 Adafruit_TCA8418 gTcaKeyboard;
+SPIClass gSdSpi(FSPI);
 
 String gDeviceId;
 String gDisplayName = kDefaultDisplayName;
@@ -331,6 +556,9 @@ std::deque<ChatLine> gChatLines;
 String gInputBuffer;
 String gStatusText = "Booting";
 std::vector<VoiceNote> gVoiceNotes;
+std::vector<AudioAsset> gAudioAssets;
+std::vector<ConversationContext> gContexts;
+std::deque<String> gRuntimeLogs;
 
 bool gWifiReady = false;
 bool gWsReady = false;
@@ -347,11 +575,19 @@ bool gImuEnabled = false;
 bool gDebugOverlayVisible = false;
 bool gUseTcaKeyboard = false;
 bool gStorageReady = false;
+bool gLittleFsReady = false;
+bool gSdReady = false;
 bool gLauncherVisible = false;
 bool gAssistantPendingVisible = false;
 int gChatScrollOffset = 0;
 int gLauncherSelection = 0;
+int gLauncherSubSelection = 0;
+uint8_t gLauncherLastSub[kLauncherGroupCount] = {};
 int gSelectedVoiceNote = 0;
+int gSelectedAudioAsset = 0;
+int gSelectedContext = 0;
+int gLogScrollOffset = 0;
+int gSelectedSetting = 0;
 
 uint32_t gLastRenderMs = 0;
 uint32_t gStatusUntilMs = 0;
@@ -367,6 +603,7 @@ uint32_t gLastTimeSyncAttemptMs = 0;
 uint32_t gLastTimeSyncMs = 0;
 uint32_t gLastLauncherToggleMs = 0;
 uint32_t gLedFlashUntilMs = 0;
+uint32_t gLastBatterySampleMs = 0;
 
 FaceMode gFaceMode = FaceMode::Idle;
 KeyboardLayout gKeyboardLayout = KeyboardLayout::En;
@@ -387,6 +624,7 @@ uint8_t gSpeakerVolume = 255;
 String gLastVoiceDiag = "boot";
 String gLastHttpDiag = "boot";
 String gLastKeyDiag = "-";
+String gStorageLabel = "off";
 String gLastKeySignature;
 bool gTcaPressedKeys[4][14] = {};
 bool gCtrlSoloHeld = false;
@@ -413,6 +651,20 @@ size_t gPlaybackStreamRemainingBytes = 0;
 uint8_t gPlaybackStreamNextBuffer = 0;
 bool gPlaybackStreamRawPcm = false;
 uint8_t gPlaybackStreamBuffers[kPlaybackBufferCount][kPlaybackChunkBytes];
+int16_t gVoiceTickerX = 90;
+uint8_t gVoiceGraphSpeed = 0;
+int gVoiceEqBars[14] = {};
+BatterySnapshot gBatterySnapshot;
+FocusSettings gFocusSettings;
+DeviceSettings gDeviceSettings;
+FocusRuntime gFocus;
+AssetManifestSummary gAssetManifest;
+OtaManifestSummary gOtaManifest;
+TaskHandle_t gTextTurnTaskHandle = nullptr;
+portMUX_TYPE gTextTurnMux = portMUX_INITIALIZER_UNLOCKED;
+TextTurnTaskResult* gCompletedTextTurn = nullptr;
+std::deque<String> gPendingTextTurns;
+String gActiveTextTurn;
 
 void IRAM_ATTR onTcaKeyboardInterrupt() {
   gTcaInterruptPending = true;
@@ -428,14 +680,47 @@ bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs = kHttpReconnectTi
 bool connectHubClient(WiFiClient& client, const char* reason, uint32_t readTimeoutSec = 45);
 void synthesizeTcaKeyboardState();
 void pollTcaKeyboardEvents();
+bool hasHidKey(const Keyboard_Class::KeysState& keys, uint8_t keyCode);
 void submitInput();
+void saveHubEndpoint(const String& host, uint16_t port);
 void syncClockFromNtp(bool force = false);
 void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs = 180);
 void updateStatusLed();
 void writeWavHeader(uint8_t* h, uint32_t dataSize, uint32_t sampleRate);
-void serviceRecordingToFile();
+void serviceRecordingToFile(bool refill = true);
 void updateG0VoiceTrigger();
 void servicePlaybackStream();
+bool handleGlobalEscape();
+void loadFocusSettings();
+void saveFocusSettings();
+void loadDeviceSettings();
+void saveDeviceSettings();
+void updateFocusTimer();
+void serviceFocusMetronome();
+void focusTone(uint16_t freq, uint16_t durationMs);
+void updateBatterySnapshot(bool force = false);
+void scanAudioAssets();
+bool startPlaybackStreamFromWavFile(const String& path, const String& diag);
+const char* clockFaceName(uint8_t face);
+void loadAssetManifestSummary();
+void loadOtaManifestSummary();
+void loadConversationContexts();
+String currentConversationKey();
+bool fetchRemoteAssetManifest();
+bool fetchRemoteOtaManifest();
+bool syncAssetsFromManifest();
+bool applyOtaFromManifest();
+bool uploadRuntimeLogs();
+void processCompletedTextTurn();
+void maybeStartNextTextTurn();
+void textTurnTask(void* arg);
+bool hubUsesTls();
+String hubBaseUrl();
+fs::FS* activeVoiceFs();
+fs::FS* fallbackVoiceFs();
+bool ensurePomodoroStorageOn(fs::FS& fs);
+uint64_t activeStorageTotalBytes();
+uint64_t activeStorageUsedBytes();
 
 void mapTcaRawKeyToPhysical(uint8_t keyValue, uint8_t& row, uint8_t& col) {
   uint8_t unit = keyValue % 10;
@@ -461,6 +746,44 @@ T clampValue(T value, T minValue, T maxValue) {
   return value;
 }
 
+String jsonEscapeLine(String value) {
+  value.replace("\\", "\\\\");
+  value.replace("\"", "\\\"");
+  value.replace("\r", " ");
+  value.replace("\n", " ");
+  return value;
+}
+
+void appendRuntimeLog(const String& area, const String& message, bool persist = false) {
+  String compact = String(millis() / 1000) + " " + area + " " + message;
+  while (compact.length() > 96) {
+    compact.remove(compact.length() - 1);
+  }
+  gRuntimeLogs.push_back(compact);
+  while (gRuntimeLogs.size() > kMaxRuntimeLogLines) {
+    gRuntimeLogs.pop_front();
+  }
+  if (!persist || !gStorageReady) {
+    return;
+  }
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !ensurePomodoroStorageOn(*fs)) {
+    return;
+  }
+  File out = fs->open(kRuntimeLogPath, FILE_APPEND);
+  if (!out) {
+    return;
+  }
+  out.print("{\"t\":");
+  out.print(millis());
+  out.print(",\"area\":\"");
+  out.print(jsonEscapeLine(area));
+  out.print("\",\"msg\":\"");
+  out.print(jsonEscapeLine(message));
+  out.println("\"}");
+  out.close();
+}
+
 void logf(const char* fmt, ...) {
   char buf[256];
   va_list args;
@@ -468,6 +791,7 @@ void logf(const char* fmt, ...) {
   vsnprintf(buf, sizeof(buf), fmt, args);
   va_end(args);
   Serial.println(buf);
+  appendRuntimeLog("SER", String(buf), false);
 }
 
 String chipIdSuffix() {
@@ -489,6 +813,23 @@ uint16_t compileTimeHubPort() {
   return static_cast<uint16_t>(parsed);
 }
 
+void migrateBridgeEndpoint() {
+  bool legacyBridge = gHubHost == kLegacyBridgeHost && gHubPort == kLegacyBridgePort;
+  bool staleDomainPort = gHubHost == kProdBridgeHost && (gHubPort == 80 || gHubPort == kLegacyBridgePort);
+  if (legacyBridge || staleDomainPort) {
+    saveHubEndpoint(kProdBridgeHost, kProdBridgePort);
+    logf("[CFG] migrated bridge endpoint host=%s port=%u", gHubHost.c_str(), gHubPort);
+  }
+}
+
+bool hubUsesTls() {
+  return gHubHost == kProdBridgeHost || gHubPort == 443;
+}
+
+String hubBaseUrl() {
+  return String(hubUsesTls() ? "https://" : "http://") + gHubHost + ":" + String(gHubPort);
+}
+
 const char* uiModeName(UiMode mode) {
   switch (mode) {
     case UiMode::Face:
@@ -499,8 +840,24 @@ const char* uiModeName(UiMode mode) {
       return "Chat";
     case UiMode::Clock:
       return "Clock";
+    case UiMode::Battery:
+      return "Battery";
     case UiMode::Voice:
       return "Voice";
+    case UiMode::Focus:
+      return "Focus";
+    case UiMode::Library:
+      return "Library";
+    case UiMode::Assets:
+      return "Assets";
+    case UiMode::Ota:
+      return "OTA";
+    case UiMode::Contexts:
+      return "Contexts";
+    case UiMode::Settings:
+      return "Settings";
+    case UiMode::Logs:
+      return "Logs";
     case UiMode::ChatFace:
     default:
       return "Chat+Face";
@@ -577,6 +934,18 @@ String trimPreview(const String& text, size_t maxChars = kMaxStoredPreviewChars)
     return text;
   }
   return text.substring(0, maxChars) + "...";
+}
+
+size_t voiceNoteLimit() {
+  return gSdReady ? kMaxSdVoiceNotes : kMaxFlashVoiceNotes;
+}
+
+String cleanReplyForDevice(const String& text) {
+  String out = text;
+  out.replace("[[audio_as_voice]]", "");
+  out.replace("[[audio_as_text]]", "");
+  out.trim();
+  return out;
 }
 
 void removeLastUtf8Char(String& value) {
@@ -788,7 +1157,10 @@ void pushLine(const String& prefix, const String& text, LineKind kind) {
 }
 
 void pushSystem(const String& text) { pushLine("SYS", text, LineKind::System); }
-void pushError(const String& text) { pushLine("ERR", text, LineKind::Error); }
+void pushError(const String& text) {
+  pushLine("ERR", text, LineKind::Error);
+  appendRuntimeLog("ERR", text, true);
+}
 void pushUser(const String& text) { pushLine("YOU", text, LineKind::User); }
 void pushAssistant(const String& text) { pushLine("AI", text, LineKind::Assistant); }
 
@@ -836,6 +1208,266 @@ void scrollChatBy(int delta) {
   setStatus("Scroll " + String(gChatScrollOffset), 600);
 }
 
+fs::FS* activeVoiceFs() {
+  if (gSdReady) {
+    return &SD;
+  }
+  if (gLittleFsReady) {
+    return &LittleFS;
+  }
+  return nullptr;
+}
+
+fs::FS* fallbackVoiceFs() {
+  if (gSdReady && gLittleFsReady) {
+    return &LittleFS;
+  }
+  return nullptr;
+}
+
+String activeVoiceStorageLabel() {
+  if (gSdReady) {
+    return "sd";
+  }
+  if (gLittleFsReady) {
+    return "flash";
+  }
+  return "off";
+}
+
+bool fsExists(fs::FS& fs, const String& path) {
+  return fs.exists(path.c_str());
+}
+
+bool fsRemove(fs::FS& fs, const String& path) {
+  return fs.remove(path.c_str());
+}
+
+bool fsRename(fs::FS& fs, const String& from, const String& to) {
+  return fs.rename(from.c_str(), to.c_str());
+}
+
+String parentDirOf(const String& path) {
+  int slash = path.lastIndexOf('/');
+  if (slash <= 0) {
+    return "/";
+  }
+  return path.substring(0, slash);
+}
+
+bool ensureDirRecursive(fs::FS& fs, const String& dirPath) {
+  if (dirPath.isEmpty() || dirPath == "/" || fsExists(fs, dirPath)) {
+    return true;
+  }
+  int start = 1;
+  while (start < dirPath.length()) {
+    int slash = dirPath.indexOf('/', start);
+    String part = slash < 0 ? dirPath : dirPath.substring(0, slash);
+    if (!part.isEmpty() && !fsExists(fs, part) && !fs.mkdir(part)) {
+      return false;
+    }
+    if (slash < 0) {
+      break;
+    }
+    start = slash + 1;
+  }
+  return fsExists(fs, dirPath) || fs.mkdir(dirPath);
+}
+
+bool ensureVoiceStorageOn(fs::FS& fs) {
+  if (!fsExists(fs, kVoiceDir)) {
+    return fs.mkdir(kVoiceDir);
+  }
+  return true;
+}
+
+bool ensureVoiceStorage() {
+  fs::FS* fs = activeVoiceFs();
+  if (!fs) {
+    return false;
+  }
+  return ensureVoiceStorageOn(*fs);
+}
+
+bool ensurePomodoroStorageOn(fs::FS& fs) {
+  if (!fsExists(fs, kPomodoroDir) && !fs.mkdir(kPomodoroDir)) {
+    return false;
+  }
+  if (!fsExists(fs, kPomodoroAudioDir) && !fs.mkdir(kPomodoroAudioDir)) {
+    return false;
+  }
+  if (!fsExists(fs, kPomodoroLogsDir) && !fs.mkdir(kPomodoroLogsDir)) {
+    return false;
+  }
+  return true;
+}
+
+uint64_t activeStorageTotalBytes() {
+  if (gSdReady) {
+    return SD.totalBytes();
+  }
+  if (gLittleFsReady) {
+    return LittleFS.totalBytes();
+  }
+  return 0;
+}
+
+uint64_t activeStorageUsedBytes() {
+  if (gSdReady) {
+    return SD.usedBytes();
+  }
+  if (gLittleFsReady) {
+    return LittleFS.usedBytes();
+  }
+  return 0;
+}
+
+String bytesToHex(const uint8_t* bytes, size_t len) {
+  static const char* hex = "0123456789abcdef";
+  String out;
+  out.reserve(len * 2);
+  for (size_t i = 0; i < len; ++i) {
+    out += hex[(bytes[i] >> 4) & 0x0F];
+    out += hex[bytes[i] & 0x0F];
+  }
+  return out;
+}
+
+String sha256File(fs::FS& fs, const String& path) {
+  File file = fs.open(path, "r");
+  if (!file) {
+    return "";
+  }
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, 0);
+  uint8_t buffer[1024];
+  while (file.available()) {
+    size_t n = file.read(buffer, sizeof(buffer));
+    if (n == 0) {
+      break;
+    }
+    mbedtls_sha256_update(&ctx, buffer, n);
+  }
+  file.close();
+  uint8_t hash[32];
+  mbedtls_sha256_finish(&ctx, hash);
+  mbedtls_sha256_free(&ctx);
+  return bytesToHex(hash, sizeof(hash));
+}
+
+bool configureHttpClient(HTTPClient& http, std::unique_ptr<WiFiClientSecure>& secureClient, const String& url,
+                         uint32_t timeoutMs = 60000) {
+  http.setTimeout(timeoutMs);
+  http.setReuse(false);
+  bool tls = url.startsWith("https://");
+  if (tls) {
+    secureClient.reset(new WiFiClientSecure());
+    secureClient->setInsecure();
+    secureClient->setHandshakeTimeout(12);
+    return http.begin(*secureClient, url);
+  }
+  return http.begin(url);
+}
+
+bool downloadUrlToFile(const String& url, const String& path, const String& expectedSha = "", uint32_t expectedSize = 0) {
+  if ((!gWifiReady && !ensureWifiForHttp("download", 3000)) || url.isEmpty()) {
+    setStatus("Download no Wi-Fi", 1200);
+    return false;
+  }
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !ensurePomodoroStorageOn(*fs) || !ensureDirRecursive(*fs, parentDirOf(path))) {
+    setStatus("Download no storage", 1200);
+    return false;
+  }
+
+  String tempPath = path + ".tmp";
+  fsRemove(*fs, tempPath);
+  File out = fs->open(tempPath, "w");
+  if (!out) {
+    setStatus("Download open failed", 1200);
+    return false;
+  }
+
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  if (!configureHttpClient(http, secureClient, url, 90000)) {
+    out.close();
+    fsRemove(*fs, tempPath);
+    setStatus("Download connect failed", 1200);
+    return false;
+  }
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  int code = http.GET();
+  if (code < 200 || code >= 300) {
+    http.end();
+    out.close();
+    fsRemove(*fs, tempPath);
+    setStatus("HTTP " + String(code), 1500);
+    return false;
+  }
+
+  WiFiClient* stream = http.getStreamPtr();
+  uint8_t buffer[1024];
+  uint32_t written = 0;
+  int contentLength = http.getSize();
+  uint32_t lastProgress = millis();
+  while (http.connected() && (contentLength < 0 || written < static_cast<uint32_t>(contentLength))) {
+    size_t available = stream->available();
+    if (!available) {
+      if (millis() - lastProgress > 15000) {
+        break;
+      }
+      delay(2);
+      continue;
+    }
+    size_t chunk = min(available, sizeof(buffer));
+    int readBytes = stream->readBytes(buffer, chunk);
+    if (readBytes <= 0) {
+      break;
+    }
+    if (out.write(buffer, readBytes) != static_cast<size_t>(readBytes)) {
+      http.end();
+      out.close();
+      fsRemove(*fs, tempPath);
+      setStatus("Download write failed", 1200);
+      return false;
+    }
+    written += readBytes;
+    lastProgress = millis();
+  }
+  http.end();
+  out.close();
+
+  if ((expectedSize > 0 && written != expectedSize) ||
+      (contentLength > 0 && written != static_cast<uint32_t>(contentLength))) {
+    fsRemove(*fs, tempPath);
+    setStatus("Download short", 1200);
+    return false;
+  }
+  if (!expectedSha.isEmpty()) {
+    String actualSha = sha256File(*fs, tempPath);
+    actualSha.toLowerCase();
+    String expected = expectedSha;
+    expected.toLowerCase();
+    if (actualSha != expected) {
+      fsRemove(*fs, tempPath);
+      setStatus("SHA mismatch", 1600);
+      appendRuntimeLog("SHA", path + " mismatch", true);
+      return false;
+    }
+  }
+  fsRemove(*fs, path);
+  if (!fsRename(*fs, tempPath, path)) {
+    fsRemove(*fs, tempPath);
+    setStatus("Rename failed", 1200);
+    return false;
+  }
+  return true;
+}
+
 String voiceAudioPath(const String& id) {
   return String(kVoiceDir) + "/" + id + kVoiceAudioExt;
 }
@@ -844,18 +1476,24 @@ String voiceMetaPath(const String& id) {
   return String(kVoiceDir) + "/" + id + kVoiceMetaExt;
 }
 
-bool ensureVoiceStorage() {
-  if (!gStorageReady) {
-    return false;
-  }
-  if (!LittleFS.exists(kVoiceDir)) {
-    return LittleFS.mkdir(kVoiceDir);
-  }
-  return true;
-}
-
 String makeVoiceNoteId(bool assistant) {
   return String(assistant ? "a_" : "u_") + String(millis()) + "_" + chipIdSuffix();
+}
+
+String makeVoiceNoteTitle(bool assistant, size_t audioLen, uint32_t sampleRate) {
+  String who = assistant ? "Claw" : "Me";
+  String stamp = String(millis() / 1000);
+  if (hasValidSystemTime()) {
+    time_t now = time(nullptr);
+    struct tm localNow;
+    localtime_r(&now, &localNow);
+    char buf[5];
+    strftime(buf, sizeof(buf), "%H%M", &localNow);
+    stamp = buf;
+  }
+  uint32_t durationSec = sampleRate ? static_cast<uint32_t>((audioLen / 2U) / sampleRate) : 0;
+  durationSec = max<uint32_t>(1, durationSec);
+  return who + "-" + stamp + "-" + String(durationSec) + "s";
 }
 
 void sortVoiceNotesNewestFirst() {
@@ -879,10 +1517,14 @@ void clampVoiceSelection() {
 
 void pruneVoiceNotes() {
   sortVoiceNotesNewestFirst();
-  while (gVoiceNotes.size() > kMaxStoredVoiceNotes) {
+  fs::FS* fs = activeVoiceFs();
+  size_t limit = voiceNoteLimit();
+  while (gVoiceNotes.size() > limit) {
     const auto& note = gVoiceNotes.back();
-    LittleFS.remove(note.audioPath);
-    LittleFS.remove(note.metaPath);
+    if (fs && !gSdReady) {
+      fsRemove(*fs, note.audioPath);
+      fsRemove(*fs, note.metaPath);
+    }
     gVoiceNotes.pop_back();
   }
   clampVoiceSelection();
@@ -890,10 +1532,11 @@ void pruneVoiceNotes() {
 
 void loadVoiceNotes() {
   gVoiceNotes.clear();
+  fs::FS* fs = activeVoiceFs();
   if (!gStorageReady || !ensureVoiceStorage()) {
     return;
   }
-  File dir = LittleFS.open(kVoiceDir);
+  File dir = fs->open(kVoiceDir);
   if (!dir || !dir.isDirectory()) {
     return;
   }
@@ -909,7 +1552,7 @@ void loadVoiceNotes() {
       continue;
     }
 
-    File meta = LittleFS.open(path, "r");
+    File meta = fs->open(path, "r");
     if (!meta) {
       continue;
     }
@@ -929,7 +1572,7 @@ void loadVoiceNotes() {
     note.sampleRate = doc["sample_rate"] | 16000;
     note.durationMs = doc["duration_ms"] | 0;
     note.assistant = doc["assistant"] | false;
-    if (!note.id.isEmpty() && !note.audioPath.isEmpty() && LittleFS.exists(note.audioPath)) {
+    if (!note.id.isEmpty() && !note.audioPath.isEmpty() && fsExists(*fs, note.audioPath)) {
       gVoiceNotes.push_back(note);
     }
   }
@@ -937,8 +1580,378 @@ void loadVoiceNotes() {
   pruneVoiceNotes();
 }
 
+String filenameFromPath(const String& path) {
+  int slash = path.lastIndexOf('/');
+  return slash >= 0 ? path.substring(slash + 1) : path;
+}
+
+String audioCategoryFromPath(const String& path) {
+  String prefix = String(kPomodoroAudioDir) + "/";
+  if (!path.startsWith(prefix)) {
+    return "voice";
+  }
+  String tail = path.substring(prefix.length());
+  int slash = tail.indexOf('/');
+  if (slash > 0) {
+    return tail.substring(0, slash);
+  }
+  return "root";
+}
+
+void scanAudioAssetsRecursive(fs::FS& fs, const String& dirPath, uint8_t depth) {
+  if (depth > 4 || gAudioAssets.size() >= kMaxAudioAssets) {
+    return;
+  }
+  File dir = fs.open(dirPath);
+  if (!dir || !dir.isDirectory()) {
+    return;
+  }
+  while (gAudioAssets.size() < kMaxAudioAssets) {
+    File file = dir.openNextFile();
+    if (!file) {
+      break;
+    }
+    String path = file.path();
+    bool directory = file.isDirectory();
+    uint32_t size = static_cast<uint32_t>(file.size());
+    file.close();
+    if (directory) {
+      scanAudioAssetsRecursive(fs, path, depth + 1);
+      continue;
+    }
+    String lower = path;
+    lower.toLowerCase();
+    if (!lower.endsWith(".wav")) {
+      continue;
+    }
+    AudioAsset asset;
+    asset.path = path;
+    asset.title = filenameFromPath(path);
+    asset.category = audioCategoryFromPath(path);
+    asset.language = path.indexOf("/ru/") >= 0 || path.endsWith("_ru.wav") ? "ru" : "";
+    asset.size = size;
+    gAudioAssets.push_back(asset);
+  }
+}
+
+void scanAudioAssets() {
+  gAudioAssets.clear();
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !ensurePomodoroStorageOn(*fs)) {
+    appendRuntimeLog("ASSET", "storage unavailable", true);
+    return;
+  }
+  scanAudioAssetsRecursive(*fs, kPomodoroAudioDir, 0);
+  if (gSelectedAudioAsset >= static_cast<int>(gAudioAssets.size())) {
+    gSelectedAudioAsset = max<int>(0, static_cast<int>(gAudioAssets.size()) - 1);
+  }
+  appendRuntimeLog("LIB", "audio scan count=" + String(gAudioAssets.size()), true);
+}
+
+void loadAssetManifestSummary() {
+  gAssetManifest = AssetManifestSummary{};
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !fsExists(*fs, kAssetManifestPath)) {
+    gAssetManifest.error = "missing";
+    return;
+  }
+  gAssetManifest.present = true;
+  File file = fs->open(kAssetManifestPath, "r");
+  if (!file) {
+    gAssetManifest.error = "open failed";
+    return;
+  }
+  DynamicJsonDocument doc(8192);
+  auto err = deserializeJson(doc, file);
+  file.close();
+  if (err) {
+    gAssetManifest.error = err.c_str();
+    return;
+  }
+  gAssetManifest.parsed = true;
+  gAssetManifest.version = doc["asset_version"] | doc["version"] | "";
+  gAssetManifest.generatedAt = doc["generated_at"] | doc["generated"] | "";
+  JsonArray files = doc["files"].as<JsonArray>();
+  gAssetManifest.fileCount = files.size();
+  uint32_t total = 0;
+  for (JsonObject item : files) {
+    total += item["size"] | 0;
+  }
+  gAssetManifest.totalBytes = total;
+  appendRuntimeLog("ASSET", "manifest files=" + String(gAssetManifest.fileCount), true);
+}
+
+void loadOtaManifestSummary() {
+  gOtaManifest = OtaManifestSummary{};
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !fsExists(*fs, kOtaManifestPath)) {
+    gOtaManifest.error = "missing";
+    return;
+  }
+  gOtaManifest.present = true;
+  File file = fs->open(kOtaManifestPath, "r");
+  if (!file) {
+    gOtaManifest.error = "open failed";
+    return;
+  }
+  DynamicJsonDocument doc(3072);
+  auto err = deserializeJson(doc, file);
+  file.close();
+  if (err) {
+    gOtaManifest.error = err.c_str();
+    return;
+  }
+  gOtaManifest.parsed = true;
+  gOtaManifest.version = doc["version"] | "";
+  gOtaManifest.channel = doc["channel"] | "";
+  gOtaManifest.url = doc["firmware_url"] | doc["url"] | "";
+  gOtaManifest.sha256 = doc["sha256"] | "";
+  gOtaManifest.size = doc["size"] | 0;
+  gOtaManifest.minBattery = doc["min_battery"] | 50;
+  gOtaManifest.confirmRequired = doc["confirm_required"] | true;
+  appendRuntimeLog("OTA", "manifest version=" + gOtaManifest.version, true);
+}
+
+bool fetchRemoteJsonToFile(const String& path, const String& localPath, const String& label) {
+  String url = hubBaseUrl() + path;
+  bool ok = downloadUrlToFile(url, localPath);
+  appendRuntimeLog(label, ok ? "fetch ok" : "fetch failed", true);
+  return ok;
+}
+
+bool fetchRemoteAssetManifest() {
+  if (fetchRemoteJsonToFile(kAssetManifestFetchPath, kAssetManifestPath, "ASSET")) {
+    loadAssetManifestSummary();
+    return true;
+  }
+  return false;
+}
+
+bool fetchRemoteOtaManifest() {
+  if (fetchRemoteJsonToFile(kFirmwareManifestFetchPath, kOtaManifestPath, "OTA")) {
+    loadOtaManifestSummary();
+    if (gDeviceSettings.beepOnUpdate && gOtaManifest.parsed && !gOtaManifest.version.isEmpty() &&
+        gOtaManifest.version != kAppVersion) {
+      focusTone(1320, 120);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool syncAssetsFromManifest() {
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !fsExists(*fs, kAssetManifestPath)) {
+    setStatus("No asset manifest", 1200);
+    return false;
+  }
+  File file = fs->open(kAssetManifestPath, "r");
+  if (!file) {
+    return false;
+  }
+  DynamicJsonDocument doc(12288);
+  auto err = deserializeJson(doc, file);
+  file.close();
+  if (err || !doc["files"].is<JsonArray>()) {
+    setStatus("Bad manifest", 1200);
+    return false;
+  }
+  uint16_t okCount = 0;
+  uint16_t failCount = 0;
+  for (JsonObject item : doc["files"].as<JsonArray>()) {
+    String path = item["path"] | "";
+    String url = item["url"] | "";
+    String sha = item["sha256"] | "";
+    uint32_t size = item["size"] | 0;
+    if (path.isEmpty() || url.isEmpty()) {
+      continue;
+    }
+    bool alreadyOk = false;
+    if (!sha.isEmpty() && fsExists(*fs, path)) {
+      String actual = sha256File(*fs, path);
+      actual.toLowerCase();
+      sha.toLowerCase();
+      alreadyOk = actual == sha;
+    }
+    if (alreadyOk || downloadUrlToFile(url, path, sha, size)) {
+      ++okCount;
+    } else {
+      ++failCount;
+    }
+    setStatus("Assets " + String(okCount) + "/" + String(okCount + failCount), 500);
+    render();
+  }
+  scanAudioAssets();
+  loadAssetManifestSummary();
+  appendRuntimeLog("ASSET", "sync ok=" + String(okCount) + " fail=" + String(failCount), true);
+  setStatus(failCount ? "Asset sync partial" : "Asset sync done", 1600);
+  return failCount == 0;
+}
+
+bool uploadRuntimeLogs() {
+  if ((!gWifiReady && !ensureWifiForHttp("logs", 3000)) || gHubHost.isEmpty()) {
+    return false;
+  }
+  DynamicJsonDocument doc(8192);
+  doc["device_id"] = gDeviceId;
+  doc["firmware_version"] = kAppVersion;
+  doc["git"] = kBuildGitSha;
+  JsonArray events = doc.createNestedArray("events");
+  for (const auto& line : gRuntimeLogs) {
+    JsonObject ev = events.createNestedObject();
+    ev["ts"] = millis();
+    ev["level"] = "info";
+    ev["message"] = line;
+    ev["free_heap"] = ESP.getFreeHeap();
+    ev["rssi"] = WiFi.isConnected() ? WiFi.RSSI() : 0;
+    ev["storage"] = gStorageLabel;
+  }
+  String body;
+  serializeJson(doc, body);
+
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  String url = hubBaseUrl() + kCardputerLogsPath;
+  if (!configureHttpClient(http, secureClient, url, 30000)) {
+    return false;
+  }
+  http.addHeader("Content-Type", "application/json");
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  int code = http.POST(body);
+  http.end();
+  bool ok = code >= 200 && code < 300;
+  setStatus(ok ? "Logs uploaded" : ("Logs HTTP " + String(code)), 1400);
+  appendRuntimeLog("LOG", ok ? "upload ok" : ("upload failed " + String(code)), true);
+  return ok;
+}
+
+bool applyOtaFromManifest() {
+  if (!gOtaManifest.parsed || gOtaManifest.url.isEmpty() || gOtaManifest.sha256.isEmpty()) {
+    setStatus("OTA manifest incomplete", 1500);
+    return false;
+  }
+  updateBatterySnapshot(true);
+  int level = gBatterySnapshot.level < 0 ? 100 : gBatterySnapshot.level;
+  uint8_t minBattery = max<uint8_t>(gDeviceSettings.minBatteryForUpdate, gOtaManifest.minBattery);
+  if (level < minBattery) {
+    setStatus("Battery too low", 1600);
+    appendRuntimeLog("OTA", "battery too low", true);
+    return false;
+  }
+  if (!downloadUrlToFile(gOtaManifest.url, kOtaTempPath, gOtaManifest.sha256, gOtaManifest.size)) {
+    appendRuntimeLog("OTA", "firmware download failed", true);
+    return false;
+  }
+  fs::FS* fs = activeVoiceFs();
+  File firmware = fs ? fs->open(kOtaTempPath, "r") : File();
+  if (!firmware) {
+    setStatus("OTA file missing", 1200);
+    return false;
+  }
+  size_t size = firmware.size();
+  if (!Update.begin(size)) {
+    firmware.close();
+    setStatus("OTA begin failed", 1600);
+    appendRuntimeLog("OTA", "begin failed", true);
+    return false;
+  }
+  size_t written = Update.writeStream(firmware);
+  firmware.close();
+  if (written != size || !Update.end(true)) {
+    setStatus("OTA apply failed", 1600);
+    appendRuntimeLog("OTA", "apply failed", true);
+    return false;
+  }
+  appendRuntimeLog("OTA", "apply ok reboot", true);
+  setStatus("OTA applied", 800);
+  delay(500);
+  ESP.restart();
+  return true;
+}
+
+void addDefaultContext(const String& label, const String& key, const String& shortName) {
+  if (gContexts.size() >= kMaxContexts) {
+    return;
+  }
+  gContexts.push_back({label, key, shortName});
+}
+
+void loadConversationContexts() {
+  gContexts.clear();
+  addDefaultContext("Adv Cardputer", "telegram:-1003665527854:topic:2921", "ADV");
+  addDefaultContext("Marathon", "telegram:-1003665527854:topic:741", "RUN");
+  addDefaultContext("Body", "telegram:-1003665527854:topic:3400", "BODY");
+
+  fs::FS* fs = activeVoiceFs();
+  if (fs && fsExists(*fs, kContextRegistryPath)) {
+    File file = fs->open(kContextRegistryPath, "r");
+    if (file) {
+      DynamicJsonDocument doc(4096);
+      auto err = deserializeJson(doc, file);
+      file.close();
+      if (!err && doc["contexts"].is<JsonArray>()) {
+        gContexts.clear();
+        for (JsonObject item : doc["contexts"].as<JsonArray>()) {
+          if (gContexts.size() >= kMaxContexts) {
+            break;
+          }
+          String label = item["label"] | item["name"] | "";
+          String key = item["key"] | item["conversation_key"] | "";
+          String shortName = item["short"] | "";
+          if (!label.isEmpty() && !key.isEmpty()) {
+            if (shortName.isEmpty()) {
+              shortName = label.substring(0, min<int>(4, label.length()));
+            }
+            gContexts.push_back({label, key, shortName});
+          }
+        }
+      }
+    }
+  }
+
+  gPrefs.begin(kPrefsContextNs, true);
+  String savedKey = gPrefs.getString("key", "");
+  gPrefs.end();
+  if (!savedKey.isEmpty()) {
+    for (size_t i = 0; i < gContexts.size(); ++i) {
+      if (gContexts[i].key == savedKey) {
+        gSelectedContext = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  if (gSelectedContext >= static_cast<int>(gContexts.size())) {
+    gSelectedContext = 0;
+  }
+  appendRuntimeLog("CTX", "loaded count=" + String(gContexts.size()), true);
+}
+
+void saveCurrentContext() {
+  if (gContexts.empty()) {
+    return;
+  }
+  gPrefs.begin(kPrefsContextNs, false);
+  gPrefs.putString("key", currentConversationKey());
+  gPrefs.end();
+  appendRuntimeLog("CTX", "selected " + gContexts[gSelectedContext].shortName, true);
+}
+
+String currentConversationKey() {
+  if (gContexts.empty()) {
+    return "telegram:-1003665527854:topic:2921";
+  }
+  gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
+  return gContexts[gSelectedContext].key;
+}
+
 bool saveVoiceNoteMetadata(const VoiceNote& note) {
-  DynamicJsonDocument doc(512);
+  fs::FS* fs = activeVoiceFs();
+  if (!fs) {
+    return false;
+  }
+  DynamicJsonDocument doc(768);
   doc["id"] = note.id;
   doc["audio_path"] = note.audioPath;
   doc["title"] = note.title;
@@ -947,7 +1960,7 @@ bool saveVoiceNoteMetadata(const VoiceNote& note) {
   doc["duration_ms"] = note.durationMs;
   doc["assistant"] = note.assistant;
 
-  File meta = LittleFS.open(note.metaPath, "w");
+  File meta = fs->open(note.metaPath, "w");
   if (!meta) {
     return false;
   }
@@ -958,10 +1971,11 @@ bool saveVoiceNoteMetadata(const VoiceNote& note) {
 
 bool persistWavFile(const String& path, const uint8_t* header, size_t headerLen, const uint8_t* audioBytes,
                     size_t audioLen) {
+  fs::FS* fs = activeVoiceFs();
   if (!gStorageReady || !ensureVoiceStorage()) {
     return false;
   }
-  File file = LittleFS.open(path, "w");
+  File file = fs->open(path, "w");
   if (!file) {
     return false;
   }
@@ -993,14 +2007,15 @@ bool persistFileToFile(File& src, File& dst, size_t bytesToCopy) {
 }
 
 bool persistWavFromPcmFile(const String& outPath, const String& pcmPath, uint32_t sampleRate, size_t audioLen) {
+  fs::FS* fs = activeVoiceFs();
   if (!gStorageReady || !ensureVoiceStorage()) {
     return false;
   }
-  File src = LittleFS.open(pcmPath, "r");
+  File src = fs->open(pcmPath, "r");
   if (!src) {
     return false;
   }
-  File dst = LittleFS.open(outPath, "w");
+  File dst = fs->open(outPath, "w");
   if (!dst) {
     src.close();
     return false;
@@ -1012,23 +2027,24 @@ bool persistWavFromPcmFile(const String& outPath, const String& pcmPath, uint32_
   src.close();
   dst.close();
   if (!ok) {
-    LittleFS.remove(outPath);
+    fsRemove(*fs, outPath);
   }
   return ok;
 }
 
 void rememberVoiceNote(const String& title, const String& preview, const uint8_t* header, size_t headerLen,
                        const uint8_t* audioBytes, size_t audioLen, uint32_t sampleRate, bool assistant) {
+  fs::FS* fs = activeVoiceFs();
   if (!gStorageReady || !ensureVoiceStorage()) {
     return;
   }
-  size_t totalBytes = LittleFS.totalBytes();
-  size_t usedBytes = LittleFS.usedBytes();
+  uint64_t totalBytes = activeStorageTotalBytes();
+  uint64_t usedBytes = activeStorageUsedBytes();
   size_t requiredBytes = headerLen + audioLen + 2048;
   if (totalBytes > 0 && usedBytes + requiredBytes >= totalBytes) {
-    logf("[VOICE] skip note storage used=%u total=%u required=%u",
-         static_cast<unsigned>(usedBytes),
-         static_cast<unsigned>(totalBytes),
+    logf("[VOICE] skip note storage used=%llu total=%llu required=%u",
+         static_cast<unsigned long long>(usedBytes),
+         static_cast<unsigned long long>(totalBytes),
          static_cast<unsigned>(requiredBytes));
     return;
   }
@@ -1036,7 +2052,7 @@ void rememberVoiceNote(const String& title, const String& preview, const uint8_t
   note.id = makeVoiceNoteId(assistant);
   note.audioPath = voiceAudioPath(note.id);
   note.metaPath = voiceMetaPath(note.id);
-  note.title = title;
+  note.title = makeVoiceNoteTitle(assistant, audioLen, sampleRate);
   note.preview = trimPreview(preview);
   note.sampleRate = sampleRate;
   note.durationMs = sampleRate ? static_cast<uint32_t>((audioLen / 2U) * 1000ULL / sampleRate) : 0;
@@ -1046,7 +2062,7 @@ void rememberVoiceNote(const String& title, const String& preview, const uint8_t
     return;
   }
   if (!saveVoiceNoteMetadata(note)) {
-    LittleFS.remove(note.audioPath);
+    fsRemove(*fs, note.audioPath);
     return;
   }
   gVoiceNotes.push_back(note);
@@ -1057,16 +2073,17 @@ void rememberVoiceNote(const String& title, const String& preview, const uint8_t
 
 void rememberVoiceNoteFromPcmFile(const String& title, const String& preview, const String& pcmPath,
                                   size_t audioLen, uint32_t sampleRate, bool assistant) {
-  if (!gStorageReady || !ensureVoiceStorage() || !LittleFS.exists(pcmPath)) {
+  fs::FS* fs = activeVoiceFs();
+  if (!gStorageReady || !ensureVoiceStorage() || !fs || !fsExists(*fs, pcmPath)) {
     return;
   }
-  size_t totalBytes = LittleFS.totalBytes();
-  size_t usedBytes = LittleFS.usedBytes();
+  uint64_t totalBytes = activeStorageTotalBytes();
+  uint64_t usedBytes = activeStorageUsedBytes();
   size_t requiredBytes = 44 + audioLen + 2048;
   if (totalBytes > 0 && usedBytes + requiredBytes >= totalBytes) {
-    logf("[VOICE] skip note storage used=%u total=%u required=%u",
-         static_cast<unsigned>(usedBytes),
-         static_cast<unsigned>(totalBytes),
+    logf("[VOICE] skip note storage used=%llu total=%llu required=%u",
+         static_cast<unsigned long long>(usedBytes),
+         static_cast<unsigned long long>(totalBytes),
          static_cast<unsigned>(requiredBytes));
     return;
   }
@@ -1075,7 +2092,7 @@ void rememberVoiceNoteFromPcmFile(const String& title, const String& preview, co
   note.id = makeVoiceNoteId(assistant);
   note.audioPath = voiceAudioPath(note.id);
   note.metaPath = voiceMetaPath(note.id);
-  note.title = title;
+  note.title = makeVoiceNoteTitle(assistant, audioLen, sampleRate);
   note.preview = trimPreview(preview);
   note.sampleRate = sampleRate;
   note.durationMs = sampleRate ? static_cast<uint32_t>((audioLen / 2U) * 1000ULL / sampleRate) : 0;
@@ -1085,13 +2102,117 @@ void rememberVoiceNoteFromPcmFile(const String& title, const String& preview, co
     return;
   }
   if (!saveVoiceNoteMetadata(note)) {
-    LittleFS.remove(note.audioPath);
+    fsRemove(*fs, note.audioPath);
     return;
   }
   gVoiceNotes.push_back(note);
   sortVoiceNotesNewestFirst();
   pruneVoiceNotes();
   gSelectedVoiceNote = 0;
+}
+
+uint32_t wavDurationMs(const String& path, uint32_t* sampleRateOut = nullptr) {
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !fsExists(*fs, path)) {
+    return 0;
+  }
+  File file = fs->open(path, "r");
+  if (!file || file.size() < 44) {
+    return 0;
+  }
+  uint8_t header[44];
+  if (file.read(header, sizeof(header)) != sizeof(header)) {
+    file.close();
+    return 0;
+  }
+  file.close();
+  uint32_t sampleRate = static_cast<uint32_t>(header[24]) |
+                        (static_cast<uint32_t>(header[25]) << 8) |
+                        (static_cast<uint32_t>(header[26]) << 16) |
+                        (static_cast<uint32_t>(header[27]) << 24);
+  uint16_t bitsPerSample = static_cast<uint16_t>(header[34]) |
+                           (static_cast<uint16_t>(header[35]) << 8);
+  uint16_t channels = static_cast<uint16_t>(header[22]) |
+                      (static_cast<uint16_t>(header[23]) << 8);
+  uint32_t dataBytes = static_cast<uint32_t>(header[40]) |
+                       (static_cast<uint32_t>(header[41]) << 8) |
+                       (static_cast<uint32_t>(header[42]) << 16) |
+                       (static_cast<uint32_t>(header[43]) << 24);
+  if (sampleRateOut) {
+    *sampleRateOut = sampleRate;
+  }
+  uint32_t bytesPerSampleFrame = max<uint32_t>(1, (bitsPerSample / 8U) * max<uint16_t>(1, channels));
+  if (sampleRate == 0 || dataBytes == 0) {
+    return 0;
+  }
+  return static_cast<uint32_t>((static_cast<uint64_t>(dataBytes) * 1000ULL) /
+                               (static_cast<uint64_t>(sampleRate) * bytesPerSampleFrame));
+}
+
+bool registerDownloadedVoiceNote(const String& wavPath, const String& titleHint, const String& preview, bool assistant) {
+  fs::FS* fs = activeVoiceFs();
+  if (!gStorageReady || !ensureVoiceStorage() || !fs || !fsExists(*fs, wavPath)) {
+    return false;
+  }
+
+  uint32_t sampleRate = 16000;
+  uint32_t durationMs = wavDurationMs(wavPath, &sampleRate);
+  VoiceNote note;
+  note.id = filenameFromPath(wavPath);
+  int dot = note.id.lastIndexOf('.');
+  if (dot > 0) {
+    note.id = note.id.substring(0, dot);
+  }
+  note.audioPath = wavPath;
+  note.metaPath = voiceMetaPath(note.id);
+  note.title = titleHint.isEmpty() ? makeVoiceNoteTitle(assistant, max<uint32_t>(1, durationMs) * sampleRate / 500U,
+                                                        sampleRate)
+                                   : trimPreview(titleHint, 24);
+  note.preview = trimPreview(preview);
+  note.sampleRate = sampleRate;
+  note.durationMs = durationMs;
+  note.assistant = assistant;
+  if (!saveVoiceNoteMetadata(note)) {
+    return false;
+  }
+  bool existsInList = false;
+  for (auto& existing : gVoiceNotes) {
+    if (existing.audioPath == note.audioPath) {
+      existing = note;
+      existsInList = true;
+      break;
+    }
+  }
+  if (!existsInList) {
+    gVoiceNotes.push_back(note);
+  }
+  sortVoiceNotesNewestFirst();
+  pruneVoiceNotes();
+  gSelectedVoiceNote = 0;
+  return true;
+}
+
+bool downloadAndPlayResponseAudio(const String& url, const String& localPath, const String& sha256,
+                                  uint32_t expectedSize, const String& title, const String& preview) {
+  if (url.isEmpty()) {
+    if (!localPath.isEmpty() && registerDownloadedVoiceNote(localPath, title, preview, true)) {
+      return startPlaybackStreamFromWavFile(localPath, "reply: " + title);
+    }
+    return false;
+  }
+  if (!gStorageReady || !ensureVoiceStorage()) {
+    return false;
+  }
+  String id = makeVoiceNoteId(true);
+  String outPath = voiceAudioPath(id);
+  if (!downloadUrlToFile(url, outPath, sha256, expectedSize)) {
+    appendRuntimeLog("AUDIO", "reply audio download failed", true);
+    return false;
+  }
+  if (!registerDownloadedVoiceNote(outPath, title, preview, true)) {
+    return false;
+  }
+  return startPlaybackStreamFromWavFile(outPath, "reply: " + title);
 }
 
 void stopPlaybackStream() {
@@ -1112,12 +2233,13 @@ void stopPlaybackStream() {
 }
 
 bool startPlaybackStreamFromRawPcmFile(const String& path, uint32_t sampleRate, size_t audioLen, const String& diag) {
-  if (!LittleFS.exists(path)) {
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !fsExists(*fs, path)) {
     setStatus("Voice file missing", 1200);
     return false;
   }
   stopPlaybackStream();
-  gPlaybackStreamFile = LittleFS.open(path, "r");
+  gPlaybackStreamFile = fs->open(path, "r");
   if (!gPlaybackStreamFile) {
     setStatus("Voice file missing", 1200);
     return false;
@@ -1136,12 +2258,13 @@ bool startPlaybackStreamFromRawPcmFile(const String& path, uint32_t sampleRate, 
 }
 
 bool startPlaybackStreamFromWavFile(const String& path, const String& diag) {
-  if (!LittleFS.exists(path)) {
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !fsExists(*fs, path)) {
     setStatus("Voice file missing", 1200);
     return false;
   }
   stopPlaybackStream();
-  File file = LittleFS.open(path, "r");
+  File file = fs->open(path, "r");
   if (!file) {
     setStatus("Voice file missing", 1200);
     return false;
@@ -1217,12 +2340,13 @@ void servicePlaybackStream() {
 
   if (gPlaybackStreamRemainingBytes == 0 && M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0) {
     bool removeTempPcm = gPlaybackStreamPath == kActiveTtsPcmPath;
+    fs::FS* fs = activeVoiceFs();
     stopPlaybackStream();
     gPlaybackActive = false;
     setFaceMode(FaceMode::Idle);
     setStatus("Reply finished", 1000);
-    if (removeTempPcm) {
-      LittleFS.remove(kActiveTtsPcmPath);
+    if (removeTempPcm && fs) {
+      fsRemove(*fs, kActiveTtsPcmPath);
     }
   }
 }
@@ -1235,39 +2359,88 @@ bool playVoiceNoteAt(int index) {
   return startPlaybackStreamFromWavFile(note.audioPath, String("note: ") + note.title);
 }
 
+bool findLauncherEntryForMode(UiMode mode, int& groupIndex, int& subIndex) {
+  for (uint8_t g = 0; g < kLauncherGroupCount; ++g) {
+    for (uint8_t s = 0; s < kLauncherGroups[g].count; ++s) {
+      if (kLauncherGroups[g].items[s].mode == mode) {
+        groupIndex = g;
+        subIndex = s;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void syncLauncherToMode(UiMode mode) {
+  int groupIndex = 0;
+  int subIndex = 0;
+  if (!findLauncherEntryForMode(mode, groupIndex, subIndex)) {
+    return;
+  }
+  gLauncherSelection = groupIndex;
+  gLauncherSubSelection = subIndex;
+  gLauncherLastSub[groupIndex] = subIndex;
+}
+
 void setUiMode(UiMode mode) {
   gUiMode = mode;
   gLauncherVisible = false;
+  if (gLauncherSelection >= 0 && gLauncherSelection < kLauncherGroupCount &&
+      gLauncherSubSelection >= 0 && gLauncherSubSelection < kLauncherGroups[gLauncherSelection].count &&
+      kLauncherGroups[gLauncherSelection].items[gLauncherSubSelection].mode == mode) {
+    gLauncherLastSub[gLauncherSelection] = gLauncherSubSelection;
+  } else {
+    syncLauncherToMode(mode);
+  }
   setStatus(String("Mode: ") + uiModeName(mode), 900);
 }
 
 void moveLauncherSelection(int delta) {
   gLauncherVisible = true;
-  gLauncherSelection = (gLauncherSelection + delta + kLauncherModeCount) % kLauncherModeCount;
+  gLauncherSelection = (gLauncherSelection + delta + kLauncherGroupCount) % kLauncherGroupCount;
+  uint8_t count = kLauncherGroups[gLauncherSelection].count;
+  gLauncherSubSelection = clampValue<int>(gLauncherLastSub[gLauncherSelection], 0, count - 1);
+}
+
+void moveLauncherSubSelection(int delta) {
+  gLauncherVisible = true;
+  uint8_t count = kLauncherGroups[gLauncherSelection].count;
+  gLauncherSubSelection = (gLauncherSubSelection + delta + count) % count;
+  gLauncherLastSub[gLauncherSelection] = gLauncherSubSelection;
 }
 
 void applyLauncherSelection() {
-  switch (gLauncherSelection) {
-    case 0:
-      setUiMode(UiMode::ChatFace);
-      break;
-    case 1:
-      setUiMode(UiMode::Face);
-      break;
-    case 2:
-      setUiMode(UiMode::Hero);
-      break;
-    case 3:
-      setUiMode(UiMode::ChatFull);
-      break;
-    case 4:
-      setUiMode(UiMode::Clock);
-      break;
-    case 5:
-    default:
-      setUiMode(UiMode::Voice);
-      break;
+  gLauncherSelection = clampValue<int>(gLauncherSelection, 0, kLauncherGroupCount - 1);
+  uint8_t count = kLauncherGroups[gLauncherSelection].count;
+  gLauncherSubSelection = clampValue<int>(gLauncherSubSelection, 0, count - 1);
+  gLauncherLastSub[gLauncherSelection] = gLauncherSubSelection;
+  UiMode target = kLauncherGroups[gLauncherSelection].items[gLauncherSubSelection].mode;
+  if (gLauncherSelection == 6 && gLauncherSubSelection == 3) {
+    gDebugOverlayVisible = !gDebugOverlayVisible;
+    setStatus(gDebugOverlayVisible ? "Debug overlay on" : "Debug overlay off", 1000);
+    gLauncherVisible = false;
+    return;
   }
+  setUiMode(target);
+}
+
+void cycleCurrentAppScreen(int delta) {
+  syncLauncherToMode(gUiMode);
+  gLauncherVisible = false;
+  uint8_t count = kLauncherGroups[gLauncherSelection].count;
+  gLauncherSubSelection = (gLauncherSubSelection + delta + count) % count;
+  gLauncherLastSub[gLauncherSelection] = gLauncherSubSelection;
+  applyLauncherSelection();
+}
+
+void switchLauncherGroupAndApply(int delta) {
+  syncLauncherToMode(gUiMode);
+  gLauncherVisible = false;
+  gLauncherSelection = (gLauncherSelection + delta + kLauncherGroupCount) % kLauncherGroupCount;
+  uint8_t count = kLauncherGroups[gLauncherSelection].count;
+  gLauncherSubSelection = clampValue<int>(gLauncherLastSub[gLauncherSelection], 0, count - 1);
+  applyLauncherSelection();
 }
 
 size_t replyVisualLineCount(const String& reply) {
@@ -1277,14 +2450,15 @@ size_t replyVisualLineCount(const String& reply) {
 }
 
 void appendAssistantReply(const String& reply) {
-  if (reply.isEmpty()) {
+  String displayReply = cleanReplyForDevice(reply);
+  if (displayReply.isEmpty()) {
     return;
   }
   flashActivityLed(0, 180, 0);
-  if (replyVisualLineCount(reply) > kVoicePreviewLineThreshold) {
-    pushAssistant(trimPreview(reply) + " [voice]");
+  if (replyVisualLineCount(displayReply) > kVoicePreviewLineThreshold) {
+    pushAssistant(trimPreview(displayReply) + " [voice]");
   } else {
-    pushAssistant(reply);
+    pushAssistant(displayReply);
   }
 }
 
@@ -1596,6 +2770,9 @@ void applyCompileTimeDefaults() {
   if (gHubPort == kDefaultHubPort && defaultPort != 0) {
     gHubPort = defaultPort;
   }
+  if (gDeviceId.isEmpty() && strlen(DEFAULT_DEVICE_ID) > 0) {
+    gDeviceId = DEFAULT_DEVICE_ID;
+  }
   if (gDeviceToken.isEmpty() && strlen(DEFAULT_DEVICE_TOKEN) > 0) {
     gDeviceToken = DEFAULT_DEVICE_TOKEN;
   }
@@ -1618,6 +2795,12 @@ void loadConfig() {
   gDeviceToken = gPrefs.getString("device_token", "");
   gPrefs.end();
 
+  if (strlen(DEFAULT_DEVICE_ID) > 0 && savedId != DEFAULT_DEVICE_ID) {
+    savedId = DEFAULT_DEVICE_ID;
+    gPrefs.begin(kPrefsDeviceNs, false);
+    gPrefs.putString("device_id", savedId);
+    gPrefs.end();
+  }
   if (savedId.isEmpty()) {
     gDeviceId = "cardputer_adv_" + chipIdSuffix();
     gPrefs.begin(kPrefsDeviceNs, false);
@@ -1628,6 +2811,39 @@ void loadConfig() {
   }
 
   applyCompileTimeDefaults();
+  migrateBridgeEndpoint();
+}
+
+void loadDeviceSettings() {
+  gPrefs.begin(kPrefsDeviceNs, true);
+  gDeviceSettings.autoUpdateFirmware = gPrefs.getBool("fw_auto", false);
+  gDeviceSettings.checkUpdatesOnBoot = gPrefs.getBool("fw_boot", true);
+  gDeviceSettings.beepOnUpdate = gPrefs.getBool("fw_beep", true);
+  gDeviceSettings.minBatteryForUpdate = static_cast<uint8_t>(gPrefs.getUChar("fw_bat", 40));
+  gDeviceSettings.clockFace = static_cast<uint8_t>(gPrefs.getUChar("clk_face", 0));
+  gDeviceSettings.updateChannel = gPrefs.getString("fw_chan", "dev");
+  gDeviceSettings.audioLanguage = gPrefs.getString("aud_lang", "ru");
+  gPrefs.end();
+  gDeviceSettings.minBatteryForUpdate = clampValue<uint8_t>(gDeviceSettings.minBatteryForUpdate, 5, 95);
+  gDeviceSettings.clockFace %= kClockFaceCount;
+  if (gDeviceSettings.updateChannel.isEmpty()) {
+    gDeviceSettings.updateChannel = "dev";
+  }
+  if (gDeviceSettings.audioLanguage.isEmpty()) {
+    gDeviceSettings.audioLanguage = "ru";
+  }
+}
+
+void saveDeviceSettings() {
+  gPrefs.begin(kPrefsDeviceNs, false);
+  gPrefs.putBool("fw_auto", gDeviceSettings.autoUpdateFirmware);
+  gPrefs.putBool("fw_boot", gDeviceSettings.checkUpdatesOnBoot);
+  gPrefs.putBool("fw_beep", gDeviceSettings.beepOnUpdate);
+  gPrefs.putUChar("fw_bat", gDeviceSettings.minBatteryForUpdate);
+  gPrefs.putUChar("clk_face", gDeviceSettings.clockFace % kClockFaceCount);
+  gPrefs.putString("fw_chan", gDeviceSettings.updateChannel);
+  gPrefs.putString("aud_lang", gDeviceSettings.audioLanguage);
+  gPrefs.end();
 }
 
 void saveWifiCreds(const String& ssid, const String& password) {
@@ -1795,9 +3011,9 @@ void logHeapStats(const char* tag) {
 
 uint32_t currentRecordLimitMs() {
   if (gRecordingToFile && gStorageReady) {
-    size_t total = LittleFS.totalBytes();
-    size_t used = LittleFS.usedBytes();
-    size_t availableBytes = 0;
+    uint64_t total = activeStorageTotalBytes();
+    uint64_t used = activeStorageUsedBytes();
+    uint64_t availableBytes = 0;
     if (total > used + 8192) {
       availableBytes = total - used - 8192;
     }
@@ -1818,16 +3034,373 @@ void initSpeaker() {
   M5Cardputer.Speaker.setVolume(gSpeakerVolume);
 }
 
+const char* focusStateName(FocusState state) {
+  switch (state) {
+    case FocusState::Focus:
+      return "FOCUS";
+    case FocusState::ShortBreak:
+      return "BREAK";
+    case FocusState::LongBreak:
+      return "LONG";
+    case FocusState::Reflect:
+      return "REFLECT";
+    case FocusState::Paused:
+      return "PAUSED";
+    case FocusState::Stopped:
+    default:
+      return "READY";
+  }
+}
+
+bool focusStateRuns(FocusState state) {
+  return state == FocusState::Focus || state == FocusState::ShortBreak ||
+         state == FocusState::LongBreak || state == FocusState::Reflect;
+}
+
+uint32_t focusDurationForState(FocusState state) {
+  switch (state) {
+    case FocusState::Focus:
+      return gFocusSettings.focusSec;
+    case FocusState::ShortBreak:
+      return gFocusSettings.shortBreakSec;
+    case FocusState::LongBreak:
+      return gFocusSettings.longBreakSec;
+    case FocusState::Reflect:
+      return 60;
+    case FocusState::Paused:
+    case FocusState::Stopped:
+    default:
+      return gFocusSettings.focusSec;
+  }
+}
+
+String focusTimeString(uint32_t seconds) {
+  uint32_t minutes = seconds / 60;
+  uint8_t secs = seconds % 60;
+  char buf[10];
+  snprintf(buf, sizeof(buf), "%02lu:%02u", static_cast<unsigned long>(minutes), secs);
+  return String(buf);
+}
+
+void focusTone(uint16_t freq, uint16_t durationMs) {
+  if (gRecording || gPlaybackActive) {
+    return;
+  }
+  M5Cardputer.Speaker.tone(freq, durationMs);
+}
+
+bool playFocusCue(FocusState state) {
+  if (gRecording || gSubmitting || gThinking || gPlaybackActive) {
+    return false;
+  }
+  const char* path = nullptr;
+  switch (state) {
+    case FocusState::Focus:
+      path = kFocusCuePath;
+      break;
+    case FocusState::ShortBreak:
+    case FocusState::LongBreak:
+      path = kBreakCuePath;
+      break;
+    case FocusState::Reflect:
+      path = kReflectionCuePath;
+      break;
+    case FocusState::Paused:
+    case FocusState::Stopped:
+    default:
+      return false;
+  }
+  fs::FS* fs = activeVoiceFs();
+  if (fs && fsExists(*fs, path)) {
+    return startPlaybackStreamFromWavFile(path, String("focus cue: ") + focusStateName(state));
+  }
+  return false;
+}
+
+void loadFocusSettings() {
+  gPrefs.begin(kPrefsFocusNs, true);
+  gFocusSettings.focusSec = gPrefs.getUInt("focus", kFocusDefaultSec);
+  gFocusSettings.shortBreakSec = gPrefs.getUInt("short", kFocusShortBreakDefaultSec);
+  gFocusSettings.longBreakSec = gPrefs.getUInt("long", kFocusLongBreakDefaultSec);
+  gFocusSettings.cyclesPerRound = static_cast<uint8_t>(gPrefs.getUChar("cycles", kFocusDefaultCycles));
+  gFocusSettings.autoStart = gPrefs.getBool("auto", false);
+  gFocusSettings.metronome = gPrefs.getBool("metro", false);
+  gFocusSettings.bpm = static_cast<uint16_t>(gPrefs.getUShort("bpm", 60));
+  gPrefs.end();
+
+  gFocusSettings.focusSec = clampValue<uint32_t>(gFocusSettings.focusSec, kFocusMinDurationSec, kFocusMaxDurationSec);
+  gFocusSettings.shortBreakSec = clampValue<uint32_t>(gFocusSettings.shortBreakSec, kFocusMinDurationSec, kFocusMaxDurationSec);
+  gFocusSettings.longBreakSec = clampValue<uint32_t>(gFocusSettings.longBreakSec, kFocusMinDurationSec, kFocusMaxDurationSec);
+  gFocusSettings.cyclesPerRound = clampValue<uint8_t>(gFocusSettings.cyclesPerRound, 1, 9);
+  gFocusSettings.bpm = clampValue<uint16_t>(gFocusSettings.bpm, kFocusMinBpm, kFocusMaxBpm);
+  gFocus.remainingSec = gFocusSettings.focusSec;
+  gFocus.sessionTotalSec = gFocusSettings.focusSec;
+}
+
+void saveFocusSettings() {
+  gPrefs.begin(kPrefsFocusNs, false);
+  gPrefs.putUInt("focus", gFocusSettings.focusSec);
+  gPrefs.putUInt("short", gFocusSettings.shortBreakSec);
+  gPrefs.putUInt("long", gFocusSettings.longBreakSec);
+  gPrefs.putUChar("cycles", gFocusSettings.cyclesPerRound);
+  gPrefs.putBool("auto", gFocusSettings.autoStart);
+  gPrefs.putBool("metro", gFocusSettings.metronome);
+  gPrefs.putUShort("bpm", gFocusSettings.bpm);
+  gPrefs.end();
+}
+
+void focusEnterState(FocusState state, bool resetTimer = true) {
+  gFocus.state = state;
+  if (state != FocusState::Paused && state != FocusState::Stopped) {
+    gFocus.stateBeforePause = state;
+  }
+  if (resetTimer) {
+    gFocus.sessionTotalSec = focusDurationForState(state);
+    gFocus.remainingSec = gFocus.sessionTotalSec;
+  }
+  gFocus.lastTickMs = millis();
+  gFocus.nextMetronomeMs = millis() + 100;
+  setStatus(String("Focus ") + focusStateName(state), 1000);
+  if (!playFocusCue(state)) {
+    if (state == FocusState::Focus) {
+      focusTone(1047, 120);
+    } else if (state == FocusState::Reflect) {
+      focusTone(659, 160);
+    } else if (state == FocusState::ShortBreak || state == FocusState::LongBreak) {
+      focusTone(880, 120);
+    }
+  }
+  logf("[FOCUS] state=%s remain=%u cycle=%u/%u",
+       focusStateName(state),
+       static_cast<unsigned>(gFocus.remainingSec),
+       static_cast<unsigned>(gFocus.cycle),
+       static_cast<unsigned>(gFocusSettings.cyclesPerRound));
+}
+
+void focusStartOrResume() {
+  if (gFocus.state == FocusState::Paused) {
+    focusEnterState(gFocus.stateBeforePause, false);
+    return;
+  }
+  if (gFocus.state == FocusState::Stopped) {
+    if (gFocus.remainingSec == 0) {
+      gFocus.remainingSec = gFocusSettings.focusSec;
+    }
+    gFocus.sessionTotalSec = gFocus.remainingSec;
+    focusEnterState(FocusState::Focus, false);
+    return;
+  }
+  if (focusStateRuns(gFocus.state)) {
+    gFocus.stateBeforePause = gFocus.state;
+    gFocus.state = FocusState::Paused;
+    setStatus("Focus paused", 1000);
+    focusTone(523, 90);
+  }
+}
+
+void focusReset() {
+  gFocus.state = FocusState::Stopped;
+  gFocus.stateBeforePause = FocusState::Focus;
+  gFocus.remainingSec = gFocusSettings.focusSec;
+  gFocus.sessionTotalSec = gFocusSettings.focusSec;
+  gFocus.lastTickMs = millis();
+  setStatus("Focus reset", 1000);
+  focusTone(440, 90);
+}
+
+void focusSnooze(uint32_t seconds = kFocusSnoozeSec) {
+  gFocus.remainingSec = min<uint32_t>(gFocus.remainingSec + seconds, kFocusMaxDurationSec);
+  gFocus.sessionTotalSec = max<uint32_t>(gFocus.sessionTotalSec, gFocus.remainingSec);
+  setStatus("+5 min", 900);
+}
+
+void focusAdvance() {
+  FocusState ended = gFocus.state;
+  if (ended == FocusState::Focus) {
+    ++gFocus.completedToday;
+    gFocus.focusedTodaySec += gFocus.sessionTotalSec;
+    if ((gFocus.cycle % gFocusSettings.cyclesPerRound) == 0) {
+      focusEnterState(FocusState::LongBreak);
+    } else {
+      focusEnterState(FocusState::ShortBreak);
+    }
+    return;
+  }
+  if (ended == FocusState::ShortBreak) {
+    ++gFocus.cycle;
+    if (gFocusSettings.autoStart) {
+      focusEnterState(FocusState::Focus);
+    } else {
+      gFocus.state = FocusState::Stopped;
+      gFocus.remainingSec = gFocusSettings.focusSec;
+      gFocus.sessionTotalSec = gFocusSettings.focusSec;
+      setStatus("Next focus ready", 1200);
+    }
+    return;
+  }
+  if (ended == FocusState::LongBreak) {
+    focusEnterState(FocusState::Reflect);
+    return;
+  }
+  if (ended == FocusState::Reflect) {
+    gFocus.cycle = 1;
+    if (gFocusSettings.autoStart) {
+      focusEnterState(FocusState::Focus);
+    } else {
+      gFocus.state = FocusState::Stopped;
+      gFocus.remainingSec = gFocusSettings.focusSec;
+      gFocus.sessionTotalSec = gFocusSettings.focusSec;
+      setStatus("Round complete", 1400);
+    }
+  }
+}
+
+void updateFocusTimer() {
+  if (!focusStateRuns(gFocus.state)) {
+    return;
+  }
+  uint32_t now = millis();
+  if (now < gFocus.lastTickMs) {
+    gFocus.lastTickMs = now;
+    return;
+  }
+  uint32_t elapsedSec = (now - gFocus.lastTickMs) / 1000;
+  if (elapsedSec == 0) {
+    return;
+  }
+  gFocus.lastTickMs += elapsedSec * 1000;
+  if (elapsedSec < gFocus.remainingSec) {
+    gFocus.remainingSec -= elapsedSec;
+    return;
+  }
+  gFocus.remainingSec = 0;
+  focusAdvance();
+}
+
+void serviceFocusMetronome() {
+  if (!gFocusSettings.metronome || gFocus.state != FocusState::Focus || gRecording ||
+      gPlaybackActive || gSubmitting || gThinking) {
+    return;
+  }
+  uint32_t now = millis();
+  if (now < gFocus.nextMetronomeMs) {
+    return;
+  }
+  uint32_t beatMs = 60000UL / max<uint16_t>(1, gFocusSettings.bpm);
+  gFocus.nextMetronomeMs = now + beatMs;
+  focusTone(660, 35);
+}
+
+bool copyFileBetweenFs(fs::FS& fromFs, fs::FS& toFs, const String& path) {
+  if (!fsExists(fromFs, path)) {
+    return false;
+  }
+  if (fsExists(toFs, path)) {
+    return true;
+  }
+  File src = fromFs.open(path, "r");
+  if (!src) {
+    return false;
+  }
+  File dst = toFs.open(path, "w");
+  if (!dst) {
+    src.close();
+    return false;
+  }
+  uint8_t buffer[1024];
+  bool ok = true;
+  while (src.available()) {
+    size_t readBytes = src.read(buffer, sizeof(buffer));
+    if (readBytes == 0) {
+      break;
+    }
+    if (dst.write(buffer, readBytes) != readBytes) {
+      ok = false;
+      break;
+    }
+  }
+  src.close();
+  dst.close();
+  if (!ok) {
+    fsRemove(toFs, path);
+  }
+  return ok;
+}
+
+void migrateLittleFsVoiceNotesToSd() {
+  if (!gSdReady || !gLittleFsReady || !ensureVoiceStorageOn(SD) || !LittleFS.exists(kVoiceDir)) {
+    return;
+  }
+  File dir = LittleFS.open(kVoiceDir);
+  if (!dir || !dir.isDirectory()) {
+    return;
+  }
+  uint16_t copied = 0;
+  while (true) {
+    File file = dir.openNextFile();
+    if (!file) {
+      break;
+    }
+    String path = file.path();
+    bool regular = !file.isDirectory();
+    file.close();
+    if (!regular || path.indexOf("__active_") >= 0 ||
+        (!path.endsWith(kVoiceMetaExt) && !path.endsWith(kVoiceAudioExt))) {
+      continue;
+    }
+    if (copyFileBetweenFs(LittleFS, SD, path)) {
+      ++copied;
+    }
+  }
+  if (copied > 0) {
+    logf("[SD] migrated %u voice files from LittleFS", static_cast<unsigned>(copied));
+  }
+}
+
 void initStorage() {
-  gStorageReady = LittleFS.begin(true);
-  if (!gStorageReady) {
+  gLittleFsReady = LittleFS.begin(true);
+  if (!gLittleFsReady) {
     pushError("LittleFS init failed.");
+  }
+
+  gSdSpi.begin(kSdSckPin, kSdMisoPin, kSdMosiPin, kSdCsPin);
+  gSdReady = SD.begin(kSdCsPin, gSdSpi, kSdFrequencyHz);
+  if (gSdReady && SD.cardType() == CARD_NONE) {
+    SD.end();
+    gSdReady = false;
+  }
+  if (gSdReady) {
+    ensureVoiceStorageOn(SD);
+    ensurePomodoroStorageOn(SD);
+    logf("[SD] ready type=%u total=%lluMB used=%lluMB pins=sck%u miso%u mosi%u cs%u",
+         static_cast<unsigned>(SD.cardType()),
+         static_cast<unsigned long long>(SD.totalBytes() / (1024ULL * 1024ULL)),
+         static_cast<unsigned long long>(SD.usedBytes() / (1024ULL * 1024ULL)),
+         static_cast<unsigned>(kSdSckPin),
+         static_cast<unsigned>(kSdMisoPin),
+         static_cast<unsigned>(kSdMosiPin),
+         static_cast<unsigned>(kSdCsPin));
+    migrateLittleFsVoiceNotesToSd();
+  } else {
+    logf("[SD] not mounted; using LittleFS fallback");
+  }
+
+  gStorageReady = gSdReady || gLittleFsReady;
+  gStorageLabel = activeVoiceStorageLabel();
+  if (!gStorageReady) {
     setStatus("Storage unavailable", 1000);
     return;
   }
   ensureVoiceStorage();
+  if (!gSdReady && gLittleFsReady) {
+    ensurePomodoroStorageOn(LittleFS);
+  }
   loadVoiceNotes();
-  pushSystem("Storage ready");
+  scanAudioAssets();
+  loadAssetManifestSummary();
+  loadOtaManifestSummary();
+  loadConversationContexts();
+  pushSystem("Storage: " + gStorageLabel);
 }
 
 void startMic() {
@@ -1862,13 +3435,16 @@ bool queueRecordChunk(uint8_t chunkIndex) {
   return M5Cardputer.Mic.record(gRecordChunkBuffers[chunkIndex], kRecordChunkSamples, kMicSampleRate);
 }
 
-void serviceRecordingToFile() {
+void serviceRecordingToFile(bool refill) {
   if (!gRecording || !gRecordingToFile) {
     return;
   }
   size_t micQueued = M5Cardputer.Mic.isRecording();
   if (gRecordInflightChunks.size() > micQueued) {
     flushCompletedRecordChunksToFile(gRecordInflightChunks.size() - micQueued);
+  }
+  if (!refill) {
+    return;
   }
   while (gRecordInflightChunks.size() < 2) {
     uint8_t chunkIndex = gRecordNextChunkIndex;
@@ -1888,6 +3464,19 @@ void serviceRecordingToFile() {
     }
     gRecordInflightChunks.push_back(chunkIndex);
   }
+}
+
+void drainRecordingToFile() {
+  unsigned long deadline = millis() + kRecordDrainTimeoutMs;
+  while (millis() < deadline) {
+    serviceRecordingToFile(false);
+    if (M5Cardputer.Mic.isRecording() == 0 && gRecordInflightChunks.empty()) {
+      return;
+    }
+    yield();
+    delay(4);
+  }
+  serviceRecordingToFile(false);
 }
 
 void startRecording() {
@@ -1913,8 +3502,9 @@ void startRecording() {
 
   gRecordingToFile = gStorageReady && ensureVoiceStorage();
   if (gRecordingToFile) {
-    LittleFS.remove(kActiveRecordPcmPath);
-    gActiveRecordFile = LittleFS.open(kActiveRecordPcmPath, "w");
+    fs::FS* fs = activeVoiceFs();
+    fsRemove(*fs, kActiveRecordPcmPath);
+    gActiveRecordFile = fs->open(kActiveRecordPcmPath, "w");
     if (!gActiveRecordFile) {
       gRecordingToFile = false;
     } else {
@@ -2196,29 +3786,36 @@ bool writeClientAllFileStaged(WiFiClient& client, File& file, size_t length, con
     if (readBytes == 0) {
       break;
     }
-    size_t sent = client.write(stage, readBytes);
-    if (sent == 0) {
-      if (millis() - lastProgress > 3000) {
-        setHttpDiag(String(label) + ": stalled");
+    size_t sentFromStage = 0;
+    while (sentFromStage < readBytes && millis() < deadline) {
+      if (WiFi.status() != WL_CONNECTED) {
+        setHttpDiag(String(label) + ": wifi lost");
         return false;
       }
+      if (!client.connected()) {
+        setHttpDiag(String(label) + ": disconnected");
+        return false;
+      }
+      size_t sent = client.write(stage + sentFromStage, readBytes - sentFromStage);
+      if (sent == 0) {
+        if (millis() - lastProgress > 5000) {
+          setHttpDiag(String(label) + ": stalled");
+          return false;
+        }
+        yield();
+        delay(2);
+        continue;
+      }
+      sentFromStage += sent;
+      written += sent;
+      lastProgress = millis();
+      if ((written % (8 * 1024)) == 0 || written == length) {
+        setHttpDiag(String(label) + ": " + String(static_cast<unsigned>(written / 1024)) + "k/" +
+                    String(static_cast<unsigned>(length / 1024)) + "k");
+      }
       yield();
-      delay(2);
-      file.seek(file.position() - static_cast<int>(readBytes));
-      continue;
+      delay(1);
     }
-    if (sent != readBytes) {
-      setHttpDiag(String(label) + ": short");
-      return false;
-    }
-    written += sent;
-    lastProgress = millis();
-    if ((written % (8 * 1024)) == 0 || written == length) {
-      setHttpDiag(String(label) + ": " + String(static_cast<unsigned>(written / 1024)) + "k/" +
-                  String(static_cast<unsigned>(length / 1024)) + "k");
-    }
-    yield();
-    delay(1);
   }
 
   if (written != length) {
@@ -2244,7 +3841,9 @@ bool connectHubClient(WiFiClient& client, const char* reason, uint32_t readTimeo
     }
     if (client.connect(gHubHost.c_str(), gHubPort)) {
       client.setTimeout(readTimeoutSec);
-      client.setNoDelay(true);
+      if (!hubUsesTls()) {
+        client.setNoDelay(true);
+      }
       setHttpDiag(String(reason ? reason : "?") + ": connect ok");
       logf("[HTTP] connect ok reason=%s attempt=%u ip=%s",
            reason ? reason : "?",
@@ -2285,13 +3884,16 @@ String escapeJsonString(const String& raw) {
 
 String authHeaderLine() {
   if (gDeviceToken.isEmpty()) {
-    return "";
+    return "X-Device-Id: " + gDeviceId + "\r\n";
   }
-  return "Authorization: Bearer " + gDeviceToken + "\r\n";
+  return "Authorization: Bearer " + gDeviceToken + "\r\n" +
+         "X-Device-Token: " + gDeviceToken + "\r\n" +
+         "X-Device-Id: " + gDeviceId + "\r\n";
 }
 
 bool requestAndPlayTts(const String& text) {
-  if (text.isEmpty()) {
+  String speakText = cleanReplyForDevice(text);
+  if (speakText.isEmpty()) {
     setVoiceDiag("tts: empty/buffer");
     return false;
   }
@@ -2313,38 +3915,49 @@ bool requestAndPlayTts(const String& text) {
     pausedWsForTts = true;
   }
 
-  WiFiClient client;
-  client.setTimeout(30);
-  if (!client.connect(gHubHost.c_str(), gHubPort)) {
-    logf("[TTS] connect failed host=%s port=%u", gHubHost.c_str(), gHubPort);
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  String url = hubBaseUrl() + kDeviceTtsPath;
+  http.setTimeout(60000);
+  http.setReuse(false);
+  const char* responseHeaders[] = {"X-Audio-Sample-Rate"};
+  http.collectHeaders(responseHeaders, 1);
+
+  bool beginOk = false;
+  if (hubUsesTls()) {
+    secureClient.reset(new WiFiClientSecure());
+    secureClient->setInsecure();
+    secureClient->setHandshakeTimeout(12);
+    beginOk = http.begin(*secureClient, url);
+  } else {
+    beginOk = http.begin(url);
+  }
+  if (!beginOk) {
+    logf("[TTS] begin failed url=%s", url.c_str());
     setVoiceDiag("tts: connect failed");
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
     }
     return false;
   }
-  client.setNoDelay(true);
 
   String body =
       "{\"device_id\":\"" + escapeJsonString(gDeviceId) + "\",\"text\":\"" +
-      escapeJsonString(text) + "\"}";
-  String authHeader = authHeaderLine();
+      escapeJsonString(speakText) + "\"}";
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Id", gDeviceId);
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+    http.addHeader("X-Device-Token", gDeviceToken);
+  }
 
-  client.printf(
-      "POST %s HTTP/1.1\r\n"
-      "Host: %s:%u\r\n"
-      "%s"
-      "Content-Type: application/json\r\n"
-      "Content-Length: %u\r\n"
-      "Connection: close\r\n\r\n",
-      kDeviceTtsPath,
-      gHubHost.c_str(),
-      gHubPort,
-      authHeader.c_str(),
-      static_cast<unsigned>(body.length()));
-  if (!writeClientAll(client, body, "tts_body")) {
-    client.stop();
-    setVoiceDiag("tts: body write failed");
+  int statusCode = http.POST(reinterpret_cast<uint8_t*>(const_cast<char*>(body.c_str())), body.length());
+  if (statusCode <= 0) {
+    logf("[TTS] HTTPClient failed code=%d err=%s",
+         statusCode,
+         HTTPClient::errorToString(statusCode).c_str());
+    http.end();
+    setVoiceDiag("tts: httpclient " + String(statusCode));
     releaseTtsBuffer();
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
@@ -2352,12 +3965,19 @@ bool requestAndPlayTts(const String& text) {
     return false;
   }
 
-  int statusCode = 0;
-  int contentLength = -1;
-  uint32_t sampleRate = kTtsDefaultSampleRate;
-  if (!parseHttpStatusAndHeaders(client, statusCode, contentLength, sampleRate, 45000) || statusCode != 200) {
-    logf("[TTS] bad response status=%d", statusCode);
-    client.stop();
+  if (statusCode == 204) {
+    http.end();
+    setVoiceDiag("tts: empty pcm");
+    if (pausedWsForTts) {
+      resumeHubWebSocketAfterVoice();
+    }
+    return false;
+  }
+
+  if (statusCode != 200) {
+    String errorBody = http.getString();
+    logf("[TTS] bad response status=%d body=%s", statusCode, errorBody.c_str());
+    http.end();
     setVoiceDiag("tts: bad status " + String(statusCode));
     releaseTtsBuffer();
     if (pausedWsForTts) {
@@ -2366,8 +3986,9 @@ bool requestAndPlayTts(const String& text) {
     return false;
   }
 
-  if (!gStorageReady || !ensureVoiceStorage()) {
-    client.stop();
+  fs::FS* fs = activeVoiceFs();
+  if (!gStorageReady || !ensureVoiceStorage() || !fs) {
+    http.end();
     setVoiceDiag("tts: fs unavailable");
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
@@ -2375,10 +3996,19 @@ bool requestAndPlayTts(const String& text) {
     return false;
   }
 
-  LittleFS.remove(kActiveTtsPcmPath);
-  File pcmFile = LittleFS.open(kActiveTtsPcmPath, "w");
+  uint32_t sampleRate = kTtsDefaultSampleRate;
+  String sampleRateHeader = http.header("X-Audio-Sample-Rate");
+  if (!sampleRateHeader.isEmpty()) {
+    uint32_t parsed = static_cast<uint32_t>(sampleRateHeader.toInt());
+    if (parsed >= 8000 && parsed <= 48000) {
+      sampleRate = parsed;
+    }
+  }
+
+  fsRemove(*fs, kActiveTtsPcmPath);
+  File pcmFile = fs->open(kActiveTtsPcmPath, "w");
   if (!pcmFile) {
-    client.stop();
+    http.end();
     setVoiceDiag("tts: fs open failed");
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
@@ -2388,24 +4018,34 @@ bool requestAndPlayTts(const String& text) {
 
   size_t bytesRead = 0;
   uint8_t ioBuffer[1024];
+  int contentLength = http.getSize();
+  WiFiClient* stream = http.getStreamPtr();
   unsigned long deadline = millis() + 90000;
-  while ((client.connected() || client.available()) && millis() < deadline) {
-    if (!client.available()) {
+  while (stream && http.connected() && millis() < deadline &&
+         (contentLength < 0 || bytesRead < static_cast<size_t>(contentLength))) {
+    int avail = stream->available();
+    if (avail <= 0) {
       delay(1);
+      yield();
       continue;
     }
-    int avail = client.available();
     size_t chunk = static_cast<size_t>(avail);
     if (chunk > sizeof(ioBuffer)) {
       chunk = sizeof(ioBuffer);
     }
-    int got = client.read(ioBuffer, chunk);
+    if (contentLength > 0) {
+      size_t left = static_cast<size_t>(contentLength) - bytesRead;
+      if (chunk > left) {
+        chunk = left;
+      }
+    }
+    int got = stream->readBytes(ioBuffer, chunk);
     if (got > 0) {
       size_t written = pcmFile.write(ioBuffer, static_cast<size_t>(got));
       if (written != static_cast<size_t>(got)) {
         pcmFile.close();
-        client.stop();
-        LittleFS.remove(kActiveTtsPcmPath);
+        http.end();
+        fsRemove(*fs, kActiveTtsPcmPath);
         setVoiceDiag("tts: fs write failed");
         if (pausedWsForTts) {
           resumeHubWebSocketAfterVoice();
@@ -2413,26 +4053,41 @@ bool requestAndPlayTts(const String& text) {
         return false;
       }
       bytesRead += static_cast<size_t>(got);
+      if ((bytesRead % (16 * 1024)) == 0 || (contentLength > 0 && bytesRead == static_cast<size_t>(contentLength))) {
+        setVoiceDiag("tts: rx " + String(static_cast<unsigned>(bytesRead / 1024)) + "k");
+      }
     }
   }
   pcmFile.close();
-  client.stop();
+  http.end();
 
   if (bytesRead == 0) {
     logf("[TTS] empty PCM response");
     setVoiceDiag("tts: empty pcm");
-    LittleFS.remove(kActiveTtsPcmPath);
+    fsRemove(*fs, kActiveTtsPcmPath);
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
     }
     return false;
   }
 
-  rememberVoiceNoteFromPcmFile("Assistant voice", text, kActiveTtsPcmPath, bytesRead, sampleRate, true);
+  if (contentLength > 0 && bytesRead < static_cast<size_t>(contentLength)) {
+    logf("[TTS] short PCM response bytes=%u expected=%u",
+         static_cast<unsigned>(bytesRead),
+         static_cast<unsigned>(contentLength));
+    fsRemove(*fs, kActiveTtsPcmPath);
+    setVoiceDiag("tts: short pcm");
+    if (pausedWsForTts) {
+      resumeHubWebSocketAfterVoice();
+    }
+    return false;
+  }
+
+  rememberVoiceNoteFromPcmFile("Assistant voice", speakText, kActiveTtsPcmPath, bytesRead, sampleRate, true);
   bool started = startPlaybackStreamFromRawPcmFile(kActiveTtsPcmPath, sampleRate, bytesRead,
                                                    "tts: file " + String(static_cast<unsigned>(bytesRead / 1024)) + "k");
   if (!started) {
-    LittleFS.remove(kActiveTtsPcmPath);
+    fsRemove(*fs, kActiveTtsPcmPath);
   }
   if (pausedWsForTts) {
     resumeHubWebSocketAfterVoice();
@@ -2447,16 +4102,31 @@ bool sendTextTurn(const String& text) {
   }
 
   HTTPClient http;
-  String url = "http://" + gHubHost + ":" + String(gHubPort) + kDeviceTextTurnPath;
+  String url = hubBaseUrl() + kDeviceTextTurnPath;
   http.setTimeout(60000);
-  if (!http.begin(url)) {
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  bool beginOk = false;
+  if (hubUsesTls()) {
+    secureClient.reset(new WiFiClientSecure());
+    secureClient->setInsecure();
+    secureClient->setHandshakeTimeout(12);
+    beginOk = http.begin(*secureClient, url);
+  } else {
+    beginOk = http.begin(url);
+  }
+  if (!beginOk) {
     pushError("Failed to open HTTP connection.");
     return false;
   }
 
-  DynamicJsonDocument doc(512);
+  DynamicJsonDocument doc(768);
   doc["message"] = text;
   doc["device_id"] = gDeviceId;
+  doc["firmware_version"] = kAppVersion;
+  doc["conversation_key"] = currentConversationKey();
+  doc["input_type"] = "text";
+  doc["reply_audio"] = true;
+  doc["save_reply_audio"] = true;
 
   String body;
   serializeJson(doc, body);
@@ -2502,10 +4172,29 @@ bool sendTextTurn(const String& text) {
     return false;
   }
 
-  if (!resp["reply"].isNull()) {
-    String reply = resp["reply"].as<String>();
+  String reply = resp["reply"] | resp["full_text"] | resp["text"] | "";
+  String shortText = resp["short_text"] | "";
+  if (reply.isEmpty()) {
+    reply = shortText;
+  }
+  if (!reply.isEmpty()) {
     appendAssistantReply(reply);
-    requestAndPlayTts(reply);
+    String audioUrl;
+    String audioPath;
+    String audioTitle;
+    String audioSha;
+    uint32_t audioSize = 0;
+    if (resp["audio"].is<JsonObject>()) {
+      JsonObject audio = resp["audio"].as<JsonObject>();
+      audioUrl = audio["url"] | "";
+      audioPath = audio["path"] | "";
+      audioTitle = audio["title"] | "";
+      audioSha = audio["sha256"] | "";
+      audioSize = audio["size"] | 0;
+    }
+    if (!downloadAndPlayResponseAudio(audioUrl, audioPath, audioSha, audioSize, audioTitle, reply)) {
+      requestAndPlayTts(reply);
+    }
     logf("[TEXT] reply=%s", reply.c_str());
   } else {
     pushSystem("Hub accepted the turn.");
@@ -2516,6 +4205,243 @@ bool sendTextTurn(const String& text) {
   return true;
 }
 
+const char* batteryChargeLabel(m5::Power_Class::is_charging_t charging) {
+  switch (charging) {
+    case m5::Power_Class::is_charging:
+      return "Charging";
+    case m5::Power_Class::is_discharging:
+      return "Discharging";
+    case m5::Power_Class::charge_unknown:
+    default:
+      return "Unknown";
+  }
+}
+
+void updateBatterySnapshot(bool force) {
+  uint32_t now = millis();
+  if (!force && gLastBatterySampleMs != 0 && now - gLastBatterySampleMs < kBatterySampleIntervalMs) {
+    return;
+  }
+  gLastBatterySampleMs = now;
+  gBatterySnapshot.level = M5.Power.getBatteryLevel();
+  gBatterySnapshot.voltageMv = M5.Power.getBatteryVoltage();
+  gBatterySnapshot.currentMa = M5.Power.getBatteryCurrent();
+  gBatterySnapshot.charging = M5.Power.isCharging();
+}
+
+void textTurnTask(void* arg) {
+  std::unique_ptr<TextTurnTaskPayload> payload(static_cast<TextTurnTaskPayload*>(arg));
+  std::unique_ptr<TextTurnTaskResult> result(new TextTurnTaskResult());
+  if (!result) {
+    gTextTurnTaskHandle = nullptr;
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  result->response.reserve(2048);
+
+  if (payload->url.isEmpty()) {
+    result->error = "Hub is not configured.";
+  } else if (!ensureWifiForHttp("text-turn", 3000)) {
+    result->error = "Wi-Fi unavailable.";
+  } else {
+    HTTPClient http;
+    std::unique_ptr<WiFiClientSecure> secureClient;
+    http.setTimeout(60000);
+    bool beginOk = false;
+    if (hubUsesTls()) {
+      secureClient.reset(new WiFiClientSecure());
+      secureClient->setInsecure();
+      secureClient->setHandshakeTimeout(12);
+      beginOk = http.begin(*secureClient, payload->url);
+    } else {
+      beginOk = http.begin(payload->url);
+    }
+    if (!beginOk) {
+      result->error = "Failed to open HTTP connection.";
+    } else {
+      DynamicJsonDocument doc(768);
+      doc["message"] = payload->text;
+      doc["device_id"] = payload->deviceId;
+      doc["firmware_version"] = kAppVersion;
+      doc["conversation_key"] = payload->conversationKey;
+      doc["input_type"] = "text";
+      doc["reply_audio"] = true;
+      doc["save_reply_audio"] = true;
+
+      String body;
+      serializeJson(doc, body);
+      http.addHeader("Content-Type", "application/json");
+      if (!payload->deviceToken.isEmpty()) {
+        http.addHeader("Authorization", "Bearer " + payload->deviceToken);
+      }
+      int code = http.POST(body);
+      result->statusCode = code;
+      result->response = http.getString();
+      http.end();
+
+      if (code < 200 || code >= 300) {
+        result->error = code <= 0 ? "Hub request failed." : "Hub HTTP error: " + String(code);
+      } else {
+        DynamicJsonDocument resp(4096);
+        auto err = deserializeJson(resp, result->response);
+        result->parsed = !err;
+        if (err) {
+          result->error = "Could not parse hub response.";
+        } else {
+          String reply = resp["reply"] | resp["full_text"] | resp["text"] | "";
+          String shortText = resp["short_text"] | "";
+          if (reply.isEmpty()) {
+            reply = shortText;
+          }
+          result->shortText = shortText;
+          result->telegramDelivered = resp["telegram"]["delivered"] | false;
+          if (resp["audio"].is<JsonObject>()) {
+            JsonObject audio = resp["audio"].as<JsonObject>();
+            result->audioUrl = audio["url"] | "";
+            result->audioPath = audio["path"] | "";
+            result->audioTitle = audio["title"] | "";
+            result->audioSha256 = audio["sha256"] | "";
+            result->audioSize = audio["size"] | 0;
+          }
+          if (!reply.isEmpty()) {
+          result->hasReply = true;
+            result->reply = reply;
+          result->ok = true;
+        } else {
+          result->ok = true;
+          }
+        }
+      }
+    }
+  }
+
+  portENTER_CRITICAL(&gTextTurnMux);
+  if (gCompletedTextTurn == nullptr) {
+    gCompletedTextTurn = result.release();
+  } else {
+    delete gCompletedTextTurn;
+    gCompletedTextTurn = result.release();
+  }
+  portEXIT_CRITICAL(&gTextTurnMux);
+  vTaskDelete(nullptr);
+}
+
+void maybeStartNextTextTurn() {
+  if (gTextTurnTaskHandle != nullptr || gCompletedTextTurn != nullptr || !gActiveTextTurn.isEmpty()) {
+    return;
+  }
+  if (gPendingTextTurns.empty()) {
+    if (!gRecording) {
+      gSubmitting = false;
+      gThinking = false;
+      gAssistantPendingVisible = false;
+      if (!gPlaybackActive) {
+        setFaceMode(FaceMode::Idle);
+      }
+    }
+    return;
+  }
+
+  std::unique_ptr<TextTurnTaskPayload> payload(new TextTurnTaskPayload());
+  if (!payload) {
+    pushError("Send queue allocation failed.");
+    gPendingTextTurns.pop_front();
+    gSubmitting = false;
+    gThinking = false;
+    gAssistantPendingVisible = false;
+    setFaceMode(FaceMode::Error);
+    setStatus("Queue failed", 1500);
+    return;
+  }
+
+  payload->text = gPendingTextTurns.front();
+  gPendingTextTurns.pop_front();
+  payload->url = hubBaseUrl() + kDeviceTextTurnPath;
+  payload->deviceId = gDeviceId;
+  payload->deviceToken = gDeviceToken;
+  payload->conversationKey = currentConversationKey();
+
+  gActiveTextTurn = payload->text;
+  gSubmitting = true;
+  gThinking = true;
+  gAssistantPendingVisible = true;
+  setFaceMode(FaceMode::Thinking);
+  setStatus(gPendingTextTurns.empty() ? "Sending..." : ("Sending... +" + String(gPendingTextTurns.size())));
+
+  BaseType_t taskOk = xTaskCreate(
+      textTurnTask,
+      "text-turn",
+      kTextTurnTaskStackSize,
+      payload.release(),
+      1,
+      &gTextTurnTaskHandle);
+
+  if (taskOk != pdPASS) {
+    gActiveTextTurn = "";
+    gTextTurnTaskHandle = nullptr;
+    gSubmitting = false;
+    gThinking = false;
+    gAssistantPendingVisible = false;
+    pushError("Failed to start send task.");
+    setFaceMode(FaceMode::Error);
+    setStatus("Send failed", 1500);
+  }
+}
+
+void processCompletedTextTurn() {
+  TextTurnTaskResult* result = nullptr;
+  portENTER_CRITICAL(&gTextTurnMux);
+  result = gCompletedTextTurn;
+  gCompletedTextTurn = nullptr;
+  portEXIT_CRITICAL(&gTextTurnMux);
+  if (!result) {
+    return;
+  }
+
+  std::unique_ptr<TextTurnTaskResult> done(result);
+  gTextTurnTaskHandle = nullptr;
+  gActiveTextTurn = "";
+
+  if (!done->error.isEmpty()) {
+    logf("[TEXT] async error code=%d body=%s", done->statusCode, done->response.c_str());
+    pushError(done->error);
+    if (!done->response.isEmpty()) {
+      pushError(done->response);
+    }
+    setFaceMode(FaceMode::Error);
+    setStatus("Text turn failed", 2000);
+  } else if (done->ok && done->hasReply) {
+    appendAssistantReply(done->reply);
+    bool playedAudio = downloadAndPlayResponseAudio(done->audioUrl, done->audioPath, done->audioSha256,
+                                                    done->audioSize, done->audioTitle, done->reply);
+    if (!playedAudio) {
+      requestAndPlayTts(done->reply);
+    }
+    logf("[TEXT] async reply=%s", done->reply.c_str());
+    setStatus("Reply received", 1200);
+  } else if (done->ok) {
+    pushSystem("Hub accepted the turn.");
+    logf("[TEXT] async accepted without reply");
+    if (!gPlaybackActive) {
+      setFaceMode(FaceMode::Idle);
+    }
+    setStatus("Turn accepted", 1200);
+  }
+
+  if (!gPendingTextTurns.empty()) {
+    maybeStartNextTextTurn();
+    return;
+  }
+
+  gSubmitting = false;
+  gThinking = false;
+  gAssistantPendingVisible = false;
+  if (!gRecording && !gPlaybackActive) {
+    setFaceMode(FaceMode::Idle);
+  }
+}
+
 bool stopRecordingAndSend() {
   if (!gRecording) {
     return false;
@@ -2523,33 +4449,32 @@ bool stopRecordingAndSend() {
   gRecording = false;
 
   float elapsed = (millis() - gRecordStartMs) / 1000.0f;
-  size_t expectedSamples = static_cast<size_t>(elapsed * kMicSampleRate);
   size_t dataSize = 0;
   String pcmUploadPath;
 
+  setStatus("Finalizing...");
+  render();
+  gLastRenderMs = millis();
+
   if (gRecordingToFile) {
-    gActiveRecordExpectedBytes = expectedSamples * sizeof(int16_t);
-    stopMic();
-    size_t remainingBytes = gActiveRecordExpectedBytes > gActiveRecordCommittedBytes
-                                ? (gActiveRecordExpectedBytes - gActiveRecordCommittedBytes)
-                                : 0;
-    while (!gRecordInflightChunks.empty() && remainingBytes > 0) {
-      uint8_t chunkIndex = gRecordInflightChunks.front();
-      gRecordInflightChunks.pop_front();
-      size_t writeBytes = remainingBytes > kRecordChunkBytes ? kRecordChunkBytes : remainingBytes;
-      if (gActiveRecordFile) {
-        gActiveRecordFile.write(reinterpret_cast<const uint8_t*>(gRecordChunkBuffers[chunkIndex]), writeBytes);
-      }
-      gActiveRecordBytes += writeBytes;
-      remainingBytes -= writeBytes;
+    drainRecordingToFile();
+    size_t queuedBeforeStop = M5Cardputer.Mic.isRecording();
+    if (queuedBeforeStop > 0 || !gRecordInflightChunks.empty()) {
+      logf("[VOICE] dropping tail queued=%u inflight=%u",
+           static_cast<unsigned>(queuedBeforeStop),
+           static_cast<unsigned>(gRecordInflightChunks.size()));
     }
+    stopMic();
+    gRecordInflightChunks.clear();
     if (gActiveRecordFile) {
+      gActiveRecordFile.flush();
       gActiveRecordFile.close();
     }
     gRecordedSamples = gActiveRecordBytes / sizeof(int16_t);
     dataSize = static_cast<uint32_t>(gActiveRecordBytes);
     pcmUploadPath = gActiveRecordPath;
   } else {
+    size_t expectedSamples = static_cast<size_t>(elapsed * kMicSampleRate);
     gRecordedSamples = expectedSamples;
     if (gRecordedSamples > gRecordCapacitySamples) {
       gRecordedSamples = gRecordCapacitySamples;
@@ -2567,8 +4492,11 @@ bool stopRecordingAndSend() {
     setStatus("Voice turn canceled", 1200);
     logf("[VOICE] canceled: too short");
     if (gRecordingToFile) {
+      fs::FS* fs = activeVoiceFs();
       if (!pcmUploadPath.isEmpty()) {
-        LittleFS.remove(pcmUploadPath);
+        if (fs) {
+          fsRemove(*fs, pcmUploadPath);
+        }
       }
       gRecordingToFile = false;
       gActiveRecordPath = "";
@@ -2589,9 +4517,12 @@ bool stopRecordingAndSend() {
     setVoiceDiag("voice: wifi lost");
     logf("[VOICE] wifi lost before upload");
     if (gRecordingToFile) {
+      fs::FS* fs = activeVoiceFs();
       if (!pcmUploadPath.isEmpty()) {
         rememberVoiceNoteFromPcmFile("My voice", "Outbound voice note", pcmUploadPath, dataSize, kMicSampleRate, false);
-        LittleFS.remove(pcmUploadPath);
+        if (fs) {
+          fsRemove(*fs, pcmUploadPath);
+        }
       }
       gRecordingToFile = false;
       gActiveRecordPath = "";
@@ -2628,16 +4559,32 @@ bool stopRecordingAndSend() {
   }
   logHeapStats("voice-upload");
 
-  WiFiClient client;
-  if (!connectHubClient(client, "voice-upload", 45)) {
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  String url = hubBaseUrl() + kDeviceAudioTurnRawPath;
+  http.setTimeout(60000);
+  http.setReuse(false);
+  bool beginOk = false;
+  if (hubUsesTls()) {
+    secureClient.reset(new WiFiClientSecure());
+    secureClient->setInsecure();
+    secureClient->setHandshakeTimeout(12);
+    beginOk = http.begin(*secureClient, url);
+  } else {
+    beginOk = http.begin(url);
+  }
+  if (!beginOk) {
     pushError("Voice upload connect failed.");
     setFaceMode(FaceMode::Error);
     setStatus("Voice upload failed", 2000);
     setVoiceDiag("voice: upload connect failed");
-    logf("[VOICE] upload connect failed host=%s port=%u", gHubHost.c_str(), gHubPort);
+    logf("[VOICE] upload begin failed url=%s", url.c_str());
     finishVoiceTurn();
     if (gRecordingToFile) {
-      LittleFS.remove(pcmUploadPath);
+      fs::FS* fs = activeVoiceFs();
+      if (fs) {
+        fsRemove(*fs, pcmUploadPath);
+      }
       gRecordingToFile = false;
       gActiveRecordPath = "";
       gActiveRecordBytes = 0;
@@ -2649,99 +4596,42 @@ bool stopRecordingAndSend() {
     return false;
   }
 
-  String authHeader = authHeaderLine();
-  String request =
-      String("POST ") + kDeviceAudioTurnRawPath + " HTTP/1.1\r\n" +
-      "Host: " + gHubHost + ":" + String(gHubPort) + "\r\n" +
-      authHeader +
-      "Content-Type: application/octet-stream\r\n" +
-      "X-Audio-Sample-Rate: " + String(kMicSampleRate) + "\r\n" +
-      "Content-Length: " + String(dataSize) + "\r\n" +
-      "Connection: close\r\n\r\n";
-
-  if (!writeClientAll(client, request, "voice_raw_header")) {
-    client.stop();
-    pushError("Voice upload body failed.");
-    setFaceMode(FaceMode::Error);
-    setStatus("Voice upload failed", 2000);
-    setVoiceDiag("voice: upload header failed");
-    logf("[VOICE] upload raw header write failed");
-    finishVoiceTurn();
-    releaseRecordBuffer();
-    return false;
+  http.addHeader("Content-Type", "application/octet-stream");
+  http.addHeader("X-Audio-Sample-Rate", String(kMicSampleRate));
+  http.addHeader("X-Device-Id", gDeviceId);
+  http.addHeader("X-Firmware-Version", kAppVersion);
+  http.addHeader("X-Conversation-Key", currentConversationKey());
+  http.addHeader("X-Reply-Audio", "true");
+  http.addHeader("X-Save-Reply-Audio", "true");
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+    http.addHeader("X-Device-Token", gDeviceToken);
   }
 
   setStatus("Transcribing...");
   render();
   gLastRenderMs = millis();
-  bool uploadOk = false;
+  int statusCode = -1;
   if (gRecordingToFile) {
-    File pcmFile = LittleFS.open(pcmUploadPath, "r");
+    fs::FS* fs = activeVoiceFs();
+    File pcmFile = fs ? fs->open(pcmUploadPath, "r") : File();
     if (pcmFile) {
-      uploadOk = writeClientAllFileStaged(client, pcmFile, dataSize, "voice_pcm");
+      setHttpDiag("voice_pcm: http stream " + String(static_cast<unsigned>(dataSize / 1024)) + "k");
+      statusCode = http.sendRequest("POST", &pcmFile, dataSize);
       pcmFile.close();
     }
   } else {
-    const uint8_t* pcmBytes = reinterpret_cast<const uint8_t*>(gRecordBuffer);
-    uploadOk = writeClientAllStaged(client, pcmBytes, dataSize, "voice_pcm");
+    setHttpDiag("voice_pcm: http ram " + String(static_cast<unsigned>(dataSize / 1024)) + "k");
+    statusCode = http.POST(reinterpret_cast<uint8_t*>(gRecordBuffer), dataSize);
   }
-  if (!uploadOk) {
-    client.stop();
-    pushError("Voice upload body failed.");
-    setFaceMode(FaceMode::Error);
-    setStatus("Voice upload failed", 2000);
-    setVoiceDiag("voice: upload body failed");
-    logf("[VOICE] upload body write failed bytes=%u", static_cast<unsigned>(dataSize));
-    finishVoiceTurn();
-    if (gRecordingToFile) {
-      LittleFS.remove(pcmUploadPath);
-      gRecordingToFile = false;
-      gActiveRecordPath = "";
-      gActiveRecordBytes = 0;
-      gActiveRecordCommittedBytes = 0;
-      gActiveRecordExpectedBytes = 0;
-    } else {
-      releaseRecordBuffer();
-    }
-    return false;
-  }
-
-  int statusCode = 0;
-  int contentLength = -1;
-  uint32_t ignoredRate = 0;
-  if (!parseHttpStatusAndHeaders(client, statusCode, contentLength, ignoredRate, 90000)) {
-    client.stop();
-    pushError("Voice response header failed.");
-    setFaceMode(FaceMode::Error);
-    setStatus("Voice turn failed", 2000);
-    setVoiceDiag("voice: response header failed");
-    logf("[VOICE] response header failed");
-    finishVoiceTurn();
-    if (gRecordingToFile) {
-      LittleFS.remove(pcmUploadPath);
-      gRecordingToFile = false;
-      gActiveRecordPath = "";
-      gActiveRecordBytes = 0;
-      gActiveRecordCommittedBytes = 0;
-      gActiveRecordExpectedBytes = 0;
-    } else {
-      releaseRecordBuffer();
-    }
-    return false;
-  }
-
-  String response;
-  unsigned long deadline = millis() + 45000;
-  while ((client.connected() || client.available()) && millis() < deadline) {
-    while (client.available()) {
-      response += static_cast<char>(client.read());
-    }
-    delay(1);
-  }
-  client.stop();
+  String response = statusCode > 0 ? http.getString() : "";
+  http.end();
   finishVoiceTurn();
   if (gRecordingToFile) {
-    LittleFS.remove(pcmUploadPath);
+    fs::FS* fs = activeVoiceFs();
+    if (fs) {
+      fsRemove(*fs, pcmUploadPath);
+    }
     gRecordingToFile = false;
     gActiveRecordPath = "";
     gActiveRecordBytes = 0;
@@ -2749,6 +4639,19 @@ bool stopRecordingAndSend() {
     gActiveRecordExpectedBytes = 0;
   } else {
     releaseRecordBuffer();
+  }
+
+  if (statusCode <= 0) {
+    pushError("Voice upload body failed.");
+    setFaceMode(FaceMode::Error);
+    setStatus("Voice upload failed", 2000);
+    setVoiceDiag("voice: httpclient " + String(statusCode));
+    setHttpDiag(HTTPClient::errorToString(statusCode));
+    logf("[VOICE] HTTPClient upload failed code=%d err=%s bytes=%u",
+         statusCode,
+         HTTPClient::errorToString(statusCode).c_str(),
+         static_cast<unsigned>(dataSize));
+    return false;
   }
 
   if (statusCode < 200 || statusCode >= 300) {
@@ -2774,8 +4677,25 @@ bool stopRecordingAndSend() {
     return false;
   }
 
-  String transcript = resp["transcript"] | "";
-  String reply = resp["reply"] | "";
+  String transcript = resp["transcript"] | resp["text"] | "";
+  String reply = resp["reply"] | resp["full_text"] | "";
+  String shortText = resp["short_text"] | "";
+  if (reply.isEmpty()) {
+    reply = shortText;
+  }
+  String audioUrl;
+  String audioPath;
+  String audioTitle;
+  String audioSha;
+  uint32_t audioSize = 0;
+  if (resp["audio"].is<JsonObject>()) {
+    JsonObject audio = resp["audio"].as<JsonObject>();
+    audioUrl = audio["url"] | "";
+    audioPath = audio["path"] | "";
+    audioTitle = audio["title"] | "";
+    audioSha = audio["sha256"] | "";
+    audioSize = audio["size"] | 0;
+  }
   logf("[VOICE] transcript=%s", transcript.c_str());
   logf("[VOICE] reply=%s", reply.c_str());
   if (!transcript.isEmpty()) {
@@ -2784,7 +4704,8 @@ bool stopRecordingAndSend() {
   }
   if (!reply.isEmpty()) {
     appendAssistantReply(reply);
-    if (!requestAndPlayTts(reply)) {
+    if (!downloadAndPlayResponseAudio(audioUrl, audioPath, audioSha, audioSize, audioTitle, reply) &&
+        !requestAndPlayTts(reply)) {
       logf("[VOICE] TTS request failed");
       setFaceMode(FaceMode::Idle);
       setStatus("Reply text only", 1200);
@@ -3138,9 +5059,10 @@ bool handleLocalCommand(const String& input) {
 
   if (cmd == "/help") {
     pushSystem("Ctrl+Space = EN/RU");
-    pushSystem("Ctrl x2 = start/stop voice");
-    pushSystem("Tab + < > = mode switch, Ctrl+D = debug");
-    pushSystem("/face /hero /chat /clock /voice /dbg");
+    pushSystem("Voice: Ctrl x2, Ctrl+V, or hold G0");
+    pushSystem("Tab = next screen, Tab+Down/Right = next app");
+    pushSystem("Ctrl+L = launcher map, arrows = group/item");
+    pushSystem("Ctrl+D = debug, /voice /focus /contexts");
     return true;
   }
 
@@ -3148,6 +5070,7 @@ bool handleLocalCommand(const String& input) {
     pushSystem("device_id=" + gDeviceId);
     pushSystem("wifi=" + String(gWifiReady ? WiFi.localIP().toString() : "offline"));
     pushSystem("hub=" + (gHubHost.isEmpty() ? String("unset") : gHubHost + ":" + String(gHubPort)));
+    pushSystem("ctx=" + currentConversationKey());
     return true;
   }
 
@@ -3196,6 +5119,76 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/battery") {
+    setUiMode(UiMode::Battery);
+    return true;
+  }
+
+  if (cmd == "/focus") {
+    setUiMode(UiMode::Focus);
+    return true;
+  }
+
+  if (cmd == "/focusreset" || cmd == "/freset") {
+    focusReset();
+    setUiMode(UiMode::Focus);
+    return true;
+  }
+
+  if (cmd == "/library") {
+    scanAudioAssets();
+    setUiMode(UiMode::Library);
+    return true;
+  }
+
+  if (cmd == "/assets") {
+    loadAssetManifestSummary();
+    scanAudioAssets();
+    setUiMode(UiMode::Assets);
+    return true;
+  }
+
+  if (cmd == "/ota") {
+    loadOtaManifestSummary();
+    setUiMode(UiMode::Ota);
+    return true;
+  }
+
+  if (cmd == "/contexts") {
+    loadConversationContexts();
+    setUiMode(UiMode::Contexts);
+    return true;
+  }
+
+  if (cmd == "/settings") {
+    setUiMode(UiMode::Settings);
+    return true;
+  }
+
+  if (cmd == "/syncassets") {
+    fetchRemoteAssetManifest();
+    syncAssetsFromManifest();
+    setUiMode(UiMode::Assets);
+    return true;
+  }
+
+  if (cmd == "/fetchota") {
+    fetchRemoteOtaManifest();
+    setUiMode(UiMode::Ota);
+    return true;
+  }
+
+  if (cmd == "/sendlogs") {
+    uploadRuntimeLogs();
+    setUiMode(UiMode::Logs);
+    return true;
+  }
+
+  if (cmd == "/logs") {
+    setUiMode(UiMode::Logs);
+    return true;
+  }
+
   if (cmd == "/scrollup") {
     scrollChatBy(1);
     return true;
@@ -3220,13 +5213,22 @@ void submitInput() {
     return;
   }
   pushUser(text);
-  sendTextTurn(text);
+  gPendingTextTurns.push_back(text);
+  gAssistantPendingVisible = true;
+  if (gSubmitting || gTextTurnTaskHandle != nullptr || !gActiveTextTurn.isEmpty()) {
+    setStatus("Queued +" + String(gPendingTextTurns.size()), 1000);
+  }
+  maybeStartNextTextTurn();
 }
 
 void handleLauncherKey(char key, const Keyboard_Class::KeysState& keys) {
-  if (key >= '1' && key <= '6') {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (key >= '1' && key <= '7') {
     gLauncherSelection = key - '1';
-    applyLauncherSelection();
+    uint8_t count = kLauncherGroups[gLauncherSelection].count;
+    if (gLauncherSubSelection >= count) {
+      gLauncherSubSelection = count - 1;
+    }
     return;
   }
   if (keys.enter || key == '\n' || key == '\r') {
@@ -3235,12 +5237,18 @@ void handleLauncherKey(char key, const Keyboard_Class::KeysState& keys) {
   }
   if (key == ',' || key == ';') {
     moveLauncherSelection(-1);
-    applyLauncherSelection();
     return;
   }
   if (key == '.' || key == '/') {
     moveLauncherSelection(1);
-    applyLauncherSelection();
+    return;
+  }
+  if (lowerKey == 'w' || lowerKey == 'k') {
+    moveLauncherSubSelection(-1);
+    return;
+  }
+  if (lowerKey == 's' || lowerKey == 'j') {
+    moveLauncherSubSelection(1);
     return;
   }
 }
@@ -3250,17 +5258,48 @@ void handleVoicePlayerKey(char key, const Keyboard_Class::KeysState& keys) {
     setStatus("No voice notes", 1000);
     return;
   }
-  if (key == ',' || key == ';') {
+  auto playSelected = [&]() {
+    if (gPlaybackActive) {
+      stopPlaybackStream();
+      gPlaybackActive = false;
+    }
+    gVoiceTickerX = 90;
+    if (!playVoiceNoteAt(gSelectedVoiceNote)) {
+      setStatus("Playback failed", 1000);
+    }
+  };
+
+  if (key == ',' || key == ';' || key == 'p' || key == 'P') {
     gSelectedVoiceNote = max(0, gSelectedVoiceNote - 1);
+    gVoiceTickerX = 230;
     setStatus("Voice " + String(gSelectedVoiceNote + 1), 600);
+    if (key == 'p' || key == 'P') {
+      playSelected();
+    }
     return;
   }
-  if (key == '.' || key == '/') {
+  if (key == '.' || key == '/' || key == 'n' || key == 'N') {
     gSelectedVoiceNote = min(static_cast<int>(gVoiceNotes.size()) - 1, gSelectedVoiceNote + 1);
+    gVoiceTickerX = 230;
     setStatus("Voice " + String(gSelectedVoiceNote + 1), 600);
+    if (key == 'n' || key == 'N') {
+      playSelected();
+    }
     return;
   }
-  if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+  if (key == 'b' || key == 'B') {
+    gSelectedVoiceNote = random(0, static_cast<int>(gVoiceNotes.size()));
+    gVoiceTickerX = 230;
+    playSelected();
+    return;
+  }
+  if (key == 'v' || key == 'V') {
+    gSpeakerVolume = gSpeakerVolume >= 224 ? 64 : gSpeakerVolume + 32;
+    M5Cardputer.Speaker.setVolume(gSpeakerVolume);
+    setStatus("Vol " + String(gSpeakerVolume), 600);
+    return;
+  }
+  if (key == 'a' || key == 'A' || keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
     if (gPlaybackActive) {
       stopPlaybackStream();
       gPlaybackActive = false;
@@ -3268,9 +5307,7 @@ void handleVoicePlayerKey(char key, const Keyboard_Class::KeysState& keys) {
       setStatus("Playback stopped", 800);
       return;
     }
-    if (!playVoiceNoteAt(gSelectedVoiceNote)) {
-      setStatus("Playback failed", 1000);
-    }
+    playSelected();
     return;
   }
   if (key == '-' && gSpeakerVolume >= 32) {
@@ -3286,12 +5323,454 @@ void handleVoicePlayerKey(char key, const Keyboard_Class::KeysState& keys) {
   }
 }
 
+bool handleFocusKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+    focusStartOrResume();
+    return true;
+  }
+  if (lowerKey == 'r' || keys.del || key == '\b') {
+    focusReset();
+    return true;
+  }
+  if (lowerKey == 's') {
+    focusSnooze();
+    return true;
+  }
+  if (lowerKey == 'n') {
+    if (focusStateRuns(gFocus.state)) {
+      gFocus.remainingSec = 0;
+      focusAdvance();
+    } else {
+      focusEnterState(FocusState::Focus);
+    }
+    return true;
+  }
+  if (lowerKey == 'm') {
+    gFocusSettings.metronome = !gFocusSettings.metronome;
+    saveFocusSettings();
+    setStatus(gFocusSettings.metronome ? "Metronome on" : "Metronome off", 900);
+    return true;
+  }
+  if (lowerKey == 'a') {
+    gFocusSettings.autoStart = !gFocusSettings.autoStart;
+    saveFocusSettings();
+    setStatus(gFocusSettings.autoStart ? "Auto on" : "Auto off", 900);
+    return true;
+  }
+  if (lowerKey == 'z') {
+    gFocusSettings.bpm = gFocusSettings.bpm <= kFocusMinBpm + 5 ? kFocusMinBpm : gFocusSettings.bpm - 5;
+    saveFocusSettings();
+    setStatus("BPM " + String(gFocusSettings.bpm), 700);
+    return true;
+  }
+  if (lowerKey == 'x') {
+    gFocusSettings.bpm = min<uint16_t>(kFocusMaxBpm, gFocusSettings.bpm + 5);
+    saveFocusSettings();
+    setStatus("BPM " + String(gFocusSettings.bpm), 700);
+    return true;
+  }
+  if (lowerKey == 'q') {
+    gFocusSettings.focusSec = max<uint32_t>(kFocusMinDurationSec, gFocusSettings.focusSec - 5UL * 60UL);
+    if (gFocus.state == FocusState::Stopped) {
+      focusReset();
+    }
+    saveFocusSettings();
+    setStatus("Focus " + String(gFocusSettings.focusSec / 60) + "m", 900);
+    return true;
+  }
+  if (lowerKey == 'w') {
+    gFocusSettings.focusSec = min<uint32_t>(kFocusMaxDurationSec, gFocusSettings.focusSec + 5UL * 60UL);
+    if (gFocus.state == FocusState::Stopped) {
+      focusReset();
+    }
+    saveFocusSettings();
+    setStatus("Focus " + String(gFocusSettings.focusSec / 60) + "m", 900);
+    return true;
+  }
+  if (key == '-' && gSpeakerVolume >= 32) {
+    gSpeakerVolume -= 32;
+    M5Cardputer.Speaker.setVolume(gSpeakerVolume);
+    setStatus("Vol " + String(gSpeakerVolume), 600);
+    return true;
+  }
+  if ((key == '=' || key == '+') && gSpeakerVolume <= 223) {
+    gSpeakerVolume += 32;
+    M5Cardputer.Speaker.setVolume(gSpeakerVolume);
+    setStatus("Vol " + String(gSpeakerVolume), 600);
+    return true;
+  }
+  if (key == '?' || lowerKey == 'h') {
+    gFocus.helpVisible = !gFocus.helpVisible;
+    setStatus(gFocus.helpVisible ? "Focus help" : "Focus clean", 700);
+    return true;
+  }
+  return false;
+}
+
+bool handleLibraryKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'r') {
+    scanAudioAssets();
+    setStatus("Library rescanned", 900);
+    return true;
+  }
+  if (gAudioAssets.empty()) {
+    return lowerKey == 'r';
+  }
+  if (key == ',' || key == ';') {
+    gSelectedAudioAsset = max<int>(0, gSelectedAudioAsset - 1);
+    setStatus("Asset " + String(gSelectedAudioAsset + 1), 500);
+    return true;
+  }
+  if (key == '.' || key == '/') {
+    gSelectedAudioAsset = min<int>(static_cast<int>(gAudioAssets.size()) - 1, gSelectedAudioAsset + 1);
+    setStatus("Asset " + String(gSelectedAudioAsset + 1), 500);
+    return true;
+  }
+  if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+    if (gPlaybackActive) {
+      stopPlaybackStream();
+      gPlaybackActive = false;
+      setStatus("Playback stopped", 800);
+      return true;
+    }
+    gSelectedAudioAsset = clampValue<int>(gSelectedAudioAsset, 0, static_cast<int>(gAudioAssets.size()) - 1);
+    if (!startPlaybackStreamFromWavFile(gAudioAssets[gSelectedAudioAsset].path, "asset: " + gAudioAssets[gSelectedAudioAsset].title)) {
+      setStatus("Asset play failed", 1200);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool handleAssetsKey(char key) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'f') {
+    fetchRemoteAssetManifest();
+    setStatus("Asset manifest fetched", 900);
+    return true;
+  }
+  if (lowerKey == 's') {
+    syncAssetsFromManifest();
+    return true;
+  }
+  if (lowerKey == 'r') {
+    loadAssetManifestSummary();
+    scanAudioAssets();
+    setStatus("Assets reloaded", 900);
+    return true;
+  }
+  return false;
+}
+
+bool handleOtaKey(char key) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'f') {
+    fetchRemoteOtaManifest();
+    return true;
+  }
+  if (lowerKey == 'r') {
+    loadOtaManifestSummary();
+    setStatus("OTA manifest reloaded", 900);
+    return true;
+  }
+  if (lowerKey == 'a') {
+    applyOtaFromManifest();
+    return true;
+  }
+  return false;
+}
+
+bool handleContextsKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'r') {
+    loadConversationContexts();
+    setStatus("Contexts reloaded", 900);
+    return true;
+  }
+  if (gContexts.empty()) {
+    return lowerKey == 'r';
+  }
+  if (key == ',' || key == ';') {
+    gSelectedContext = max<int>(0, gSelectedContext - 1);
+    setStatus(gContexts[gSelectedContext].shortName, 700);
+    return true;
+  }
+  if (key == '.' || key == '/') {
+    gSelectedContext = min<int>(static_cast<int>(gContexts.size()) - 1, gSelectedContext + 1);
+    setStatus(gContexts[gSelectedContext].shortName, 700);
+    return true;
+  }
+  if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+    saveCurrentContext();
+    setStatus("Context " + gContexts[gSelectedContext].shortName, 1200);
+    return true;
+  }
+  return false;
+}
+
+bool handleLogsKey(char key) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (key == ',' || key == ';') {
+    gLogScrollOffset = min<int>(gLogScrollOffset + 1, max<int>(0, static_cast<int>(gRuntimeLogs.size()) - 5));
+    return true;
+  }
+  if (key == '.' || key == '/') {
+    gLogScrollOffset = max<int>(0, gLogScrollOffset - 1);
+    return true;
+  }
+  if (lowerKey == 'r') {
+    scanAudioAssets();
+    loadAssetManifestSummary();
+    loadOtaManifestSummary();
+    loadConversationContexts();
+    appendRuntimeLog("LOG", "manual refresh", true);
+    setStatus("Diagnostics refreshed", 900);
+    return true;
+  }
+  if (lowerKey == 'u') {
+    uploadRuntimeLogs();
+    return true;
+  }
+  return false;
+}
+
+bool handleSettingsKey(char key) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (key == ',' || key == ';') {
+    gSelectedSetting = (gSelectedSetting + kSettingsItemCount - 1) % kSettingsItemCount;
+    return true;
+  }
+  if (key == '.' || key == '/') {
+    gSelectedSetting = (gSelectedSetting + 1) % kSettingsItemCount;
+    return true;
+  }
+  if (lowerKey == 'r') {
+    loadDeviceSettings();
+    loadFocusSettings();
+    setStatus("Settings reloaded", 900);
+    return true;
+  }
+  if (lowerKey == 's') {
+    saveDeviceSettings();
+    saveFocusSettings();
+    setStatus("Settings saved", 900);
+    return true;
+  }
+  if (key == '-' || lowerKey == 'z') {
+    switch (gSelectedSetting) {
+      case 0:
+        gFocusSettings.focusSec = max<uint32_t>(kFocusMinDurationSec, gFocusSettings.focusSec - 5UL * 60UL);
+        break;
+      case 1:
+        gFocusSettings.shortBreakSec = max<uint32_t>(kFocusMinDurationSec, gFocusSettings.shortBreakSec - 60UL);
+        break;
+      case 2:
+        gFocusSettings.longBreakSec = max<uint32_t>(kFocusMinDurationSec, gFocusSettings.longBreakSec - 5UL * 60UL);
+        break;
+      case 3:
+        gFocusSettings.cyclesPerRound = max<uint8_t>(1, gFocusSettings.cyclesPerRound - 1);
+        break;
+      case 6:
+        gFocusSettings.bpm = max<uint16_t>(kFocusMinBpm, gFocusSettings.bpm - 5);
+        break;
+      case 7:
+        gDeviceSettings.minBatteryForUpdate = max<uint8_t>(5, gDeviceSettings.minBatteryForUpdate - 5);
+        break;
+      case 9:
+        gDeviceSettings.clockFace = (gDeviceSettings.clockFace + kClockFaceCount - 1) % kClockFaceCount;
+        break;
+      default:
+        break;
+    }
+    saveDeviceSettings();
+    saveFocusSettings();
+    setStatus("Setting -", 500);
+    return true;
+  }
+  if (key == '+' || key == '=' || lowerKey == 'x') {
+    switch (gSelectedSetting) {
+      case 0:
+        gFocusSettings.focusSec = min<uint32_t>(kFocusMaxDurationSec, gFocusSettings.focusSec + 5UL * 60UL);
+        break;
+      case 1:
+        gFocusSettings.shortBreakSec = min<uint32_t>(kFocusMaxDurationSec, gFocusSettings.shortBreakSec + 60UL);
+        break;
+      case 2:
+        gFocusSettings.longBreakSec = min<uint32_t>(kFocusMaxDurationSec, gFocusSettings.longBreakSec + 5UL * 60UL);
+        break;
+      case 3:
+        gFocusSettings.cyclesPerRound = min<uint8_t>(9, gFocusSettings.cyclesPerRound + 1);
+        break;
+      case 6:
+        gFocusSettings.bpm = min<uint16_t>(kFocusMaxBpm, gFocusSettings.bpm + 5);
+        break;
+      case 7:
+        gDeviceSettings.minBatteryForUpdate = min<uint8_t>(95, gDeviceSettings.minBatteryForUpdate + 5);
+        break;
+      case 9:
+        gDeviceSettings.clockFace = (gDeviceSettings.clockFace + 1) % kClockFaceCount;
+        break;
+      default:
+        break;
+    }
+    saveDeviceSettings();
+    saveFocusSettings();
+    setStatus("Setting +", 500);
+    return true;
+  }
+  if (key == ' ' || key == '\n' || key == '\r' || lowerKey == 't') {
+    switch (gSelectedSetting) {
+      case 4:
+        gFocusSettings.autoStart = !gFocusSettings.autoStart;
+        break;
+      case 5:
+        gDeviceSettings.autoUpdateFirmware = !gDeviceSettings.autoUpdateFirmware;
+        break;
+      case 8:
+        if (gDeviceSettings.audioLanguage == "ru") {
+          gDeviceSettings.audioLanguage = "en";
+        } else if (gDeviceSettings.audioLanguage == "en") {
+          gDeviceSettings.audioLanguage = "es";
+        } else {
+          gDeviceSettings.audioLanguage = "ru";
+        }
+        break;
+      case 9:
+        gDeviceSettings.clockFace = (gDeviceSettings.clockFace + 1) % kClockFaceCount;
+        break;
+      default:
+        break;
+    }
+    saveDeviceSettings();
+    saveFocusSettings();
+    setStatus("Setting toggled", 700);
+    return true;
+  }
+  return false;
+}
+
+const char* clockFaceName(uint8_t face) {
+  switch (face % kClockFaceCount) {
+    case 1:
+      return "Neon";
+    case 2:
+      return "Analog";
+    case 3:
+      return "Split";
+    case 0:
+    default:
+      return "Classic";
+  }
+}
+
+void cycleClockFace(int delta = 1) {
+  gDeviceSettings.clockFace =
+      (gDeviceSettings.clockFace + kClockFaceCount + delta) % kClockFaceCount;
+  saveDeviceSettings();
+  setStatus(String("Clock: ") + clockFaceName(gDeviceSettings.clockFace), 900);
+  setKeyDiag(String("clockface:") + clockFaceName(gDeviceSettings.clockFace));
+}
+
+void cancelRecordingDiscard() {
+  if (!gRecording) {
+    return;
+  }
+  gRecording = false;
+  stopMic();
+  if (gRecordingToFile) {
+    gRecordInflightChunks.clear();
+    if (gActiveRecordFile) {
+      gActiveRecordFile.close();
+    }
+    fs::FS* fs = activeVoiceFs();
+    if (fs && !gActiveRecordPath.isEmpty()) {
+      fsRemove(*fs, gActiveRecordPath);
+    }
+    gRecordingToFile = false;
+    gActiveRecordPath = "";
+    gActiveRecordBytes = 0;
+    gActiveRecordCommittedBytes = 0;
+    gActiveRecordExpectedBytes = 0;
+  } else {
+    releaseRecordBuffer();
+  }
+  gRecordedSamples = 0;
+}
+
+bool handleGlobalEscape() {
+  bool changed = false;
+
+  if (gRecording) {
+    cancelRecordingDiscard();
+    changed = true;
+  }
+  if (gPlaybackActive) {
+    stopPlaybackStream();
+    gPlaybackActive = false;
+    changed = true;
+  }
+  if (gDebugOverlayVisible) {
+    gDebugOverlayVisible = false;
+    changed = true;
+  }
+  if (gLauncherVisible) {
+    gLauncherVisible = false;
+    changed = true;
+  }
+  if (gFocus.helpVisible) {
+    gFocus.helpVisible = false;
+    changed = true;
+  }
+  if (!gInputBuffer.isEmpty()) {
+    gInputBuffer = "";
+    changed = true;
+  }
+  if (gChatScrollOffset != 0 || gLogScrollOffset != 0) {
+    gChatScrollOffset = 0;
+    gLogScrollOffset = 0;
+    changed = true;
+  }
+
+  gLastCtrlTapMs = 0;
+  gCtrlSoloHeld = false;
+  gCtrlSoloCandidate = false;
+
+  if (!gSubmitting && !gThinking) {
+    gAssistantPendingVisible = false;
+    setFaceMode(FaceMode::Idle);
+  }
+
+  if (!gBleActive) {
+    setUiMode(UiMode::ChatFace);
+  }
+  setStatus("Ready", 1000);
+  setKeyDiag("esc:reset");
+  appendRuntimeLog("UI", "escape reset", false);
+  return changed || gUiMode != UiMode::ChatFace;
+}
+
 void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
   setKeyDiag(String("key=") + String(static_cast<int>(key)));
+  if (key == '`' || key == '~' || key == 27 || hasHidKey(keys, kHidKeyEscape)) {
+    handleGlobalEscape();
+    return;
+  }
   if (keys.ctrl && keys.space) {
     gKeyboardLayout = (gKeyboardLayout == KeyboardLayout::En) ? KeyboardLayout::Ru : KeyboardLayout::En;
     setStatus(String("Layout ") + layoutName(gKeyboardLayout), 900);
+    return;
+  }
+  if (keys.ctrl && lowerKey == 'v') {
+    if (gRecording) {
+      logf("[VOICE] Ctrl+V stop");
+      stopRecordingAndSend();
+    } else {
+      logf("[VOICE] Ctrl+V start");
+      startRecording();
+    }
     return;
   }
   if (keys.ctrl && lowerKey == 'd') {
@@ -3300,7 +5779,7 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     setKeyDiag(gDebugOverlayVisible ? "dbg:on" : "dbg:off");
     return;
   }
-  if (keys.tab) {
+  if (keys.ctrl && lowerKey == 'l') {
     uint32_t now = millis();
     if (now - gLastLauncherToggleMs < kLauncherToggleDebounceMs) {
       return;
@@ -3310,12 +5789,37 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     setStatus(gLauncherVisible ? "Launcher" : "Launcher closed", 700);
     return;
   }
+  if (keys.tab) {
+    cycleCurrentAppScreen(1);
+    return;
+  }
   if (gLauncherVisible) {
     handleLauncherKey(key, keys);
     return;
   }
   if (gUiMode == UiMode::Voice) {
     handleVoicePlayerKey(key, keys);
+    return;
+  }
+  if (gUiMode == UiMode::Focus && handleFocusKey(key, keys)) {
+    return;
+  }
+  if (gUiMode == UiMode::Library && handleLibraryKey(key, keys)) {
+    return;
+  }
+  if (gUiMode == UiMode::Assets && handleAssetsKey(key)) {
+    return;
+  }
+  if (gUiMode == UiMode::Ota && handleOtaKey(key)) {
+    return;
+  }
+  if (gUiMode == UiMode::Contexts && handleContextsKey(key, keys)) {
+    return;
+  }
+  if (gUiMode == UiMode::Settings && handleSettingsKey(key)) {
+    return;
+  }
+  if (gUiMode == UiMode::Logs && handleLogsKey(key)) {
     return;
   }
   if (gInputBuffer.isEmpty() && (key == ',' || key == '<' || key == ';' ||
@@ -3355,7 +5859,7 @@ bool hasHidKey(const Keyboard_Class::KeysState& keys, uint8_t keyCode) {
 }
 
 void pollTyping() {
-  if (gRecording || gSubmitting) {
+  if (gRecording) {
     return;
   }
 
@@ -3368,6 +5872,7 @@ void pollTyping() {
   static bool pDown = false;
   static bool pLeft = false;
   static bool pRight = false;
+  static bool pEsc = false;
   static String pWordSignature;
 
   bool enterDown = keys.enter && !pEnter;
@@ -3378,6 +5883,7 @@ void pollTyping() {
   bool downHeld = hasHidKey(keys, 0xD9);
   bool leftHeld = hasHidKey(keys, 0xD8);
   bool rightHeld = hasHidKey(keys, 0xD7);
+  bool escHeld = hasHidKey(keys, kHidKeyEscape);
   bool upDown = upHeld && !pUp;
   bool downDown = downHeld && !pDown;
   bool leftDown = leftHeld && !pLeft;
@@ -3389,23 +5895,30 @@ void pollTyping() {
   }
   char curWordChar = keys.word.empty() ? 0 : keys.word[0];
   bool charDown = !wordSignature.isEmpty() && wordSignature != pWordSignature;
+  bool escDown = (escHeld && !pEsc) || (charDown && (curWordChar == '`' || curWordChar == '~'));
   bool tabPrevCombo = keys.tab && (leftDown || upDown ||
                                    (charDown && (curWordChar == ',' || curWordChar == ';' || curWordChar == '<')));
   bool tabNextCombo = keys.tab && (rightDown || downDown ||
                                    (charDown && (curWordChar == '.' || curWordChar == '/' || curWordChar == '>')));
 
-  if (tabPrevCombo) {
-    gLauncherVisible = true;
-    handleLauncherKey(',', keys);
+  if (escDown) {
+    handleGlobalEscape();
+  } else if (tabPrevCombo) {
+    switchLauncherGroupAndApply(-1);
   } else if (tabNextCombo) {
-    gLauncherVisible = true;
-    handleLauncherKey('.', keys);
+    switchLauncherGroupAndApply(1);
+  } else if (tabDown && gUiMode == UiMode::Clock && !gLauncherVisible) {
+    cycleClockFace(1);
   } else if (tabDown) {
-    handleTypingKey(0, keys);
-  } else if (gLauncherVisible && (leftDown || upDown)) {
+    cycleCurrentAppScreen(1);
+  } else if (gLauncherVisible && leftDown) {
     handleLauncherKey(',', keys);
-  } else if (gLauncherVisible && (rightDown || downDown)) {
+  } else if (gLauncherVisible && rightDown) {
     handleLauncherKey('.', keys);
+  } else if (gLauncherVisible && upDown) {
+    moveLauncherSubSelection(-1);
+  } else if (gLauncherVisible && downDown) {
+    moveLauncherSubSelection(1);
   } else if (spaceDown && keys.ctrl) {
     handleTypingKey(' ', keys);
   } else if (enterDown) {
@@ -3426,6 +5939,7 @@ void pollTyping() {
   pDown = downHeld;
   pLeft = leftHeld;
   pRight = rightHeld;
+  pEsc = escHeld;
   pWordSignature = wordSignature;
 }
 
@@ -3866,7 +6380,7 @@ void renderDebugOverlay() {
   d.print(static_cast<unsigned>(gTtsCapacityBytes / 1024));
   d.print("k");
   d.setCursor(150, 42);
-  d.print(gStorageReady ? "fs=ok" : "fs=off");
+  d.print(gStorageReady ? gStorageLabel : "fs=off");
   d.setCursor(14, 56);
   String diag = gLastVoiceDiag;
   if (diag.length() > 28) {
@@ -3889,31 +6403,571 @@ void renderDebugOverlay() {
   d.print(String(uiModeName(gUiMode)).substring(0, 6));
 }
 
+void drawLauncherIcon(uint8_t group, int16_t x, int16_t y, int16_t s, uint16_t accent, uint16_t bg) {
+  auto& d = gCanvas;
+  int16_t cx = x + s / 2;
+  int16_t cy = y + s / 2;
+  d.fillRoundRect(x, y, s, s, 14, bg);
+  d.drawRoundRect(x, y, s, s, 14, accent);
+  d.fillCircle(cx, cy, s / 3, rgb565_local(10, 14, 26));
+  d.drawCircle(cx, cy, s / 3 + 4, accent);
+  switch (group) {
+    case 0:
+      d.drawRoundRect(x + 12, y + 18, s - 24, 28, 8, accent);
+      d.fillTriangle(x + 28, y + 46, x + 38, y + 46, x + 28, y + 56, accent);
+      d.drawFastHLine(x + 24, y + 30, s - 48, accent);
+      d.drawFastHLine(x + 24, y + 38, s - 58, accent);
+      break;
+    case 1:
+      d.drawRoundRect(x + 10, y + 22, 26, 22, 10, accent);
+      d.drawRoundRect(x + s - 36, y + 22, 26, 22, 10, accent);
+      d.fillCircle(x + 23, y + 33, 5, accent);
+      d.fillCircle(x + s - 23, y + 33, 5, accent);
+      break;
+    case 2:
+      d.setFont(&fonts::Font4);
+      d.setTextColor(accent, bg);
+      d.setCursor(x + 19, y + 24);
+      d.print("25");
+      d.drawArc(cx, cy, 31, 25, 35, 310, accent);
+      d.setFont(&fonts::Font2);
+      break;
+    case 3:
+      for (int i = 0; i < 8; ++i) {
+        int h = 8 + ((i * 7 + millis() / 80) % 26);
+        d.fillRoundRect(x + 14 + i * 7, y + 52 - h, 4, h, 2, accent);
+      }
+      d.drawCircle(cx, cy, 18, accent);
+      break;
+    case 4:
+      d.drawRoundRect(x + 17, y + 18, s - 34, 32, 8, accent);
+      d.drawLine(x + 28, y + 34, x + 42, y + 46, accent);
+      d.drawLine(x + 42, y + 46, x + 57, y + 24, accent);
+      d.fillCircle(x + 57, y + 24, 4, accent);
+      break;
+    case 5:
+      d.drawCircle(cx, cy, 25, accent);
+      d.drawFastHLine(cx - 25, cy, 50, accent);
+      d.drawFastVLine(cx, cy - 25, 50, accent);
+      d.fillCircle(cx, cy, 5, accent);
+      break;
+    case 6:
+    default:
+      d.drawRoundRect(x + 15, y + 22, s - 30, 28, 6, accent);
+      d.drawFastHLine(x + 23, y + 34, s - 46, accent);
+      d.drawFastHLine(x + 23, y + 43, s - 56, accent);
+      d.fillCircle(x + s - 22, y + 36, 5, accent);
+      break;
+  }
+}
+
 void renderLauncherOverlay() {
   if (!gLauncherVisible) {
     return;
   }
-  static const char* kEntries[] = {"Chat+Face", "Face", "Hero", "Chat", "Clock", "Voice"};
   auto& d = gCanvas;
-  d.fillRoundRect(28, 8, 184, 118, 14, 0x0000);
-  d.drawRoundRect(28, 8, 184, 118, 14, 0x4228);
+  gLauncherSelection = clampValue<int>(gLauncherSelection, 0, kLauncherGroupCount - 1);
+  const LauncherGroup& group = kLauncherGroups[gLauncherSelection];
+  gLauncherSubSelection = clampValue<int>(gLauncherSubSelection, 0, group.count - 1);
+
+  const uint16_t bg = rgb565_local(7, 10, 20);
+  const uint16_t panel = rgb565_local(18, 24, 42);
+  const uint16_t selected = rgb565_local(36, 54, 82);
+  d.fillRoundRect(5, 5, 230, 125, 16, bg);
+  d.drawRoundRect(5, 5, 230, 125, 16, group.accent);
+  d.fillRoundRect(12, 12, 82, 94, 14, panel);
+  drawLauncherIcon(gLauncherSelection, 19, 18, 68, group.accent, panel);
+
   d.setFont(&fonts::Font2);
-  d.setTextColor(TFT_YELLOW, TFT_BLACK);
-  d.setCursor(40, 20);
+  d.setTextColor(group.accent, bg);
+  d.setCursor(19, 92);
+  d.print(group.title);
+  d.setTextColor(TFT_DARKGREY, bg);
+  d.setCursor(14, 111);
+  d.print("< group >");
+
+  d.setTextColor(TFT_WHITE, bg);
+  d.setCursor(106, 14);
   d.print("Launcher");
-  d.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  d.setCursor(40, 30);
-  d.print("modes");
-  for (int i = 0; i < kLauncherModeCount; ++i) {
-    int y = 44 + i * 12;
-    bool selected = i == gLauncherSelection;
-    if (selected) {
-      d.fillRoundRect(36, y - 2, 138, 12, 6, 0x2945);
-    }
-    d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, selected ? 0x2945 : TFT_BLACK);
-    d.setCursor(46, y);
-    d.print(kEntries[i]);
+  d.setTextColor(TFT_DARKGREY, bg);
+  d.setCursor(182, 14);
+  d.print(String(gLauncherSelection + 1) + "/" + String(kLauncherGroupCount));
+  d.setTextColor(TFT_LIGHTGREY, bg);
+  d.setCursor(106, 28);
+  d.print(group.hint);
+
+  for (uint8_t i = 0; i < group.count; ++i) {
+    int y = 48 + i * 24;
+    bool isSelected = i == gLauncherSubSelection;
+    d.fillRoundRect(104, y, 120, 20, 8, isSelected ? selected : panel);
+    d.drawRoundRect(104, y, 120, 20, 8, isSelected ? group.accent : rgb565_local(42, 48, 68));
+    d.setTextColor(isSelected ? TFT_WHITE : TFT_LIGHTGREY, isSelected ? selected : panel);
+    d.setCursor(114, y + 5);
+    d.print(group.items[i].label);
   }
+  d.setTextColor(TFT_DARKGREY, bg);
+  d.setCursor(108, 116);
+  d.print("^/v item Enter open Ctrl+V voice");
+}
+
+void renderBatteryUi() {
+  updateBatterySnapshot();
+  auto& d = gCanvas;
+  d.fillScreen(0x0210);
+
+  d.fillRoundRect(8, 8, 224, 118, 16, 0x0841);
+  d.drawRoundRect(8, 8, 224, 118, 16, 0x31C7);
+
+  int level = gBatterySnapshot.level < 0 ? 0 : gBatterySnapshot.level;
+  level = clampValue(level, 0, 100);
+  int barX = 22;
+  int barY = 28;
+  int barW = 140;
+  int barH = 28;
+  int fillW = (barW - 8) * level / 100;
+  uint16_t barColor = level >= 60 ? rgb565_local(90, 255, 150)
+                     : level >= 25 ? TFT_GOLD
+                                   : rgb565_local(255, 110, 80);
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(TFT_YELLOW, 0x0841);
+  d.setCursor(22, 16);
+  d.print("Battery");
+
+  d.drawRoundRect(barX, barY, barW, barH, 8, TFT_LIGHTGREY);
+  d.fillRect(barX + barW, barY + 8, 6, 12, TFT_LIGHTGREY);
+  d.fillRoundRect(barX + 4, barY + 4, max(0, fillW), barH - 8, 5, barColor);
+
+  d.setFont(&fonts::Font7);
+  d.setTextColor(TFT_WHITE, 0x0841);
+  d.setCursor(166, 22);
+  d.print(String(level));
+  d.setFont(&fonts::Font4);
+  d.setCursor(208, 36);
+  d.print("%");
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(TFT_CYAN, 0x0841);
+  d.setCursor(22, 70);
+  d.print("State");
+  d.setCursor(92, 70);
+  d.setTextColor(TFT_WHITE, 0x0841);
+  d.print(batteryChargeLabel(gBatterySnapshot.charging));
+
+  d.setTextColor(TFT_CYAN, 0x0841);
+  d.setCursor(22, 84);
+  d.print("Voltage");
+  d.setCursor(92, 84);
+  d.setTextColor(TFT_WHITE, 0x0841);
+  if (gBatterySnapshot.voltageMv > 0) {
+    d.print(String(gBatterySnapshot.voltageMv / 1000.0f, 2) + "V");
+  } else {
+    d.print("--");
+  }
+
+  d.setTextColor(TFT_CYAN, 0x0841);
+  d.setCursor(22, 98);
+  d.print("Current");
+  d.setCursor(92, 98);
+  d.setTextColor(TFT_WHITE, 0x0841);
+  d.print(String(gBatterySnapshot.currentMa) + "mA");
+
+  d.setTextColor(TFT_CYAN, 0x0841);
+  d.setCursor(22, 112);
+  d.print("Storage");
+  d.setCursor(92, 112);
+  d.setTextColor(TFT_WHITE, 0x0841);
+  if (gStorageReady) {
+    uint64_t totalKb = activeStorageTotalBytes() / 1024ULL;
+    uint64_t usedKb = activeStorageUsedBytes() / 1024ULL;
+    String unit = "KB";
+    uint64_t totalShown = totalKb;
+    uint64_t usedShown = usedKb;
+    if (totalKb > 1024ULL * 10ULL) {
+      unit = "MB";
+      totalShown = totalKb / 1024ULL;
+      usedShown = usedKb / 1024ULL;
+    }
+    d.print(gStorageLabel + " " + String(static_cast<unsigned long>(usedShown)) + "/" +
+            String(static_cast<unsigned long>(totalShown)) + unit);
+  } else {
+    d.print("off");
+  }
+
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+void drawCardHeader(const String& title, uint16_t accent) {
+  auto& d = gCanvas;
+  d.fillScreen(0x0208);
+  d.fillRoundRect(6, 6, 228, 123, 14, 0x0841);
+  d.drawRoundRect(6, 6, 228, 123, 14, accent);
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, 0x0841);
+  d.setCursor(14, 14);
+  d.print(title);
+}
+
+String compactBytes(uint32_t bytes) {
+  if (bytes >= 1024UL * 1024UL) {
+    return String(bytes / (1024UL * 1024UL)) + "MB";
+  }
+  if (bytes >= 1024UL) {
+    return String(bytes / 1024UL) + "KB";
+  }
+  return String(bytes) + "B";
+}
+
+String marqueeText(const String& text, int32_t pixelLimit, uint16_t stepMs = 240) {
+  if (gCanvas.textWidth(text) <= pixelLimit) {
+    return text;
+  }
+  String padded = text + "    " + text;
+  int len = text.length() + 4;
+  int offset = len > 0 ? static_cast<int>((millis() / stepMs) % len) : 0;
+  String out = padded.substring(offset);
+  while (out.length() > 1 && gCanvas.textWidth(out) > pixelLimit) {
+    out.remove(out.length() - 1);
+  }
+  return out;
+}
+
+void renderFocusUi() {
+  auto& d = gCanvas;
+  uint16_t bg = 0x0000;
+  uint16_t panel = 0x0841;
+  uint16_t accent = 0x07FF;
+  uint16_t soft = 0x39E7;
+  if (gFocus.state == FocusState::ShortBreak || gFocus.state == FocusState::LongBreak) {
+    bg = 0x0208;
+    panel = 0x0320;
+    accent = 0x07E0;
+    soft = 0x2589;
+  } else if (gFocus.state == FocusState::Reflect) {
+    bg = 0x0808;
+    panel = 0x180C;
+    accent = 0xFD20;
+    soft = 0x7BEF;
+  } else if (gFocus.state == FocusState::Paused || gFocus.state == FocusState::Stopped) {
+    bg = 0x0008;
+    panel = 0x1082;
+    accent = 0x867F;
+    soft = 0x4208;
+  }
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, accent);
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, panel);
+  d.setCursor(14, 12);
+  d.print(focusStateName(gFocus.state));
+  d.setTextColor(TFT_LIGHTGREY, panel);
+  d.setCursor(88, 12);
+  d.print("cycle ");
+  d.print(gFocus.cycle);
+  d.print("/");
+  d.print(gFocusSettings.cyclesPerRound);
+  d.setCursor(171, 12);
+  d.print(String(gFocus.completedToday) + " done");
+
+  String timeText = focusTimeString(gFocus.remainingSec);
+  d.setFont(&fonts::Font7);
+  d.setTextColor(accent, panel);
+  int timeWidth = d.textWidth(timeText);
+  d.setCursor(max<int>(8, (240 - timeWidth) / 2), 31);
+  d.print(timeText);
+
+  uint16_t pulse = (millis() / 500) % 2 ? accent : soft;
+  int avatarX = 204;
+  int avatarY = 83;
+  d.drawCircle(avatarX, avatarY, 13, soft);
+  d.drawCircle(avatarX, avatarY, 8, pulse);
+  d.fillCircle(avatarX - 4, avatarY - 2, 2, accent);
+  d.fillCircle(avatarX + 4, avatarY - 2, 2, accent);
+  if (gFocus.state == FocusState::Focus) {
+    d.drawLine(avatarX - 5, avatarY + 5, avatarX + 5, avatarY + 5, accent);
+  } else if (gFocus.state == FocusState::Reflect) {
+    d.drawLine(avatarX - 5, avatarY + 5, avatarX, avatarY + 8, accent);
+    d.drawLine(avatarX, avatarY + 8, avatarX + 5, avatarY + 5, accent);
+  } else {
+    d.drawLine(avatarX - 4, avatarY + 6, avatarX + 4, avatarY + 6, accent);
+  }
+
+  uint32_t elapsed = gFocus.sessionTotalSec > gFocus.remainingSec ? gFocus.sessionTotalSec - gFocus.remainingSec : 0;
+  int progress = gFocus.sessionTotalSec ? static_cast<int>((elapsed * 208ULL) / gFocus.sessionTotalSec) : 0;
+  progress = clampValue<int>(progress, 0, 208);
+  d.drawRoundRect(16, 96, 208, 9, 5, soft);
+  d.fillRoundRect(17, 97, max<int>(1, progress), 7, 4, accent);
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(TFT_LIGHTGREY, panel);
+  d.setCursor(16, 111);
+  if (gFocus.helpVisible) {
+    d.print("Enter pause R reset S +5 N next");
+  } else {
+    d.print("Enter start  M ");
+    d.print(gFocusSettings.metronome ? "metro" : "quiet");
+    d.print("  ");
+    d.print(gFocusSettings.bpm);
+    d.print("bpm  ? help");
+  }
+
+  if (gFocus.helpVisible) {
+    d.fillRoundRect(18, 28, 204, 86, 10, 0x0000);
+    d.drawRoundRect(18, 28, 204, 86, 10, accent);
+    d.setTextColor(TFT_WHITE, 0x0000);
+    d.setCursor(28, 38);
+    d.print("Focus controls");
+    d.setTextColor(TFT_LIGHTGREY, 0x0000);
+    d.setCursor(28, 54);
+    d.print("Space/Enter start/pause");
+    d.setCursor(28, 68);
+    d.print("R reset  S +5m  N next");
+    d.setCursor(28, 82);
+    d.print("Q/W focus min  A auto");
+    d.setCursor(28, 96);
+    d.print("Z/X bpm  +/- volume");
+  }
+
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+void renderLibraryUi() {
+  drawCardHeader("Audio Library", 0xFD20);
+  auto& d = gCanvas;
+  d.setTextColor(TFT_WHITE, 0x0841);
+  d.setCursor(16, 34);
+  d.print("assets ");
+  d.print(gAudioAssets.size());
+  d.print("  voice ");
+  d.print(gVoiceNotes.size());
+  d.setTextColor(TFT_LIGHTGREY, 0x0841);
+  d.setCursor(16, 48);
+  d.print(kPomodoroAudioDir);
+  if (gAudioAssets.empty()) {
+    d.setTextColor(0xFD20, 0x0841);
+    d.setCursor(16, 70);
+    d.print("No WAV assets yet");
+    d.setTextColor(TFT_LIGHTGREY, 0x0841);
+    d.setCursor(16, 96);
+    d.print("R rescan, put files on SD");
+  } else {
+    gSelectedAudioAsset = clampValue<int>(gSelectedAudioAsset, 0, static_cast<int>(gAudioAssets.size()) - 1);
+    int start = max<int>(0, min<int>(gSelectedAudioAsset - 2, static_cast<int>(gAudioAssets.size()) - 5));
+    int end = min<int>(static_cast<int>(gAudioAssets.size()), start + 5);
+    for (int i = start; i < end; ++i) {
+      int y = 64 + (i - start) * 12;
+      bool selected = i == gSelectedAudioAsset;
+      uint16_t bg = selected ? 0x4208 : 0x0841;
+      d.fillRoundRect(14, y - 1, 212, 12, 4, bg);
+      d.setTextColor(selected ? TFT_WHITE : TFT_CYAN, bg);
+      d.setCursor(18, y);
+      d.print((selected ? "> " : "  ") + trimPreview(gAudioAssets[i].category + "/" + gAudioAssets[i].title, 28));
+    }
+  }
+  d.setTextColor(TFT_LIGHTGREY, 0x0841);
+  d.setCursor(16, 116);
+  d.print("</> pick Enter play R scan");
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+void renderAssetsUi() {
+  drawCardHeader("Asset Sync", 0x07E0);
+  auto& d = gCanvas;
+  d.setTextColor(TFT_WHITE, 0x0841);
+  d.setCursor(16, 34);
+  d.print("manifest ");
+  d.print(gAssetManifest.present ? (gAssetManifest.parsed ? "ok" : "bad") : "missing");
+  d.setCursor(16, 48);
+  d.print("version ");
+  d.print(gAssetManifest.version.isEmpty() ? "-" : gAssetManifest.version.substring(0, 16));
+  d.setCursor(16, 62);
+  d.print("files ");
+  d.print(gAssetManifest.fileCount);
+  d.print("  ");
+  d.print(compactBytes(gAssetManifest.totalBytes));
+  d.setCursor(16, 76);
+  d.print("storage ");
+  d.print(gStorageReady ? gStorageLabel : "off");
+  d.setCursor(16, 90);
+  d.print("audio index ");
+  fs::FS* fs = activeVoiceFs();
+  d.print((fs && fsExists(*fs, kAudioIndexPath)) ? "yes" : "no");
+  d.setTextColor(TFT_LIGHTGREY, 0x0841);
+  d.setCursor(16, 112);
+  d.print("F fetch S sync R load");
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+void renderOtaUi() {
+  drawCardHeader("Firmware OTA", 0xF800);
+  auto& d = gCanvas;
+  d.setTextColor(TFT_WHITE, 0x0841);
+  d.setCursor(16, 34);
+  d.print("version ");
+  d.print(kAppVersion);
+  d.setCursor(16, 48);
+  d.print("git ");
+  d.print(String(kBuildGitSha).substring(0, 10));
+  d.setCursor(16, 62);
+  d.print("manifest ");
+  d.print(gOtaManifest.present ? (gOtaManifest.parsed ? "ok" : "bad") : "missing");
+  d.setCursor(16, 76);
+  d.print("candidate ");
+  d.print(gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version.substring(0, 14));
+  d.setCursor(16, 90);
+  d.print("policy ");
+  d.print(gOtaManifest.confirmRequired ? "manual confirm" : "auto allowed");
+  d.setTextColor(TFT_LIGHTGREY, 0x0841);
+  d.setCursor(16, 112);
+  d.print("F fetch R load A apply SHA");
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+String settingLabel(uint8_t index) {
+  switch (index) {
+    case 0:
+      return "Focus";
+    case 1:
+      return "Short break";
+    case 2:
+      return "Long break";
+    case 3:
+      return "Cycles";
+    case 4:
+      return "Auto focus";
+    case 5:
+      return "Auto OTA";
+    case 6:
+      return "BPM";
+    case 7:
+      return "OTA battery";
+    case 8:
+      return "Audio lang";
+    case 9:
+      return "Clock face";
+    default:
+      return "-";
+  }
+}
+
+String settingValue(uint8_t index) {
+  switch (index) {
+    case 0:
+      return String(gFocusSettings.focusSec / 60) + "m";
+    case 1:
+      return String(gFocusSettings.shortBreakSec / 60) + "m";
+    case 2:
+      return String(gFocusSettings.longBreakSec / 60) + "m";
+    case 3:
+      return String(gFocusSettings.cyclesPerRound);
+    case 4:
+      return gFocusSettings.autoStart ? "on" : "off";
+    case 5:
+      return gDeviceSettings.autoUpdateFirmware ? "on" : "off";
+    case 6:
+      return String(gFocusSettings.bpm);
+    case 7:
+      return String(gDeviceSettings.minBatteryForUpdate) + "%";
+    case 8:
+      return gDeviceSettings.audioLanguage;
+    case 9:
+      return clockFaceName(gDeviceSettings.clockFace);
+    default:
+      return "-";
+  }
+}
+
+void renderSettingsUi() {
+  drawCardHeader("Settings", 0x7BEF);
+  auto& d = gCanvas;
+  gSelectedSetting = clampValue<int>(gSelectedSetting, 0, kSettingsItemCount - 1);
+  int start = max<int>(0, min<int>(gSelectedSetting - 2, kSettingsItemCount - 5));
+  for (int i = 0; i < 5; ++i) {
+    int idx = start + i;
+    if (idx >= kSettingsItemCount) {
+      break;
+    }
+    int y = 35 + i * 15;
+    bool selected = idx == gSelectedSetting;
+    uint16_t bg = selected ? 0x4208 : 0x0841;
+    d.fillRoundRect(14, y - 2, 212, 14, 4, bg);
+    d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, bg);
+    d.setCursor(18, y);
+    d.print(settingLabel(idx));
+    String value = settingValue(idx);
+    int w = d.textWidth(value);
+    d.setCursor(max<int>(120, 222 - w), y);
+    d.print(value);
+  }
+  d.setTextColor(TFT_LIGHTGREY, 0x0841);
+  d.setCursor(16, 112);
+  d.print("</> pick +/- edit Space toggle S save");
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+void renderContextsUi() {
+  drawCardHeader("OpenClaw Context", 0x7BEF);
+  auto& d = gCanvas;
+  if (gContexts.empty()) {
+    d.setTextColor(TFT_ORANGE, 0x0841);
+    d.setCursor(16, 42);
+    d.print("No contexts");
+  } else {
+    gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
+    int start = max<int>(0, min<int>(gSelectedContext - 2, static_cast<int>(gContexts.size()) - 5));
+    int end = min<int>(static_cast<int>(gContexts.size()), start + 5);
+    for (int i = start; i < end; ++i) {
+      int y = 36 + (i - start) * 15;
+      bool selected = i == gSelectedContext;
+      uint16_t bg = selected ? 0x4208 : 0x0841;
+      d.fillRoundRect(14, y - 2, 212, 14, 4, bg);
+      d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, bg);
+      d.setCursor(18, y);
+      d.print((selected ? "> " : "  ") + trimPreview(gContexts[i].label, 24));
+    }
+  }
+  d.setTextColor(TFT_LIGHTGREY, 0x0841);
+  d.setCursor(16, 112);
+  d.print("</> select Enter save");
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+void renderLogsUi() {
+  drawCardHeader("Logs / Status", 0xC618);
+  auto& d = gCanvas;
+  d.setTextColor(TFT_WHITE, 0x0841);
+  d.setCursor(16, 34);
+  d.print(WiFi.isConnected() ? WiFi.localIP().toString() : "wifi off");
+  d.print(" ");
+  d.print(gStorageLabel);
+  int visible = 5;
+  int maxOffset = max<int>(0, static_cast<int>(gRuntimeLogs.size()) - visible);
+  gLogScrollOffset = clampValue<int>(gLogScrollOffset, 0, maxOffset);
+  int start = max<int>(0, static_cast<int>(gRuntimeLogs.size()) - visible - gLogScrollOffset);
+  for (int i = 0; i < visible; ++i) {
+    int idx = start + i;
+    if (idx >= static_cast<int>(gRuntimeLogs.size())) {
+      break;
+    }
+    d.setTextColor(TFT_LIGHTGREY, 0x0841);
+    d.setCursor(16, 50 + i * 12);
+    d.print(trimPreview(gRuntimeLogs[idx], 34));
+  }
+  d.setTextColor(TFT_LIGHTGREY, 0x0841);
+  d.setCursor(16, 116);
+  d.print("</> scroll R reload U upload");
+  renderLauncherOverlay();
+  renderDebugOverlay();
 }
 
 void renderModeFooter(const String& left, const String& right = "") {
@@ -3982,70 +7036,266 @@ void renderHeroUi() {
 
 void renderClockUi() {
   auto& d = gCanvas;
-  d.fillScreen(0x0000);
   ensureBangkokTimezone();
-  d.setTextColor(TFT_CYAN, TFT_BLACK);
+  d.fillScreen(0x0000);
   String hhmm = "--:--";
+  String hh = "--";
+  String mm = "--";
   String ss = "--";
+  String date = "-- ---";
+  int hour = 0;
+  int minute = 0;
+  int second = 0;
   time_t now = time(nullptr);
   if (now > 100000) {
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
+    hour = timeinfo.tm_hour;
+    minute = timeinfo.tm_min;
+    second = timeinfo.tm_sec;
     char buf[6];
     strftime(buf, sizeof(buf), "%H:%M", &timeinfo);
     hhmm = buf;
+    char hBuf[3];
+    strftime(hBuf, sizeof(hBuf), "%H", &timeinfo);
+    hh = hBuf;
+    char mBuf[3];
+    strftime(mBuf, sizeof(mBuf), "%M", &timeinfo);
+    mm = mBuf;
     char secBuf[3];
     strftime(secBuf, sizeof(secBuf), "%S", &timeinfo);
     ss = secBuf;
+    char dateBuf[12];
+    strftime(dateBuf, sizeof(dateBuf), "%d %b", &timeinfo);
+    date = dateBuf;
   } else {
     hhmm = "--:--";
+    hh = "--";
+    mm = "--";
     ss = "--";
+    date = "SYNCING";
   }
-  d.setFont(&fonts::Font7);
-  d.setCursor(18, 16);
-  d.print(hhmm);
-  d.setFont(&fonts::Font6);
-  d.setTextColor(TFT_ORANGE, TFT_BLACK);
-  d.setCursor(88, 82);
-  d.print(ss);
+
+  uint8_t face = gDeviceSettings.clockFace % kClockFaceCount;
+  if (face == 0) {
+    d.fillScreen(rgb565_local(2, 8, 18));
+    d.fillRoundRect(8, 8, 224, 119, 18, rgb565_local(0, 18, 32));
+    d.drawRoundRect(8, 8, 224, 119, 18, rgb565_local(0, 190, 220));
+    d.setTextColor(TFT_CYAN, rgb565_local(0, 18, 32));
+    d.setFont(&fonts::Font7);
+    d.setCursor(18, 18);
+    d.print(hhmm);
+    d.setFont(&fonts::Font6);
+    d.setTextColor(TFT_ORANGE, rgb565_local(0, 18, 32));
+    d.setCursor(88, 84);
+    d.print(ss);
+  } else if (face == 1) {
+    const uint16_t bg = rgb565_local(3, 5, 13);
+    const uint16_t grid = rgb565_local(13, 36, 54);
+    d.fillScreen(bg);
+    for (int x = 0; x < 240; x += 16) {
+      d.drawFastVLine(x, 0, 135, grid);
+    }
+    for (int y = 0; y < 135; y += 15) {
+      d.drawFastHLine(0, y, 240, grid);
+    }
+    d.drawRoundRect(7, 7, 226, 121, 14, rgb565_local(252, 52, 183));
+    d.drawRoundRect(11, 11, 218, 113, 12, rgb565_local(34, 232, 255));
+    d.setFont(&fonts::Font4);
+    d.setTextColor(rgb565_local(34, 232, 255), bg);
+    String full = hhmm + ":" + ss;
+    int tw = d.textWidth(full);
+    d.setCursor((240 - tw) / 2, 45);
+    d.print(full);
+    d.setFont(&fonts::Font2);
+    d.setTextColor(rgb565_local(252, 220, 96), bg);
+    d.setCursor(66, 93);
+    d.print("BANGKOK  " + date);
+  } else if (face == 2) {
+    const uint16_t bg = rgb565_local(10, 12, 16);
+    const uint16_t edge = rgb565_local(210, 220, 235);
+    d.fillScreen(bg);
+    int cx = 120;
+    int cy = 66;
+    int radius = 56;
+    d.fillCircle(cx, cy, radius + 3, rgb565_local(18, 25, 34));
+    d.drawCircle(cx, cy, radius, edge);
+    d.drawCircle(cx, cy, radius - 6, rgb565_local(76, 110, 135));
+    for (int i = 0; i < 60; ++i) {
+      float a = (i / 60.0f) * 2.0f * kPi - kPi / 2.0f;
+      int r1 = radius - ((i % 5 == 0) ? 11 : 5);
+      int x1 = cx + static_cast<int>(cosf(a) * r1);
+      int y1 = cy + static_cast<int>(sinf(a) * r1);
+      int x2 = cx + static_cast<int>(cosf(a) * (radius - 2));
+      int y2 = cy + static_cast<int>(sinf(a) * (radius - 2));
+      d.drawLine(x1, y1, x2, y2, (i % 5 == 0) ? TFT_CYAN : rgb565_local(80, 96, 110));
+    }
+    float secA = (second / 60.0f) * 2.0f * kPi - kPi / 2.0f;
+    float minA = ((minute + second / 60.0f) / 60.0f) * 2.0f * kPi - kPi / 2.0f;
+    float hourA = (((hour % 12) + minute / 60.0f) / 12.0f) * 2.0f * kPi - kPi / 2.0f;
+    d.drawLine(cx, cy, cx + static_cast<int>(cosf(hourA) * 27), cy + static_cast<int>(sinf(hourA) * 27), TFT_WHITE);
+    d.drawLine(cx, cy, cx + static_cast<int>(cosf(minA) * 39), cy + static_cast<int>(sinf(minA) * 39), TFT_CYAN);
+    d.drawLine(cx, cy, cx + static_cast<int>(cosf(secA) * 48), cy + static_cast<int>(sinf(secA) * 48), TFT_ORANGE);
+    d.fillCircle(cx, cy, 4, TFT_ORANGE);
+    d.setFont(&fonts::Font2);
+    d.setTextColor(TFT_LIGHTGREY, bg);
+    d.setCursor(8, 118);
+    d.print(hhmm + ":" + ss);
+    d.setCursor(174, 118);
+    d.print(date);
+  } else {
+    const uint16_t bg = rgb565_local(234, 230, 212);
+    const uint16_t ink = rgb565_local(18, 28, 42);
+    const uint16_t soft = rgb565_local(218, 208, 184);
+    d.fillScreen(bg);
+    d.fillRoundRect(8, 12, 66, 94, 12, soft);
+    d.fillRoundRect(87, 12, 66, 94, 12, soft);
+    d.fillRoundRect(166, 12, 66, 94, 12, soft);
+    d.setFont(&fonts::Font7);
+    d.setTextColor(ink, soft);
+    d.setCursor(15, 30);
+    d.print(hh);
+    d.setCursor(94, 30);
+    d.print(mm);
+    d.setCursor(173, 30);
+    d.print(ss);
+    d.setFont(&fonts::Font2);
+    d.setTextColor(rgb565_local(96, 80, 54), bg);
+    d.setCursor(28, 111);
+    d.print("HH");
+    d.setCursor(107, 111);
+    d.print("MM");
+    d.setCursor(186, 111);
+    d.print("SS");
+  }
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  d.setCursor(4, 2);
+  d.print(clockFaceName(face));
+  d.setCursor(166, 2);
+  d.print("Tab face");
   renderLauncherOverlay();
   renderDebugOverlay();
 }
 
 void renderVoicePlayerUi() {
   auto& d = gCanvas;
-  d.fillScreen(0x0841);
+  const uint16_t bg = rgb565_local(74, 78, 94);
+  const uint16_t panel = TFT_BLACK;
+  const uint16_t edge = rgb565_local(190, 196, 220);
+  const uint16_t dim = rgb565_local(86, 94, 112);
+  const uint16_t orange = TFT_ORANGE;
+  d.fillScreen(bg);
   d.setFont(&fonts::Font2);
-  d.setTextColor(TFT_YELLOW, 0x0841);
-  d.setCursor(6, 8);
-  d.print("Voice Library");
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(150, 8);
+  d.drawFastHLine(0, 0, 240, edge);
+  d.drawFastHLine(0, 134, 240, edge);
+  d.fillRect(4, 8, 130, 122, panel);
+  d.drawRect(3, 7, 132, 124, edge);
+  d.fillRect(138, 0, 4, 135, TFT_BLACK);
+  d.drawFastVLine(143, 0, 135, edge);
+
+  d.setTextColor(orange, bg);
+  d.setCursor(8, 0);
+  d.print("VOICE");
+  d.setTextColor(TFT_LIGHTGREY, bg);
+  d.setCursor(55, 0);
+  d.print(gStorageLabel);
+  d.setCursor(194, 0);
   d.print(String(gSelectedVoiceNote + 1) + "/" + String(max<int>(1, static_cast<int>(gVoiceNotes.size()))));
 
   if (gVoiceNotes.empty()) {
-    d.setCursor(6, 38);
+    d.setTextColor(TFT_YELLOW, panel);
+    d.setCursor(10, 54);
     d.print("No saved voice notes");
   } else {
-    int start = max(0, gSelectedVoiceNote - 2);
-    int end = min(static_cast<int>(gVoiceNotes.size()), start + 4);
-    int y = 24;
+    int start = max(0, gSelectedVoiceNote - 4);
+    int end = min(static_cast<int>(gVoiceNotes.size()), start + 10);
+    int y = 11;
     for (int i = start; i < end; ++i) {
       bool selected = i == gSelectedVoiceNote;
-      uint16_t bg = selected ? 0x2945 : 0x0841;
-      d.fillRoundRect(4, y - 2, 232, 18, 6, bg);
-      d.setTextColor(selected ? TFT_WHITE : (gVoiceNotes[i].assistant ? TFT_GREENYELLOW : TFT_CYAN), bg);
+      uint16_t rowBg = selected ? rgb565_local(30, 70, 50) : panel;
+      d.fillRect(5, y - 1, 128, 11, rowBg);
+      d.setTextColor(selected ? TFT_WHITE : (gVoiceNotes[i].assistant ? TFT_GREENYELLOW : TFT_CYAN), rowBg);
       d.setCursor(8, y);
-      d.print(String(gVoiceNotes[i].assistant ? "AI " : "ME ") + gVoiceNotes[i].title);
-      d.setTextColor(TFT_LIGHTGREY, bg);
-      d.setCursor(8, y + 8);
-      d.print(trimPreview(gVoiceNotes[i].preview, 28));
-      y += 20;
+      String rowTitle = String(gVoiceNotes[i].assistant ? "AI " : "ME ") + gVoiceNotes[i].title;
+      d.print(selected ? marqueeText(rowTitle, 118, 260) : trimPreview(rowTitle, 18));
+      y += 12;
+    }
+    int sliderY = map(gSelectedVoiceNote, 0, max<int>(1, static_cast<int>(gVoiceNotes.size()) - 1), 10, 108);
+    d.fillRect(129, 8, 5, 122, dim);
+    d.fillRect(129, sliderY, 5, 18, edge);
+  }
+
+  d.fillRect(148, 14, 86, 42, panel);
+  d.drawRect(147, 13, 88, 44, edge);
+  d.fillRect(148, 59, 86, 16, panel);
+  d.drawRect(147, 58, 88, 18, edge);
+  d.setTextColor(TFT_GREEN, panel);
+  d.setCursor(153, 17);
+  d.print(gPlaybackActive ? "PLAY" : "STOP");
+
+  d.setTextColor(TFT_GREEN, panel);
+  String timeText = "--:--";
+  if (gPlaybackActive && gPlaybackStreamSampleRate > 0) {
+    uint32_t leftMs = static_cast<uint32_t>((gPlaybackStreamRemainingBytes / 2ULL) * 1000ULL / gPlaybackStreamSampleRate);
+    char buf[6];
+    snprintf(buf, sizeof(buf), "%02u:%02u", static_cast<unsigned>(leftMs / 60000U),
+             static_cast<unsigned>((leftMs / 1000U) % 60U));
+    timeText = buf;
+  }
+  d.setCursor(190, 17);
+  d.print(timeText);
+
+  for (int i = 0; i < 14; ++i) {
+    if (gPlaybackActive && (gVoiceGraphSpeed % 4 == 0)) {
+      gVoiceEqBars[i] = random(1, 6);
+    }
+    for (int j = 0; j < gVoiceEqBars[i]; ++j) {
+      d.fillRect(172 + (i * 4), 51 - j * 3, 3, 2, rgb565_local(165, 255, 120));
     }
   }
-  d.setTextColor(TFT_LIGHTGREY, 0x0841);
-  d.setCursor(6, 114);
-  d.print("Enter/Space Play  ,./+-");
+  gVoiceGraphSpeed++;
+
+  String ticker = "NO VOICE NOTES";
+  if (!gVoiceNotes.empty()) {
+    const auto& note = gVoiceNotes[gSelectedVoiceNote];
+    ticker = note.title + " :: " + note.preview;
+  }
+  d.fillRect(149, 60, 84, 14, panel);
+  d.setTextColor(TFT_GREEN, panel);
+  d.setCursor(gVoiceTickerX, 63);
+  d.print(ticker);
+  if (d.textWidth(ticker) > 84 || gPlaybackActive) {
+    gVoiceTickerX -= 2;
+    if (gVoiceTickerX < -static_cast<int16_t>(max<int>(80, d.textWidth(ticker)))) {
+      gVoiceTickerX = 230;
+    }
+  }
+
+  d.setTextColor(TFT_LIGHTGREY, bg);
+  d.setCursor(150, 80);
+  d.print("VOL");
+  d.fillRoundRect(172, 83, 60, 3, 2, TFT_YELLOW);
+  int volX = map(gSpeakerVolume, 0, 255, 172, 224);
+  d.fillRoundRect(volX, 80, 9, 8, 2, edge);
+
+  for (int i = 0; i < 4; ++i) {
+    d.fillRoundRect(148 + (i * 22), 94, 18, 18, 3, rgb565_local(150, 156, 176));
+  }
+  d.setTextColor(TFT_BLACK, rgb565_local(150, 156, 176));
+  d.setCursor(154, 97);
+  d.print("A");
+  d.setCursor(176, 97);
+  d.print("P");
+  d.setCursor(198, 97);
+  d.print("N");
+  d.setCursor(220, 97);
+  d.print("B");
+  d.setTextColor(TFT_LIGHTGREY, bg);
+  d.setCursor(149, 119);
+  d.print("Enter play  V vol");
+
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -4167,8 +7417,32 @@ void render() {
       case UiMode::Clock:
         renderClockUi();
         break;
+      case UiMode::Battery:
+        renderBatteryUi();
+        break;
       case UiMode::Voice:
         renderVoicePlayerUi();
+        break;
+      case UiMode::Focus:
+        renderFocusUi();
+        break;
+      case UiMode::Library:
+        renderLibraryUi();
+        break;
+      case UiMode::Assets:
+        renderAssetsUi();
+        break;
+      case UiMode::Ota:
+        renderOtaUi();
+        break;
+      case UiMode::Contexts:
+        renderContextsUi();
+        break;
+      case UiMode::Settings:
+        renderSettingsUi();
+        break;
+      case UiMode::Logs:
+        renderLogsUi();
         break;
       case UiMode::ChatFull:
       case UiMode::ChatFace:
@@ -4208,15 +7482,27 @@ void setup() {
   gTimeValid = hasValidSystemTime();
 
   loadConfig();
+  loadFocusSettings();
+  loadDeviceSettings();
   pushSystem("Device ready: " + gDeviceId);
   pushSystem("Ctrl+Space = EN/RU");
-  pushSystem("Ctrl x2 = voice");
-  pushSystem("Tab + < > mode, Ctrl+D debug");
+  pushSystem("Voice: Ctrl x2 / Ctrl+V / hold G0");
+  pushSystem("Tab screen, Tab+Down app, Ctrl+L menu");
   pushSystem("/hero = Klo screen");
+  pushSystem(String("FW ") + kAppVersion + " " + String(kBuildGitSha).substring(0, 10));
   logf("[BOOT] device_id=%s", gDeviceId.c_str());
+  logf("[BOOT] version=%s git=%s build=%s", kAppVersion, kBuildGitSha, kBuildTime);
 
   if (ensureWifi()) {
     startHubWebSocket();
+    if (gDeviceSettings.checkUpdatesOnBoot) {
+      fetchRemoteOtaManifest();
+      fetchRemoteAssetManifest();
+    }
+    if (gDeviceSettings.autoUpdateFirmware && gOtaManifest.parsed &&
+        !gOtaManifest.url.isEmpty() && gOtaManifest.version != kAppVersion) {
+      applyOtaFromManifest();
+    }
   }
 
   render();
@@ -4240,6 +7526,10 @@ void loop() {
       gWs.loop();
     }
     syncClockFromNtp(false);
+    updateBatterySnapshot();
+    updateFocusTimer();
+    serviceFocusMetronome();
+    processCompletedTextTurn();
     updateG0VoiceTrigger();
     updateVoiceTrigger();
     pollTyping();

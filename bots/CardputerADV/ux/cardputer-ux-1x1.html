@@ -1,0 +1,1505 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cardputer ADV UX 1x1</title>
+  <style>
+    :root {
+      --bg: #10131a;
+      --panel: #181d28;
+      --ink: #eef6ff;
+      --muted: #8792a7;
+      --line: #2b3448;
+      --cyan: #38e7ff;
+      --green: #81ff72;
+      --orange: #ffb142;
+      --red: #ff4f5f;
+      --violet: #af8cff;
+      --scale: 4;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(56, 231, 255, .14), transparent 25%),
+        radial-gradient(circle at 86% 20%, rgba(255, 177, 66, .10), transparent 20%),
+        linear-gradient(145deg, #0a0d12, var(--bg));
+      color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      min-height: 100vh;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(10, 13, 18, .92);
+      backdrop-filter: blur(12px);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: .03em;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    button, select, input, textarea {
+      background: #111723;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 9px;
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: var(--cyan);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 260px minmax(420px, 1fr) 360px;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    nav, aside, .workspace {
+      background: rgba(24, 29, 40, .82);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .28);
+    }
+
+    nav {
+      padding: 12px;
+      height: calc(100vh - 86px);
+      position: sticky;
+      top: 70px;
+      overflow: auto;
+    }
+
+    .nav-title {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      margin: 12px 8px 6px;
+    }
+
+    .nav-map {
+      display: grid;
+      gap: 10px;
+    }
+
+    .app-section {
+      border: 1px solid #242d3f;
+      border-radius: 14px;
+      padding: 8px;
+      background: rgba(10, 15, 23, .52);
+    }
+
+    .app-section.active {
+      border-color: rgba(56, 231, 255, .8);
+      background: rgba(56, 231, 255, .07);
+      box-shadow: inset 0 0 0 1px rgba(56, 231, 255, .14);
+    }
+
+    .app-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 2px 4px 7px;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .10em;
+    }
+
+    .app-header b {
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: .03em;
+    }
+
+    .screen-link {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      width: 100%;
+      margin: 4px 0;
+      padding: 9px 10px;
+      text-align: left;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--ink);
+    }
+
+    .screen-link small {
+      color: var(--muted);
+    }
+
+    .screen-link.active {
+      border-color: rgba(56, 231, 255, .8);
+      background: linear-gradient(90deg, rgba(56, 231, 255, .20), rgba(56, 231, 255, .05));
+      box-shadow: inset 3px 0 0 var(--cyan);
+      color: #fff;
+    }
+
+    .workspace {
+      min-height: calc(100vh - 86px);
+      padding: 16px;
+    }
+
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .meta strong {
+      display: block;
+      color: var(--ink);
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .location-card {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 14px;
+      border: 1px solid rgba(56, 231, 255, .35);
+      border-radius: 16px;
+      padding: 12px;
+      background:
+        linear-gradient(135deg, rgba(56, 231, 255, .12), rgba(255, 177, 66, .04)),
+        #101722;
+    }
+
+    .breadcrumb {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .breadcrumb b {
+      color: var(--cyan);
+    }
+
+    .position-strip {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .position-chip {
+      border: 1px solid #334056;
+      border-radius: 999px;
+      padding: 5px 8px;
+      color: var(--muted);
+      background: #0d1420;
+      font-size: 11px;
+    }
+
+    .position-chip.active {
+      border-color: var(--cyan);
+      background: rgba(56, 231, 255, .14);
+      color: var(--ink);
+    }
+
+    .device-row {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      align-items: start;
+    }
+
+    .device-wrap {
+      display: grid;
+      gap: 10px;
+    }
+
+    .scale-label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .screen-context {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .screen-context button {
+      width: 100%;
+      min-height: 32px;
+      text-align: left;
+    }
+
+    .screen-context .current {
+      text-align: center;
+      border: 1px solid var(--cyan);
+      border-radius: 10px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: rgba(56, 231, 255, .12);
+      min-width: 170px;
+    }
+
+    .device-frame {
+      width: calc(240px * var(--scale));
+      height: calc(135px * var(--scale));
+      border: calc(2px * var(--scale)) solid #05070a;
+      border-radius: calc(14px * var(--scale));
+      padding: calc(5px * var(--scale));
+      background: #05070a;
+      box-shadow:
+        inset 0 0 0 calc(1px * var(--scale)) #263042,
+        0 20px 80px rgba(0,0,0,.48);
+    }
+
+    .screen {
+      position: relative;
+      width: 240px;
+      height: 135px;
+      overflow: hidden;
+      transform: scale(var(--scale));
+      transform-origin: 0 0;
+      border-radius: 5px;
+      background: #084108;
+      image-rendering: pixelated;
+      user-select: none;
+      cursor: crosshair;
+    }
+
+    .screen * {
+      position: absolute;
+    }
+
+    .pixel {
+      font-size: 8px;
+      line-height: 1;
+      letter-spacing: 0;
+      white-space: nowrap;
+      text-rendering: geometricPrecision;
+    }
+
+    .tiny { font-size: 7px; }
+    .medium { font-size: 11px; }
+    .big { font-size: 24px; font-weight: 800; letter-spacing: -1px; }
+    .huge { font-size: 38px; font-weight: 900; letter-spacing: -3px; }
+    .mega { font-size: 47px; font-weight: 900; letter-spacing: -5px; line-height: .86; }
+    .mono { font-family: inherit; }
+
+    .pill {
+      border-radius: 999px;
+      border: 1px solid currentColor;
+      padding: 2px 5px;
+      font-size: 7px;
+      line-height: 1;
+    }
+
+    .note {
+      position: static;
+      max-width: 460px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .hotkey-panel {
+      position: static;
+      display: grid;
+      gap: 10px;
+      min-width: 280px;
+      max-width: 420px;
+    }
+
+    .hotkey-card {
+      position: static;
+      border: 1px solid var(--line);
+      background: #111723;
+      border-radius: 14px;
+      padding: 10px;
+    }
+
+    .hotkey-card h3 {
+      position: static;
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .10em;
+    }
+
+    .key-grid {
+      position: static;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .key-row {
+      position: static;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    kbd {
+      position: static;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      padding: 3px 6px;
+      border: 1px solid #3a465f;
+      border-bottom-color: #1a2030;
+      border-radius: 6px;
+      background: linear-gradient(#1d2636, #101722);
+      color: var(--ink);
+      box-shadow: inset 0 1px rgba(255,255,255,.06);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .button-grid {
+      position: static;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .button-grid button {
+      position: static;
+      padding: 7px 5px;
+      font-size: 11px;
+    }
+
+    .spec-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .spec {
+      position: static;
+      border: 1px solid var(--line);
+      background: #111723;
+      border-radius: 12px;
+      padding: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .spec b {
+      color: var(--ink);
+    }
+
+    aside {
+      padding: 14px;
+      height: calc(100vh - 86px);
+      position: sticky;
+      top: 70px;
+      overflow: auto;
+    }
+
+    aside h2 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+
+    .coord {
+      color: var(--cyan);
+      min-height: 18px;
+      margin: 8px 0 12px;
+      font-size: 12px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .comment-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .comment {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 9px;
+      background: #101621;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
+
+    .comment b {
+      color: var(--ink);
+    }
+
+    .screen-gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .thumb-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #111723;
+      padding: 10px;
+    }
+
+    .thumb-title {
+      position: static;
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 8px;
+    }
+
+    .thumb-screen {
+      --scale: 1;
+      position: relative;
+      width: 240px;
+      height: 135px;
+      overflow: hidden;
+      border-radius: 5px;
+      background: #000;
+    }
+
+    .thumb-screen * { position: absolute; }
+
+    .rect { border-radius: 0; }
+    .round { border-radius: 9px; }
+    .circle { border-radius: 999px; }
+    .line { height: 1px; transform-origin: left center; }
+    .vline { width: 1px; }
+    .center { display: grid; place-items: center; text-align: center; }
+
+    @media (max-width: 1220px) {
+      main { grid-template-columns: 220px 1fr; }
+      aside { grid-column: 1 / -1; height: auto; position: static; }
+    }
+
+    @media (max-width: 820px) {
+      main { grid-template-columns: 1fr; }
+      nav { height: auto; position: static; }
+      .device-frame { --scale: 2; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cardputer ADV UX 1x1</h1>
+    <div class="top-actions">
+      <label>Scale
+        <select id="scale">
+          <option value="1">1x exact</option>
+          <option value="2">2x</option>
+          <option value="3">3x</option>
+          <option value="4" selected>4x review</option>
+          <option value="5">5x</option>
+        </select>
+      </label>
+      <button id="copyLink">Copy screen link</button>
+      <button id="exportComments">Export comments</button>
+      <button id="clearComments">Clear comments</button>
+    </div>
+  </header>
+
+  <main>
+    <nav>
+      <div class="nav-title">Navigation Map</div>
+      <div class="nav-map" id="navMap"></div>
+    </nav>
+
+    <section class="workspace">
+      <div class="location-card">
+        <div class="breadcrumb" id="locationPath">Current: <b>Chat</b> / Chat + Eyes</div>
+        <div class="position-strip" id="positionStrip"></div>
+      </div>
+
+      <div class="meta">
+        <div>
+          <strong id="screenTitle">Chat + Eyes</strong>
+          <span id="screenDesc">Current default chat surface with large animated eyes and compact transcript.</span>
+        </div>
+        <div>Resolution: <b>240x135</b><br />Panel: <b>1.14&quot; ST7789V2 RGB565</b></div>
+      </div>
+
+      <div class="device-row">
+        <div class="device-wrap">
+          <div class="device-frame" id="deviceFrame">
+            <div id="screen" class="screen" data-screen="chat-face"></div>
+          </div>
+          <div class="screen-context">
+            <button data-action="prev-screen" id="prevScreenLabel">Prev</button>
+            <div class="current" id="currentScreenLabel">Chat + Eyes</div>
+            <button data-action="next-screen" id="nextScreenLabel">Next</button>
+          </div>
+          <div class="scale-label">The inner UI is rendered at exact 240x135 coordinates. Click to capture a comment coordinate.</div>
+        </div>
+        <div class="hotkey-panel">
+          <div class="note" id="screenNotes"></div>
+          <div class="hotkey-card">
+            <h3>Active Hotkeys</h3>
+            <div class="key-grid" id="activeHotkeys"></div>
+            <div class="button-grid">
+              <button data-action="prev-screen">Prev</button>
+              <button data-action="next-screen">Next</button>
+              <button data-action="launcher">Launcher</button>
+              <button data-action="prev-app">Prev App</button>
+              <button data-action="next-app">Next App</button>
+              <button data-action="watchface">Face</button>
+              <button data-action="scale-down">Scale -</button>
+              <button data-action="scale-up">Scale +</button>
+              <button data-action="copy-link">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="spec-grid">
+        <div class="spec"><b>Navigation rule:</b> Tab cycles screens inside current app; Tab+Down/Right moves to next app; Ctrl+L opens launcher map.</div>
+        <div class="spec"><b>Voice rule:</b> Double Ctrl / Ctrl+V / hold G0 start-stop voice globally where possible.</div>
+        <div class="spec"><b>Asset rule:</b> Audio sync uses bridge manifest and WAV/PCM files; firmware OTA is firmware-only.</div>
+        <div class="spec"><b>Comment format:</b> use copied anchors like <code>#chat-face@x120,y64</code> in review notes.</div>
+      </div>
+
+      <div class="screen-gallery" id="gallery"></div>
+    </section>
+
+    <aside>
+      <h2>UX Comment Helper</h2>
+      <div class="coord" id="coord">Click the screen to capture x/y.</div>
+      <textarea id="commentText" placeholder="Write a comment for selected screen/coordinate..."></textarea>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button id="saveComment">Save comment</button>
+        <button id="copyComment">Copy comment ref</button>
+      </div>
+      <div class="comment-list" id="commentList"></div>
+    </aside>
+  </main>
+
+  <script>
+    const COLORS = {
+      bg: '#084108',
+      black: '#000',
+      panel: '#101b28',
+      cyan: '#38e7ff',
+      green: '#81ff72',
+      orange: '#ffb142',
+      red: '#ff4f5f',
+      violet: '#af8cff',
+      white: '#f2f7ff',
+      muted: '#8895aa',
+      yellow: '#ffe46d',
+      beige: '#eae6d4'
+    };
+
+    const state = {
+      screen: location.hash ? location.hash.replace('#', '').split('@')[0] : 'chat-face',
+      point: null,
+      comments: JSON.parse(localStorage.getItem('cardputerUxComments') || '[]')
+    };
+
+    const appGroups = [
+      { id: 'chat', title: 'Chat', hint: 'text + eyes', screens: ['chat-face', 'chat-full'] },
+      { id: 'companion', title: 'Companion', hint: 'face + hero', screens: ['face', 'hero'] },
+      { id: 'clock', title: 'Clock', hint: 'watchfaces', screens: ['clock-neon', 'clock-analog'] },
+      { id: 'focus', title: 'Focus', hint: 'pomodoro', screens: ['focus'] },
+      { id: 'audio', title: 'Audio', hint: 'voice library', screens: ['voice'] },
+      { id: 'update', title: 'Update', hint: 'assets + OTA', screens: ['assets', 'ota'] },
+      { id: 'system', title: 'System', hint: 'loading + settings', screens: ['loading', 'launcher', 'settings', 'battery', 'logs'] }
+    ];
+
+    const screenGroups = appGroups.map(group => group.screens);
+    const watchfaces = ['clock-neon', 'clock-analog'];
+    let lastTabAt = 0;
+
+    const globalHotkeys = [
+      ['Tab', 'next screen / next watchface'],
+      ['Double Tab', 'launcher'],
+      ['Shift+Tab', 'previous screen'],
+      ['Alt+Down', 'next app group'],
+      ['Alt+Up', 'previous app group'],
+      ['Ctrl+L', 'launcher'],
+      ['L', 'loading screen'],
+      ['1-9', 'open screen by index'],
+      ['+/-', 'scale preview'],
+      ['C', 'copy current link'],
+      ['Arrows', 'move selected comment point'],
+      ['Ctrl+Enter', 'save comment']
+    ];
+
+    const screens = {
+      'chat-face': {
+        title: 'Chat + Eyes',
+        desc: 'Main AI chat surface: eyes top, transcript and input below.',
+        notes: 'Review focus: eye/text balance, bottom input clipping, status placement, whether pending/recording states are obvious.',
+        draw: drawChatFace
+      },
+      'chat-full': {
+        title: 'Full Chat',
+        desc: 'Maximum room for Russian text, manual typing, and scroll review.',
+        notes: 'Review focus: readable Russian font density, scroll indicators, pending bubble, no footer overlap.',
+        draw: drawChatFull
+      },
+      face: {
+        title: 'Big Eyes',
+        desc: 'Fullscreen emotional eye mode, accelerometer-driven gaze.',
+        notes: 'Review focus: eye scale, emotion colors, no text noise, recording/speaking color contrast.',
+        draw: drawFace
+      },
+      hero: {
+        title: 'Klo Hero',
+        desc: 'Separate surface for Klo sprite/hero, moving with IMU and idle animation.',
+        notes: 'Review focus: no unwanted ring around hero, enough motion room, clear difference from eye mode.',
+        draw: drawHero
+      },
+      voice: {
+        title: 'Voice Player',
+        desc: 'Winamp-inspired WAV voice note player with saved user/assistant notes.',
+        notes: 'Review focus: file title marquee, selected row visibility, bottom controls within 135px.',
+        draw: drawVoice
+      },
+      focus: {
+        title: 'Focus Timer',
+        desc: 'Pomodoro/focus timer with ritual audio cues and metronome.',
+        notes: 'Review focus: remaining time, state color, action keys, low cognitive load during focus.',
+        draw: drawFocus
+      },
+      'clock-neon': {
+        title: 'Clock Neon',
+        desc: 'Fullscreen neon HH:MM:SS with a lightweight moving 3D mesh background.',
+        notes: 'Review focus: maximum legibility, low-noise animated mesh, no secondary chrome.',
+        draw: ctx => drawClock(ctx, 1)
+      },
+      'clock-analog': {
+        title: 'Clock Analog',
+        desc: 'Analog dial with small digital backup.',
+        notes: 'Review focus: hand thickness at 240x135 and whether it feels too dense.',
+        draw: ctx => drawClock(ctx, 2)
+      },
+      loading: {
+        title: 'Loading',
+        desc: 'Boot, network, bridge, asset-sync, and long operation loading surface.',
+        notes: 'Review focus: user must see what is happening, what step is active, and whether the device is stuck or still progressing.',
+        draw: drawLoading
+      },
+      launcher: {
+        title: 'Launcher',
+        desc: 'Two-level launcher: app group plus last/next mode inside app.',
+        notes: 'Review focus: icons must not overlap, selected group/subitem must be obvious.',
+        draw: drawLauncher
+      },
+      settings: {
+        title: 'Settings',
+        desc: 'NVS settings including focus, OTA, language, clock face.',
+        notes: 'Review focus: five visible rows, value column fit, footer not clipped.',
+        draw: drawSettings
+      },
+      assets: {
+        title: 'Asset Sync',
+        desc: 'Bridge audio manifest sync screen.',
+        notes: 'Review focus: F fetch / S sync / R load discoverability and manifest state clarity.',
+        draw: drawAssets
+      },
+      ota: {
+        title: 'Firmware OTA',
+        desc: 'Firmware update manifest and apply screen.',
+        notes: 'Review focus: manual apply risk, candidate version, policy line.',
+        draw: drawOta
+      },
+      battery: {
+        title: 'Battery',
+        desc: 'Battery and storage status screen.',
+        notes: 'Review focus: big battery percent, charging state, SD/LittleFS status.',
+        draw: drawBattery
+      },
+      logs: {
+        title: 'Logs',
+        desc: 'Runtime diagnostics and log upload surface.',
+        notes: 'Review focus: last useful error visibility, U upload hint, not too much noise.',
+        draw: drawLogs
+      }
+    };
+
+    function el(tag, cls, style, text) {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (style) Object.assign(node.style, style);
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function box(parent, x, y, w, h, color, cls = 'rect', extra = {}) {
+      const node = el('div', cls, {
+        left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px',
+        background: color, ...extra
+      });
+      parent.appendChild(node);
+      return node;
+    }
+
+    function text(parent, x, y, value, color = COLORS.white, cls = 'pixel', extra = {}) {
+      const node = el('div', cls, { left: x + 'px', top: y + 'px', color, ...extra }, value);
+      parent.appendChild(node);
+      return node;
+    }
+
+    function pill(parent, x, y, value, color) {
+      const node = text(parent, x, y, value, color, 'pill');
+      node.style.borderColor = color;
+      return node;
+    }
+
+    function clear(ctx, color = '#07121c') {
+      ctx.innerHTML = '';
+      box(ctx, 0, 0, 240, 135, color);
+    }
+
+    function drawEyes(ctx, y = 4, scale = 1, mood = 'idle') {
+      const red = mood === 'recording';
+      const speaking = mood === 'speaking';
+      const accent = red ? COLORS.red : speaking ? COLORS.green : COLORS.cyan;
+      const white = red ? '#ffd9dd' : '#e9fbff';
+      box(ctx, 11, y, 218, 72 * scale, '#061522', 'round');
+      box(ctx, 16, y + 5, 98, 58 * scale, white, 'round');
+      box(ctx, 126, y + 5, 98, 58 * scale, white, 'round');
+      box(ctx, 54, y + 25 * scale, 24, 24, '#07131d', 'circle');
+      box(ctx, 164, y + 25 * scale, 24, 24, '#07131d', 'circle');
+      box(ctx, 61, y + 31 * scale, 6, 6, accent, 'circle');
+      box(ctx, 171, y + 31 * scale, 6, 6, accent, 'circle');
+      box(ctx, 28, y + 10, 75, 4, accent, 'round');
+      box(ctx, 138, y + 10, 75, 4, accent, 'round');
+      if (red) {
+        text(ctx, 94, y + 55 * scale, 'REC', COLORS.red, 'pixel', { fontWeight: 800 });
+      }
+    }
+
+    function drawChatFace(ctx) {
+      clear(ctx, '#07131d');
+      drawEyes(ctx, 2, 1, 'idle');
+      text(ctx, 5, 80, 'Me: проверка микрофона 1 2 3', COLORS.cyan);
+      text(ctx, 5, 92, 'Claw: Слышу. Отвечаю текстом...', COLORS.green);
+      text(ctx, 5, 104, '…и если audio.url есть, играю WAV', COLORS.green);
+      text(ctx, 5, 120, '> напиши задачу', COLORS.yellow);
+      pill(ctx, 188, 3, 'ADV', COLORS.cyan);
+    }
+
+    function drawChatFull(ctx) {
+      clear(ctx, '#07131d');
+      text(ctx, 5, 8, 'Me: длинное сообщение не должно резаться', COLORS.cyan);
+      text(ctx, 5, 20, 'Claw: Принял. Показываю ответ сразу,', COLORS.green);
+      text(ctx, 5, 32, 'пока агент думает, висит pending...', COLORS.green);
+      text(ctx, 5, 44, 'Me: ручной ввод и русская раскладка', COLORS.cyan);
+      text(ctx, 5, 56, 'Claw: кириллица должна быть видимой.', COLORS.green);
+      text(ctx, 225, 75, '▲', COLORS.muted);
+      text(ctx, 225, 106, '▼', COLORS.cyan);
+      box(ctx, 0, 116, 240, 19, '#102033');
+      text(ctx, 5, 121, '> сообщение для отправки', COLORS.yellow);
+    }
+
+    function drawFace(ctx) {
+      clear(ctx, '#030c15');
+      drawEyes(ctx, 14, 1.45, 'speaking');
+      text(ctx, 83, 116, 'Speaking', COLORS.green, 'medium');
+    }
+
+    function drawHero(ctx) {
+      clear(ctx, '#021014');
+      box(ctx, 7, 5, 226, 125, '#081923', 'round', { border: '1px solid #31c7a4' });
+      for (let x = 20; x < 225; x += 24) box(ctx, x, 17, 1, 100, '#173240');
+      for (let y = 20; y < 125; y += 18) box(ctx, 19, y, 202, 1, '#173240');
+      box(ctx, 89, 43, 62, 48, '#ffb142', 'round');
+      box(ctx, 100, 31, 40, 28, '#ffe8b0', 'round');
+      box(ctx, 105, 41, 8, 8, '#061522', 'circle');
+      box(ctx, 126, 41, 8, 8, '#061522', 'circle');
+      box(ctx, 97, 90, 45, 7, '#000', 'circle', { opacity: .35 });
+      text(ctx, 13, 113, 'Klo / IMU playground', COLORS.muted);
+    }
+
+    function drawVoice(ctx) {
+      clear(ctx, '#4a4e5e');
+      box(ctx, 4, 8, 130, 122, '#05070a', 'rect', { border: '1px solid #bec4dc' });
+      text(ctx, 8, 1, 'VOICE', COLORS.orange);
+      text(ctx, 55, 1, 'SD', COLORS.muted);
+      const rows = ['AI Claw-2134-12s', 'ME Me-2132-8s', 'AI nutrition-plan', 'ME voice-note-5m'];
+      rows.forEach((r, i) => {
+        const y = 13 + i * 13;
+        box(ctx, 6, y - 2, 126, 11, i === 0 ? '#1e4632' : '#05070a');
+        text(ctx, 9, y, (i === 0 ? '> ' : '  ') + r, i === 0 ? COLORS.white : COLORS.cyan);
+      });
+      box(ctx, 144, 0, 2, 135, '#bec4dc');
+      box(ctx, 148, 14, 86, 42, '#05070a', 'rect', { border: '1px solid #bec4dc' });
+      text(ctx, 153, 18, 'PLAY', COLORS.green);
+      text(ctx, 190, 18, '00:12', COLORS.green);
+      for (let i = 0; i < 14; i++) box(ctx, 172 + i * 4, 50 - ((i * 7) % 16), 3, 8 + ((i * 5) % 12), COLORS.green);
+      text(ctx, 149, 119, 'Enter play  V vol', COLORS.muted);
+    }
+
+    function drawFocus(ctx) {
+      clear(ctx, '#120f20');
+      box(ctx, 9, 8, 222, 119, '#1d2335', 'round', { border: '1px solid #ffcc46' });
+      text(ctx, 18, 14, 'FOCUS', COLORS.orange, 'medium');
+      text(ctx, 53, 38, '24:31', COLORS.yellow, 'huge');
+      box(ctx, 30, 93, 180, 8, '#344055', 'round');
+      box(ctx, 30, 93, 128, 8, COLORS.orange, 'round');
+      text(ctx, 26, 112, 'Space pause  Z/X bpm  Enter start', COLORS.muted);
+    }
+
+    function drawClock(ctx, face) {
+      const now = new Date();
+      const bangkok = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Bangkok',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }).format(now);
+      const date = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Bangkok',
+        day: '2-digit',
+        month: 'short'
+      }).format(now).toUpperCase();
+
+      if (face === 1) {
+        clear(ctx, '#03050d');
+        const tick = Date.now() / 740;
+        for (let gy = -10; gy <= 150; gy += 15) {
+          let prev = null;
+          for (let x = 0; x <= 240; x += 12) {
+            const wave = Math.sin((x * .045) + tick) * 7 + Math.cos((gy * .055) - tick * .8) * 5;
+            const perspective = (gy - 67) * .12;
+            const y = gy + wave + perspective;
+            if (prev) line(ctx, prev.x, prev.y, x, y, 'rgba(56,231,255,.17)');
+            prev = { x, y };
+          }
+        }
+        for (let gx = -20; gx <= 260; gx += 20) {
+          let prev = null;
+          for (let y = 0; y <= 135; y += 14) {
+            const bend = Math.sin((y * .06) + tick + gx * .02) * 6;
+            const x = gx + bend + (y - 67) * .08;
+            if (prev) line(ctx, prev.x, prev.y, x, y, 'rgba(252,52,183,.12)');
+            prev = { x, y };
+          }
+        }
+        box(ctx, 0, 0, 240, 135, 'linear-gradient(180deg, rgba(3,5,13,.08), rgba(3,5,13,.52))');
+        text(ctx, 4, 42, bangkok, COLORS.cyan, 'mega', {
+          textShadow: '0 0 7px #22e8ff, 0 0 14px #22e8ff'
+        });
+        text(ctx, 58, 96, `BANGKOK ${date}`, COLORS.yellow, 'medium', {
+          textShadow: '0 0 6px #ffe46d'
+        });
+      } else if (face === 2) {
+        clear(ctx, '#0a0c10');
+        box(ctx, 61, 7, 118, 118, '#121922', 'circle');
+        box(ctx, 65, 11, 110, 110, 'transparent', 'circle', { border: '1px solid #d2dceb' });
+        for (let i = 0; i < 12; i++) {
+          const a = i / 12 * Math.PI * 2 - Math.PI / 2;
+          box(ctx, 119 + Math.cos(a) * 48, 65 + Math.sin(a) * 48, 3, 3, COLORS.cyan, 'circle');
+        }
+        line(ctx, 120, 66, 120, 39, COLORS.white, 2);
+        line(ctx, 120, 66, 154, 66, COLORS.cyan, 2);
+        line(ctx, 120, 66, 105, 24, COLORS.orange, 1);
+        box(ctx, 116, 62, 8, 8, COLORS.orange, 'circle');
+        text(ctx, 8, 118, bangkok, COLORS.muted);
+      }
+    }
+
+    function line(ctx, x1, y1, x2, y2, color, thickness = 1) {
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+      box(ctx, x1, y1, len, thickness, color, 'line', { transform: `rotate(${angle}deg)` });
+    }
+
+    function drawLoading(ctx) {
+      clear(ctx, '#040a12');
+      for (let x = -20; x < 260; x += 22) {
+        box(ctx, x, 0, 1, 135, 'rgba(56,231,255,.16)', 'line', { transform: 'rotate(17deg)' });
+      }
+      box(ctx, 8, 8, 224, 119, '#081522', 'round', { border: '1px solid #38e7ff' });
+      text(ctx, 15, 14, 'OPENCLAW ADV', COLORS.cyan, 'medium');
+      text(ctx, 166, 15, 'BOOT', COLORS.orange);
+      text(ctx, 34, 39, 'Loading...', COLORS.white, 'big');
+      const dots = [0, 1, 2].map(i => 151 + i * 10);
+      dots.forEach((x, i) => box(ctx, x, 53, 6, 6, i === 1 ? COLORS.cyan : '#285062', 'circle'));
+      box(ctx, 22, 76, 196, 9, '#152235', 'round');
+      box(ctx, 22, 76, 132, 9, COLORS.cyan, 'round');
+      const steps = [
+        ['Wi-Fi', 'ok', COLORS.green],
+        ['Bridge', 'check', COLORS.orange],
+        ['Assets', 'skip', COLORS.muted],
+        ['Chat', 'ready', COLORS.green]
+      ];
+      steps.forEach((step, i) => {
+        const x = 23 + i * 51;
+        text(ctx, x, 94, step[0], COLORS.muted);
+        text(ctx, x, 106, step[1], step[2]);
+      });
+      text(ctx, 18, 121, 'If stuck: Tab menu  Ctrl+L launcher  Logs', COLORS.muted);
+    }
+
+    function drawLauncher(ctx) {
+      clear(ctx, '#000');
+      box(ctx, 0, 0, 240, 135, '#000');
+      box(ctx, 2, 2, 236, 131, 'transparent', 'rect', { border: '1px solid #38e7ff' });
+      box(ctx, 5, 5, 230, 15, '#38e7ff');
+      text(ctx, 9, 9, 'OPENCLAW // APPS', '#000', 'medium');
+      text(ctx, 178, 9, 'TABx2', '#000', 'medium');
+      const items = [
+        ['/>', 'CHAT', 'TEXT + AGENT', COLORS.cyan],
+        ['o~', 'FACE', 'EYES / KLO', COLORS.green],
+        ['25', 'FOCUS', 'POMODORO', COLORS.yellow],
+        ['W~', 'VOICE', 'WAV PLAYER', COLORS.orange],
+        ['@)', 'SYNC', 'ASSETS / OTA', COLORS.violet],
+        ['::', 'SYSTEM', 'SETTINGS / LOGS', COLORS.white]
+      ];
+      items.forEach((it, i) => {
+        const y = 27 + i * 15;
+        const selected = i === 0;
+        box(ctx, 7, y - 2, 226, 13, selected ? '#f92a9b' : '#000');
+        text(ctx, 12, y, selected ? '>' : ' ', selected ? '#000' : COLORS.muted, 'pixel');
+        text(ctx, 25, y, it[0], selected ? '#000' : it[3], 'pixel');
+        text(ctx, 50, y, it[1], selected ? '#000' : COLORS.white, 'pixel');
+        text(ctx, 105, y, it[2], selected ? '#000' : COLORS.muted, 'pixel');
+      });
+      box(ctx, 8, 119, 224, 9, '#07131d');
+      text(ctx, 13, 121, 'UP/DN APP  TAB SCREEN  ENTER SELECT  ESC BACK', COLORS.cyan, 'tiny');
+    }
+
+    function drawSettings(ctx) {
+      clear(ctx, '#000');
+      box(ctx, 2, 2, 236, 131, '#000', 'rect', { border: '1px solid #81ff72' });
+      box(ctx, 5, 5, 230, 14, '#81ff72');
+      text(ctx, 9, 8, 'SYSTEM SETTINGS', '#000', 'medium');
+      text(ctx, 181, 8, 'CYB3R', '#000', 'medium');
+      const rows = [
+        ['THEME', 'CYB3R', 'COLOR PROFILE'],
+        ['BRIGHT', '80%', 'SCREEN GLOW'],
+        ['SOUND', 'ON', 'BEEPS + VOICE'],
+        ['WIFI', 'SAVED', '2.4GHZ PROFILE'],
+        ['BRIDGE', 'TLS', 'OPENCLAW LINK'],
+        ['CLOCK', 'NEON', 'WATCHFACE'],
+        ['VOICE', 'WAV', 'PLAYER MODE']
+      ];
+      rows.forEach((r, i) => {
+        const y = 27 + i * 13;
+        const selected = i === 5;
+        box(ctx, 7, y - 2, 226, 11, selected ? '#81ff72' : '#000');
+        text(ctx, 11, y, selected ? '>' : ' ', selected ? '#000' : COLORS.green);
+        text(ctx, 24, y, r[0], selected ? '#000' : COLORS.white);
+        text(ctx, 82, y, r[1], selected ? '#000' : COLORS.cyan);
+        text(ctx, 126, y, r[2], selected ? '#000' : COLORS.muted);
+      });
+      box(ctx, 11, 121, 5, 5, COLORS.green);
+      text(ctx, 22, 121, 'ARROWS PICK  +/- EDIT  SPACE TOGGLE  S SAVE', COLORS.green, 'tiny');
+    }
+
+    function drawAssets(ctx) {
+      clear(ctx, '#084108');
+      header(ctx, 'Asset Sync', COLORS.green);
+      text(ctx, 16, 34, 'manifest ok', COLORS.white);
+      text(ctx, 16, 48, 'version 2026-04-30.1', COLORS.white);
+      text(ctx, 16, 62, 'files 18  42.5MB', COLORS.white);
+      text(ctx, 16, 76, 'storage SD', COLORS.white);
+      text(ctx, 16, 90, 'audio index yes', COLORS.white);
+      text(ctx, 16, 112, 'F fetch S sync R load', COLORS.muted);
+    }
+
+    function drawOta(ctx) {
+      clear(ctx, '#084108');
+      header(ctx, 'Firmware OTA', COLORS.red);
+      text(ctx, 16, 34, 'version 0.2.0-dev', COLORS.white);
+      text(ctx, 16, 48, 'git abcdef-dirty', COLORS.white);
+      text(ctx, 16, 62, 'manifest ok', COLORS.white);
+      text(ctx, 16, 76, 'candidate 0.2.1', COLORS.white);
+      text(ctx, 16, 90, 'policy manual confirm', COLORS.white);
+      text(ctx, 16, 112, 'F fetch R load A apply SHA', COLORS.muted);
+    }
+
+    function drawBattery(ctx) {
+      clear(ctx, '#07131d');
+      header(ctx, 'Battery', COLORS.green);
+      box(ctx, 28, 42, 152, 54, 'transparent', 'round', { border: '2px solid #81ff72' });
+      box(ctx, 181, 58, 11, 22, COLORS.green, 'round');
+      box(ctx, 35, 49, 103, 40, COLORS.green, 'round');
+      text(ctx, 70, 55, '68%', '#07131d', 'big');
+      text(ctx, 22, 112, 'Charging  3890mV  SD mounted', COLORS.muted);
+    }
+
+    function drawLogs(ctx) {
+      clear(ctx, '#084108');
+      header(ctx, 'Logs / Status', '#c618');
+      text(ctx, 16, 34, '192.168.1.174 SD', COLORS.white);
+      ['VOICE upload ok', 'ASSET manifest files=18', 'TIME synced epoch=...', 'TEXT async reply ok', 'WIFI restored'].forEach((v, i) => {
+        text(ctx, 16, 50 + i * 12, v, COLORS.muted);
+      });
+      text(ctx, 16, 116, '</> scroll R reload U upload', COLORS.muted);
+    }
+
+    function header(ctx, label, color) {
+      box(ctx, 0, 0, 240, 24, '#121c2a');
+      box(ctx, 0, 23, 240, 1, color);
+      text(ctx, 12, 8, label, COLORS.white, 'medium');
+    }
+
+    function render(screenId = state.screen) {
+      state.screen = screens[screenId] ? screenId : 'chat-face';
+      const spec = screens[state.screen];
+      document.querySelectorAll('.screen-link').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.screen === state.screen);
+      });
+      document.getElementById('screenTitle').textContent = spec.title;
+      document.getElementById('screenDesc').textContent = spec.desc;
+      document.getElementById('screenNotes').textContent = spec.notes;
+      const ctx = document.getElementById('screen');
+      ctx.dataset.screen = state.screen;
+      spec.draw(ctx);
+      drawPoint(ctx);
+      renderNavigation();
+      renderHotkeys();
+      renderComments();
+      if (location.hash.replace('#', '').split('@')[0] !== state.screen) {
+        history.replaceState(null, '', '#' + state.screen);
+      }
+    }
+
+    function redrawScreenOnly() {
+      const spec = screens[state.screen];
+      if (!spec) return;
+      const ctx = document.getElementById('screen');
+      ctx.dataset.screen = state.screen;
+      spec.draw(ctx);
+      drawPoint(ctx);
+    }
+
+    function drawPoint(ctx) {
+      if (!state.point || state.point.screen !== state.screen) return;
+      const { x, y } = state.point;
+      box(ctx, x - 4, y, 9, 1, COLORS.red);
+      box(ctx, x, y - 4, 1, 9, COLORS.red);
+      box(ctx, x - 2, y - 2, 5, 5, 'transparent', 'circle', { border: '1px solid ' + COLORS.red });
+    }
+
+    function renderGallery() {
+      const gallery = document.getElementById('gallery');
+      gallery.innerHTML = '';
+      Object.entries(screens).forEach(([id, spec], index) => {
+        const card = el('button', 'thumb-card', { textAlign: 'left', cursor: 'pointer' });
+        const title = el('div', 'thumb-title');
+        title.append(el('span', null, null, `${index + 1}. ${spec.title}`));
+        title.append(el('span', null, null, id));
+        const mini = el('div', 'thumb-screen');
+        spec.draw(mini);
+        card.append(title, mini);
+        card.addEventListener('click', () => render(id));
+        gallery.appendChild(card);
+      });
+    }
+
+    function renderComments() {
+      const list = document.getElementById('commentList');
+      list.innerHTML = '';
+      state.comments.slice().reverse().forEach(c => {
+        const item = el('div', 'comment');
+        item.innerHTML = `<b>${escapeHtml(c.ref)}</b>\n${escapeHtml(c.text)}`;
+        list.appendChild(item);
+      });
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[ch]));
+    }
+
+    function currentRef() {
+      if (!state.point || state.point.screen !== state.screen) return `#${state.screen}`;
+      return `#${state.screen}@x${state.point.x},y${state.point.y}`;
+    }
+
+    function currentGroup() {
+      return screenGroups.find(group => group.includes(state.screen)) || [state.screen];
+    }
+
+    function currentApp() {
+      return appGroups.find(group => group.screens.includes(state.screen)) || appGroups[0];
+    }
+
+    function currentGroupIndex() {
+      const index = appGroups.findIndex(group => group.screens.includes(state.screen));
+      return index >= 0 ? index : 0;
+    }
+
+    function adjacentScreen(delta) {
+      const group = currentGroup();
+      const index = group.indexOf(state.screen);
+      return group[(index + delta + group.length) % group.length];
+    }
+
+    function moveWithinApp(delta) {
+      if (watchfaces.includes(state.screen)) {
+        const index = watchfaces.indexOf(state.screen);
+        render(watchfaces[(index + delta + watchfaces.length) % watchfaces.length]);
+        return;
+      }
+      const group = currentGroup();
+      const index = group.indexOf(state.screen);
+      render(group[(index + delta + group.length) % group.length]);
+    }
+
+    function moveApp(delta) {
+      const index = currentGroupIndex();
+      const nextGroup = screenGroups[(index + delta + screenGroups.length) % screenGroups.length];
+      render(nextGroup[0]);
+    }
+
+    function setScale(delta) {
+      const select = document.getElementById('scale');
+      const values = Array.from(select.options).map(option => Number(option.value));
+      const current = Number(select.value);
+      const index = values.indexOf(current);
+      const next = values[Math.max(0, Math.min(values.length - 1, index + delta))];
+      select.value = String(next);
+      document.documentElement.style.setProperty('--scale', String(next));
+    }
+
+    function copyCurrentLink() {
+      navigator.clipboard.writeText(location.href.split('#')[0] + currentRef());
+    }
+
+    function saveCurrentComment() {
+      const textValue = document.getElementById('commentText').value.trim();
+      if (!textValue) return;
+      state.comments.push({ ref: currentRef(), text: textValue, at: new Date().toISOString() });
+      localStorage.setItem('cardputerUxComments', JSON.stringify(state.comments));
+      document.getElementById('commentText').value = '';
+      renderComments();
+    }
+
+    function movePoint(dx, dy) {
+      if (!state.point || state.point.screen !== state.screen) {
+        state.point = { screen: state.screen, x: 120, y: 67 };
+      }
+      state.point.x = Math.max(0, Math.min(239, state.point.x + dx));
+      state.point.y = Math.max(0, Math.min(134, state.point.y + dy));
+      document.getElementById('coord').textContent = currentRef();
+      history.replaceState(null, '', currentRef());
+      render(state.screen);
+    }
+
+    function screenIndexList() {
+      return Object.keys(screens);
+    }
+
+    function renderHotkeys() {
+      const target = document.getElementById('activeHotkeys');
+      target.innerHTML = '';
+      const specific = [];
+      if (watchfaces.includes(state.screen)) {
+        specific.push(['Tab', 'cycle watchface']);
+        specific.push(['W', 'cycle watchface']);
+      }
+      if (state.screen === 'assets') {
+        specific.push(['F', 'fetch manifest']);
+        specific.push(['S', 'sync assets']);
+        specific.push(['R', 'reload manifest']);
+      }
+      if (state.screen === 'voice') {
+        specific.push(['Enter', 'play selected note']);
+        specific.push(['J/K', 'select note']);
+        specific.push(['V', 'volume']);
+      }
+      if (state.screen === 'chat-face' || state.screen === 'chat-full') {
+        specific.push(['Ctrl+V', 'voice start/stop']);
+        specific.push(['Enter', 'send typed message']);
+      }
+      if (state.screen === 'loading') {
+        specific.push(['Tab', 'leave loading']);
+        specific.push(['Ctrl+L', 'launcher']);
+        specific.push(['D', 'debug/logs']);
+      }
+      [...globalHotkeys, ...specific].forEach(([key, label]) => {
+        const row = el('div', 'key-row');
+        row.append(el('kbd', null, null, key), el('span', null, null, label));
+        target.appendChild(row);
+      });
+    }
+
+    function renderNavigation() {
+      const nav = document.getElementById('navMap');
+      nav.innerHTML = '';
+      const app = currentApp();
+      const group = currentGroup();
+      const index = group.indexOf(state.screen);
+      const prev = adjacentScreen(-1);
+      const next = adjacentScreen(1);
+
+      document.getElementById('locationPath').innerHTML =
+        `Current: <b>${escapeHtml(app.title)}</b> / ${escapeHtml(screens[state.screen].title)} <span style="color:var(--muted)">(${index + 1}/${group.length})</span>`;
+
+      const strip = document.getElementById('positionStrip');
+      strip.innerHTML = '';
+      group.forEach((screenId, itemIndex) => {
+        const chip = el('button', 'position-chip' + (screenId === state.screen ? ' active' : ''), null,
+          `${itemIndex + 1}. ${screens[screenId].title}`);
+        chip.addEventListener('click', () => render(screenId));
+        strip.appendChild(chip);
+      });
+
+      document.getElementById('prevScreenLabel').textContent = `Prev: ${screens[prev].title}`;
+      document.getElementById('currentScreenLabel').textContent = `${app.title} / ${screens[state.screen].title}`;
+      document.getElementById('nextScreenLabel').textContent = `Next: ${screens[next].title}`;
+
+      appGroups.forEach(groupSpec => {
+        const section = el('div', 'app-section' + (groupSpec.id === app.id ? ' active' : ''));
+        const header = el('div', 'app-header');
+        header.innerHTML = `<b>${escapeHtml(groupSpec.title)}</b><span>${escapeHtml(groupSpec.hint)}</span>`;
+        section.appendChild(header);
+        groupSpec.screens.forEach((screenId, itemIndex) => {
+          const btn = el('button', 'screen-link' + (screenId === state.screen ? ' active' : ''));
+          btn.dataset.screen = screenId;
+          btn.innerHTML = `<span>${itemIndex + 1}. ${escapeHtml(screens[screenId].title)}</span><small>${escapeHtml(screenId)}</small>`;
+          btn.addEventListener('click', () => render(screenId));
+          section.appendChild(btn);
+        });
+        nav.appendChild(section);
+      });
+    }
+
+    document.getElementById('scale').addEventListener('change', event => {
+      document.documentElement.style.setProperty('--scale', event.target.value);
+    });
+
+    document.getElementById('screen').addEventListener('click', event => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const scale = rect.width / 240;
+      const x = Math.max(0, Math.min(239, Math.round((event.clientX - rect.left) / scale)));
+      const y = Math.max(0, Math.min(134, Math.round((event.clientY - rect.top) / scale)));
+      state.point = { screen: state.screen, x, y };
+      document.getElementById('coord').textContent = currentRef();
+      history.replaceState(null, '', currentRef());
+      render(state.screen);
+    });
+
+    document.getElementById('copyLink').addEventListener('click', copyCurrentLink);
+
+    document.getElementById('copyComment').addEventListener('click', () => {
+      navigator.clipboard.writeText(currentRef());
+    });
+
+    document.getElementById('saveComment').addEventListener('click', saveCurrentComment);
+
+    document.querySelectorAll('[data-action]').forEach(button => {
+      button.addEventListener('click', () => {
+        const action = button.dataset.action;
+        if (action === 'prev-screen') moveWithinApp(-1);
+        if (action === 'next-screen') moveWithinApp(1);
+        if (action === 'launcher') render('launcher');
+        if (action === 'prev-app') moveApp(-1);
+        if (action === 'next-app') moveApp(1);
+        if (action === 'watchface') {
+          render(watchfaces.includes(state.screen)
+            ? watchfaces[(watchfaces.indexOf(state.screen) + 1) % watchfaces.length]
+            : 'clock-neon');
+        }
+        if (action === 'scale-down') setScale(-1);
+        if (action === 'scale-up') setScale(1);
+        if (action === 'copy-link') copyCurrentLink();
+      });
+    });
+
+    document.getElementById('exportComments').addEventListener('click', () => {
+      const payload = JSON.stringify(state.comments, null, 2);
+      navigator.clipboard.writeText(payload);
+      alert('Comments JSON copied to clipboard.');
+    });
+
+    document.getElementById('clearComments').addEventListener('click', () => {
+      if (!confirm('Clear local UX comments?')) return;
+      state.comments = [];
+      localStorage.removeItem('cardputerUxComments');
+      renderComments();
+    });
+
+    window.addEventListener('hashchange', () => {
+      const raw = location.hash.replace('#', '');
+      const [screenId, point] = raw.split('@');
+      if (point) {
+        const match = point.match(/x(\d+),y(\d+)/);
+        if (match) state.point = { screen: screenId, x: Number(match[1]), y: Number(match[2]) };
+      }
+      render(screenId || 'chat-face');
+    });
+
+    window.addEventListener('keydown', event => {
+      const tag = document.activeElement?.tagName;
+      const editing = tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT';
+
+      if (editing) {
+        if (event.key === 'Escape') {
+          document.activeElement.blur();
+          event.preventDefault();
+        } else if (event.ctrlKey && event.key === 'Enter') {
+          saveCurrentComment();
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (event.ctrlKey && event.key.toLowerCase() === 'l') {
+        render('launcher');
+        event.preventDefault();
+        return;
+      }
+      if (event.ctrlKey && event.key.toLowerCase() === 'v') {
+        document.getElementById('coord').textContent = 'Voice hotkey preview: Ctrl+V start/stop';
+        event.preventDefault();
+        return;
+      }
+      if (event.key === 'Tab') {
+        const now = performance.now();
+        if (!event.shiftKey && now - lastTabAt < 340) {
+          render('launcher');
+          lastTabAt = 0;
+          event.preventDefault();
+          return;
+        }
+        lastTabAt = now;
+        moveWithinApp(event.shiftKey ? -1 : 1);
+        event.preventDefault();
+        return;
+      }
+      if (event.key === 'PageDown' || (event.altKey && event.key === 'ArrowDown')) {
+        moveApp(1);
+        event.preventDefault();
+        return;
+      }
+      if (event.key === 'PageUp' || (event.altKey && event.key === 'ArrowUp')) {
+        moveApp(-1);
+        event.preventDefault();
+        return;
+      }
+      if (event.key.startsWith('Arrow')) {
+        const step = event.shiftKey ? 10 : 1;
+        if (event.key === 'ArrowLeft') movePoint(-step, 0);
+        if (event.key === 'ArrowRight') movePoint(step, 0);
+        if (event.key === 'ArrowUp') movePoint(0, -step);
+        if (event.key === 'ArrowDown') movePoint(0, step);
+        event.preventDefault();
+        return;
+      }
+
+      const lower = event.key.toLowerCase();
+      if (lower >= '1' && lower <= '9') {
+        const id = screenIndexList()[Number(lower) - 1];
+        if (id) render(id);
+        event.preventDefault();
+        return;
+      }
+      if (lower === '0') {
+        const id = screenIndexList()[9];
+        if (id) render(id);
+        event.preventDefault();
+        return;
+      }
+      if (lower === 'n' || lower === '.') {
+        moveWithinApp(1);
+        event.preventDefault();
+        return;
+      }
+      if (lower === 'p' || lower === ',') {
+        moveWithinApp(-1);
+        event.preventDefault();
+        return;
+      }
+      if (lower === 'w') {
+        render(watchfaces.includes(state.screen)
+          ? watchfaces[(watchfaces.indexOf(state.screen) + 1) % watchfaces.length]
+          : 'clock-neon');
+        event.preventDefault();
+        return;
+      }
+      if (lower === 'l') {
+        render('loading');
+        event.preventDefault();
+        return;
+      }
+      if (lower === 'd') {
+        render('logs');
+        event.preventDefault();
+        return;
+      }
+      if (lower === 'm') {
+        document.getElementById('commentText').focus();
+        event.preventDefault();
+        return;
+      }
+      if (lower === 'c') {
+        copyCurrentLink();
+        event.preventDefault();
+        return;
+      }
+      if (event.key === '+' || event.key === '=') {
+        setScale(1);
+        event.preventDefault();
+        return;
+      }
+      if (event.key === '-' || event.key === '_') {
+        setScale(-1);
+        event.preventDefault();
+      }
+    });
+
+    setInterval(() => {
+      if (state.screen === 'clock-neon') redrawScreenOnly();
+    }, 240);
+
+    renderGallery();
+    window.dispatchEvent(new Event('hashchange'));
+  </script>
+</body>
+</html>
