@@ -17,6 +17,7 @@
 #include <Wire.h>
 #include <Update.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -38,7 +39,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.3-dev"
+#define APP_VERSION "0.2.11-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,10 +65,14 @@ constexpr const char* kPrefsHubNs = "hub_ep";
 constexpr const char* kPrefsDeviceNs = "device_cfg";
 constexpr const char* kPrefsFocusNs = "focus_cfg";
 constexpr const char* kPrefsContextNs = "ctx_cfg";
+constexpr const char* kPrefsOtaGuardNs = "ota_guard";
+constexpr const char* kPrefsPetNs = "pet_v1";
 constexpr const char* kLegacyBridgeHost = "109.199.103.176";
 constexpr uint16_t kLegacyBridgePort = 31889;
 constexpr const char* kProdBridgeHost = "bridge.ai.k-digital.pro";
 constexpr uint16_t kProdBridgePort = 443;
+constexpr uint32_t kOtaHealthProbeIntervalMs = 10000;
+constexpr uint32_t kOtaCoreBootGraceMs = 90000;
 
 constexpr const char* kBleServiceName = "OmniBot Cardputer ADV";
 constexpr const char* kBleServiceUuid = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
@@ -124,6 +129,16 @@ constexpr uint8_t kFocusDefaultCycles = 4;
 constexpr uint32_t kFocusSnoozeSec = 5UL * 60UL;
 constexpr uint16_t kFocusMinBpm = 30;
 constexpr uint16_t kFocusMaxBpm = 160;
+constexpr uint32_t kPetMinuteMs = 60UL * 1000UL;
+constexpr uint32_t kPetTickMs = 1000;
+constexpr uint32_t kPetAutoSaveMs = 45UL * 1000UL;
+constexpr uint32_t kPetActionMs = 5UL * 1000UL;
+constexpr uint32_t kPetRestMinMs = 90UL * 1000UL;
+constexpr uint32_t kPetRestMaxMs = 180UL * 1000UL;
+constexpr uint32_t kPetDecisionMinMs = 45UL * 1000UL;
+constexpr uint32_t kPetDecisionMaxMs = 120UL * 1000UL;
+constexpr uint32_t kPetOfflineMaxMinutes = 8UL * 60UL;
+constexpr uint8_t kPetMaxPoop = 5;
 constexpr uint32_t kTextTurnTaskStackSize = 8192;
 constexpr uint32_t kTopicTaskStackSize = 8192;
 constexpr size_t kMaxFlashVoiceNotes = 12;
@@ -376,6 +391,59 @@ enum class FocusState : uint8_t {
   Paused,
 };
 
+enum class PetStage : uint8_t {
+  Egg,
+  Baby,
+  Teen,
+  Adult,
+  Elder,
+};
+
+enum class PetMood : uint8_t {
+  Calm,
+  Happy,
+  Hungry,
+  Bored,
+  Curious,
+  Sick,
+  Excited,
+  Sleepy,
+  Dirty,
+  Dead,
+};
+
+enum class PetActivity : uint8_t {
+  Idle,
+  Eating,
+  Playing,
+  Cleaning,
+  Sleeping,
+  Hunting,
+  Exploring,
+  Medicine,
+  Discipline,
+  Evolving,
+  Dead,
+};
+
+enum class PetRestPhase : uint8_t {
+  None,
+  Enter,
+  Deep,
+  Wake,
+};
+
+enum class PetCareAction : uint8_t {
+  Feed,
+  Play,
+  Clean,
+  Sleep,
+  Medicine,
+  Discipline,
+  Hunt,
+  Explore,
+};
+
 enum class EyeEmotion : uint8_t {
   Neutral,
   Speaking,
@@ -460,6 +528,7 @@ struct OtaManifestSummary {
 
 struct ConversationContext {
   String label;
+  String emoji;
   String key;
   String shortName;
   String topicKey;
@@ -495,9 +564,11 @@ struct TextTurnTaskResult {
   bool ok = false;
   bool parsed = false;
   bool hasReply = false;
+  bool hasDeviceActions = false;
   bool telegramDelivered = false;
   String reply;
   String shortText;
+  String deviceActionsJson;
   String audioUrl;
   String audioPath;
   String audioTitle;
@@ -553,6 +624,51 @@ struct FocusRuntime {
   bool helpVisible = false;
 };
 
+struct PetEnvironment {
+  int16_t netCount = 0;
+  int16_t hiddenCount = 0;
+  int16_t openCount = 0;
+  int16_t strongCount = 0;
+  int16_t avgRssi = -100;
+  uint32_t lastScanMs = 0;
+  bool scanPending = false;
+  bool scanFresh = false;
+};
+
+struct PetRuntime {
+  uint8_t hunger = 70;
+  uint8_t happiness = 70;
+  uint8_t health = 75;
+  uint8_t energy = 80;
+  uint8_t cleanliness = 80;
+  uint8_t discipline = 45;
+  uint8_t poop = 0;
+  uint8_t careMistakes = 0;
+  uint8_t traitCuriosity = 70;
+  uint8_t traitActivity = 60;
+  uint8_t traitStress = 40;
+  uint32_t ageMinutes = 0;
+  uint32_t bornEpoch = 0;
+  uint32_t lastSavedEpoch = 0;
+  uint32_t lastTickMs = 0;
+  uint32_t lastMinuteMs = 0;
+  uint32_t lastSaveMs = 0;
+  uint32_t actionUntilMs = 0;
+  uint32_t lastInteractionMs = 0;
+  uint32_t lastDecisionMs = 0;
+  uint32_t nextDecisionMs = kPetDecisionMinMs;
+  uint32_t restPhaseStartMs = 0;
+  uint32_t restDurationMs = kPetRestMinMs;
+  bool alive = true;
+  bool sick = false;
+  bool restStatsApplied = false;
+  PetStage stage = PetStage::Egg;
+  PetMood mood = PetMood::Calm;
+  PetActivity activity = PetActivity::Idle;
+  PetRestPhase restPhase = PetRestPhase::None;
+  PetEnvironment env;
+};
+
 struct LauncherSubItem {
   const char* label;
   UiMode mode;
@@ -576,8 +692,8 @@ struct EmojiCacheEntry {
 };
 
 constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
-    {"Assistant", "AI", "Voice, face, hero", rgb565_local(47, 227, 255), 4,
-     {{"Pulse", UiMode::Home}, {"Big Eyes", UiMode::Face}, {"Klo Hero", UiMode::Hero}, {"Chat Eyes", UiMode::ChatFace}}},
+    {"Assistant", "AI", "Voice, face, pet", rgb565_local(47, 227, 255), 4,
+     {{"Pulse", UiMode::Home}, {"Big Eyes", UiMode::Face}, {"OpenClaw Pet", UiMode::Hero}, {"Chat Eyes", UiMode::ChatFace}}},
     {"Chat", "CH", "Chat in active topic", rgb565_local(88, 210, 255), 2,
      {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}}},
     {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
@@ -729,8 +845,23 @@ BatterySnapshot gBatterySnapshot;
 FocusSettings gFocusSettings;
 DeviceSettings gDeviceSettings;
 FocusRuntime gFocus;
+PetRuntime gPet;
 AssetManifestSummary gAssetManifest;
 OtaManifestSummary gOtaManifest;
+bool gOtaPendingVerify = false;
+bool gOtaConfirmedThisBoot = false;
+uint32_t gOtaVerifyStartMs = 0;
+uint32_t gOtaLastHealthProbeMs = 0;
+String gOtaRunningSlot = "-";
+String gOtaBootState = "unknown";
+bool gTransferUiActive = false;
+String gTransferTitle;
+String gTransferDetail;
+uint32_t gTransferDone = 0;
+uint32_t gTransferTotal = 0;
+uint32_t gTransferStartedMs = 0;
+uint32_t gTransferLastRenderMs = 0;
+uint16_t gTransferAccent = TFT_CYAN;
 TaskHandle_t gTextTurnTaskHandle = nullptr;
 portMUX_TYPE gTextTurnMux = portMUX_INITIALIZER_UNLOCKED;
 TextTurnTaskResult* gCompletedTextTurn = nullptr;
@@ -748,6 +879,11 @@ void startHubWebSocket();
 void pauseHubWebSocketForVoice();
 void resumeHubWebSocketAfterVoice();
 void render();
+void setStatus(const String& text, uint32_t ttlMs);
+void pushSystem(const String& text);
+void beginTransferUi(const String& title, const String& detail, uint32_t total, uint16_t accent);
+void updateTransferUi(uint32_t done, uint32_t total = 0, const String& detail = "");
+void finishTransferUi(const String& statusText, bool ok);
 std::vector<String> wrapText(const String& raw, int32_t pixelLimit);
 String keyboardSignatureFromState();
 bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs = kHttpReconnectTimeoutMs);
@@ -769,6 +905,16 @@ void loadFocusSettings();
 void saveFocusSettings();
 void loadDeviceSettings();
 void saveDeviceSettings();
+void loadPetState();
+void savePetState(bool force = false);
+void resetPet(bool fullReset);
+void servicePet();
+bool handlePetKey(char key, const Keyboard_Class::KeysState& keys);
+bool applyPetCare(PetCareAction action);
+void setUiMode(UiMode mode);
+bool focusStateRuns(FocusState state);
+void focusStartOrResume();
+void focusReset();
 void updateFocusTimer();
 void serviceFocusMetronome();
 void focusTone(uint16_t freq, uint16_t durationMs);
@@ -788,13 +934,23 @@ bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, cons
 void processCompletedTopicTask();
 void showTopicOverlay(int8_t direction = 0, uint32_t ttlMs = 1600);
 bool isEmojiAssetCodepoint(uint32_t codepoint);
+bool decodeUtf8At(const String& value, int index, uint32_t& codepoint, int& consumed);
+String normalizeEmojiDisplayText(const String& raw);
+bool emojiAssetAvailable(uint32_t codepoint);
+String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji = true);
+String makeTopicShortName(const String& title, int32_t threadId);
 bool fetchRemoteAssetManifest();
 bool fetchRemoteOtaManifest();
 bool syncAssetsFromManifest();
 String fitCurrentFontToWidth(String text, int32_t pixelLimit);
 void drawTinyFooter(uint16_t bg, uint16_t fg, const String& text, int16_t x = 12, int16_t y = 124,
                     int16_t w = 216);
+String compactBytes(uint32_t bytes);
 bool applyOtaFromManifest();
+void beginOtaBootGuard();
+bool confirmOtaBootIfPending(const char* reason);
+void rollbackPendingOta(const char* reason);
+void serviceOtaBootGuard();
 bool uploadRuntimeLogs();
 void processCompletedTextTurn();
 void maybeStartNextTextTurn();
@@ -808,6 +964,9 @@ uint64_t activeStorageTotalBytes();
 uint64_t activeStorageUsedBytes();
 void configureEmojiRendering();
 void scanEmojiAssets();
+bool executeDeviceActions(JsonVariantConst actions);
+bool executeDeviceActionsJson(const String& json);
+bool executeDeviceAction(JsonObjectConst action);
 
 void mapTcaRawKeyToPhysical(uint8_t keyValue, uint8_t& row, uint8_t& col) {
   uint8_t unit = keyValue % 10;
@@ -934,6 +1093,74 @@ String hubBaseUrl() {
   return String(hubUsesTls() ? "https://" : "http://") + gHubHost + ":" + String(gHubPort);
 }
 
+const char* otaImageStateName(esp_ota_img_states_t state) {
+  switch (state) {
+    case ESP_OTA_IMG_NEW:
+      return "new";
+    case ESP_OTA_IMG_PENDING_VERIFY:
+      return "pending";
+    case ESP_OTA_IMG_VALID:
+      return "valid";
+    case ESP_OTA_IMG_INVALID:
+      return "invalid";
+    case ESP_OTA_IMG_ABORTED:
+      return "aborted";
+    case ESP_OTA_IMG_UNDEFINED:
+    default:
+      return "undefined";
+  }
+}
+
+void clearOtaGuardPrefs() {
+  gPrefs.begin(kPrefsOtaGuardNs, false);
+  gPrefs.clear();
+  gPrefs.end();
+}
+
+void recordOtaApplyIntent() {
+  gPrefs.begin(kPrefsOtaGuardNs, false);
+  gPrefs.putString("target", gOtaManifest.version);
+  gPrefs.putString("sha", gOtaManifest.sha256);
+  gPrefs.putString("from", kAppVersion);
+  gPrefs.putString("git", kBuildGitSha);
+  gPrefs.putUInt("started", millis());
+  gPrefs.end();
+}
+
+void beginOtaBootGuard() {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  gOtaRunningSlot = running ? String(running->label) : String("-");
+  esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+  esp_err_t err = running ? esp_ota_get_state_partition(running, &state) : ESP_ERR_NOT_FOUND;
+  if (err == ESP_OK) {
+    gOtaBootState = otaImageStateName(state);
+  } else {
+    gOtaBootState = "no-state";
+  }
+
+  gOtaPendingVerify = err == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY;
+  gOtaConfirmedThisBoot = false;
+  gOtaVerifyStartMs = millis();
+  gOtaLastHealthProbeMs = 0;
+
+  if (gOtaPendingVerify) {
+    gPrefs.begin(kPrefsOtaGuardNs, false);
+    uint32_t boots = gPrefs.getUInt("boots", 0) + 1;
+    gPrefs.putUInt("boots", boots);
+    gPrefs.putString("slot", gOtaRunningSlot);
+    gPrefs.putString("boot_version", kAppVersion);
+    gPrefs.end();
+    appendRuntimeLog("OTA", "pending verify slot=" + gOtaRunningSlot +
+                              " boot=" + String(boots), true);
+    pushSystem("OTA verify: " + gOtaRunningSlot);
+    setStatus("OTA verifying...", 1200);
+  } else if (err == ESP_OK && state == ESP_OTA_IMG_VALID) {
+    clearOtaGuardPrefs();
+  }
+  logf("[OTA] running=%s state=%s pending=%d", gOtaRunningSlot.c_str(),
+       gOtaBootState.c_str(), static_cast<int>(gOtaPendingVerify));
+}
+
 const char* uiModeName(UiMode mode) {
   switch (mode) {
     case UiMode::Home:
@@ -941,7 +1168,7 @@ const char* uiModeName(UiMode mode) {
     case UiMode::Face:
       return "Face";
     case UiMode::Hero:
-      return "Hero";
+      return "Pet";
     case UiMode::ChatFull:
       return "Chat";
     case UiMode::Clock:
@@ -1052,6 +1279,73 @@ String cleanReplyForDevice(const String& text) {
   String out = text;
   out.replace("[[audio_as_voice]]", "");
   out.replace("[[audio_as_text]]", "");
+  out.replace("```", "");
+  out.replace("**", "");
+  out.replace("__", "");
+  out.replace("~~", "");
+  out.replace("`", "");
+  out.replace("*", "");
+  out.replace("_", "");
+  out.replace("&nbsp;", " ");
+  out.replace("&amp;", "&");
+  out.replace("&lt;", "<");
+  out.replace("&gt;", ">");
+  out.replace("&quot;", "\"");
+  out.replace("&#39;", "'");
+
+  String linked;
+  linked.reserve(out.length());
+  for (int i = 0; i < out.length();) {
+    bool image = out[i] == '!' && i + 1 < out.length() && out[i + 1] == '[';
+    bool link = out[i] == '[' || image;
+    if (link) {
+      int textStart = i + (image ? 2 : 1);
+      int textEnd = out.indexOf(']', textStart);
+      int urlStart = textEnd >= 0 ? out.indexOf("](", textStart) : -1;
+      int urlEnd = urlStart >= 0 ? out.indexOf(')', urlStart + 2) : -1;
+      if (textEnd >= 0 && urlStart == textEnd && urlEnd >= 0) {
+        linked += out.substring(textStart, textEnd);
+        i = urlEnd + 1;
+        continue;
+      }
+    }
+    linked += out[i++];
+  }
+  out = linked;
+
+  String lines;
+  lines.reserve(out.length());
+  int start = 0;
+  while (start <= out.length()) {
+    int end = out.indexOf('\n', start);
+    if (end < 0) {
+      end = out.length();
+    }
+    String line = out.substring(start, end);
+    line.trim();
+    while (line.startsWith("#")) {
+      line = line.substring(1);
+      line.trim();
+    }
+    while (line.startsWith(">")) {
+      line = line.substring(1);
+      line.trim();
+    }
+    if (line.startsWith("- ") || line.startsWith("+ ")) {
+      line = "* " + line.substring(2);
+    }
+    if (!line.isEmpty()) {
+      if (!lines.isEmpty()) {
+        lines += " ";
+      }
+      lines += line;
+    }
+    if (end >= out.length()) {
+      break;
+    }
+    start = end + 1;
+  }
+  out = lines;
   out.trim();
   return out;
 }
@@ -1203,6 +1497,130 @@ void setStatus(const String& text, uint32_t ttlMs = 0) {
   gStatusUntilMs = ttlMs ? millis() + ttlMs : 0;
 }
 
+void renderTransferUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 6, 12);
+  const uint16_t panel = rgb565_local(7, 13, 22);
+  const uint16_t ink = rgb565_local(224, 239, 246);
+  const uint16_t muted = rgb565_local(117, 136, 150);
+  const uint16_t track = rgb565_local(22, 35, 47);
+  uint32_t now = millis();
+  uint32_t elapsed = gTransferStartedMs ? (now - gTransferStartedMs) : 0;
+  int pct = gTransferTotal ? clampValue<int>((gTransferDone * 100ULL) / gTransferTotal, 0, 100) : -1;
+  float pulse = (sinf(now * 0.008f) + 1.0f) * 0.5f;
+  int sweep = static_cast<int>((now / 18) % 172);
+
+  d.fillScreen(bg);
+  d.fillRoundRect(8, 8, 224, 119, 14, panel);
+  d.drawRoundRect(8, 8, 224, 119, 14, gTransferAccent);
+  d.drawRoundRect(12, 12, 216, 111, 11, rgb565_local(18, 33, 45));
+
+  d.setFont(&fonts::Font2);
+  d.setTextSize(1);
+  d.setTextColor(gTransferAccent, panel);
+  d.setCursor(18, 18);
+  d.print(trimPreview(gTransferTitle, 22));
+  d.setTextColor(muted, panel);
+  String version = String("v") + kAppVersion;
+  d.setCursor(222 - d.textWidth(version), 18);
+  d.print(version);
+
+  int16_t cx = 54;
+  int16_t cy = 64;
+  for (int i = 0; i < 8; ++i) {
+    float a = now * 0.006f + i * 0.785f;
+    int16_t x = cx + static_cast<int16_t>(cosf(a) * (18 + i % 2));
+    int16_t y = cy + static_cast<int16_t>(sinf(a) * 18);
+    uint16_t c = (i % 2) ? rgb565_local(255, 205, 96) : gTransferAccent;
+    d.fillCircle(x, y, 2 + ((i + now / 180) % 2), c);
+  }
+  d.fillCircle(cx, cy, 10 + static_cast<int>(pulse * 2.0f), rgb565_local(10, 27, 35));
+  d.drawCircle(cx, cy, 13, gTransferAccent);
+
+  d.setFont(&fonts::Font4);
+  d.setTextColor(ink, panel);
+  String pctText = pct >= 0 ? String(pct) + "%" : String("...");
+  d.setCursor(92, 43);
+  d.print(pctText);
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(muted, panel);
+  String detail = gTransferDetail.isEmpty() ? "please wait" : gTransferDetail;
+  d.setCursor(92, 70);
+  d.print(trimPreview(detail, 24));
+
+  if (gTransferTotal > 0) {
+    d.setCursor(92, 84);
+    d.print(compactBytes(gTransferDone));
+    d.print("/");
+    d.print(compactBytes(gTransferTotal));
+  } else {
+    d.setCursor(92, 84);
+    d.print(String(elapsed / 1000) + "s");
+  }
+
+  int barX = 18;
+  int barY = 104;
+  int barW = 204;
+  d.fillRoundRect(barX, barY, barW, 8, 4, track);
+  if (pct >= 0) {
+    int fillW = max<int>(4, (barW * pct) / 100);
+    d.fillRoundRect(barX, barY, fillW, 8, 4, gTransferAccent);
+    d.fillRoundRect(barX + max<int>(0, fillW - 18), barY + 2, min<int>(18, fillW), 4, 2, TFT_WHITE);
+  } else {
+    d.fillRoundRect(barX + sweep, barY, 32, 8, 4, gTransferAccent);
+  }
+
+  d.setTextColor(muted, panel);
+  d.setCursor(18, 116);
+  d.print("do not power off");
+  gCanvas.pushSprite(0, 0);
+}
+
+void beginTransferUi(const String& title, const String& detail, uint32_t total, uint16_t accent) {
+  gTransferUiActive = true;
+  gTransferTitle = title;
+  gTransferDetail = detail;
+  gTransferDone = 0;
+  gTransferTotal = total;
+  gTransferStartedMs = millis();
+  gTransferLastRenderMs = 0;
+  gTransferAccent = accent;
+  renderTransferUi();
+}
+
+void updateTransferUi(uint32_t done, uint32_t total, const String& detail) {
+  if (!gTransferUiActive) {
+    return;
+  }
+  gTransferDone = done;
+  if (total > 0) {
+    gTransferTotal = total;
+  }
+  if (!detail.isEmpty()) {
+    gTransferDetail = detail;
+  }
+  uint32_t now = millis();
+  if (now - gTransferLastRenderMs >= 220 || done >= gTransferTotal) {
+    gTransferLastRenderMs = now;
+    renderTransferUi();
+  }
+}
+
+void finishTransferUi(const String& statusText, bool ok) {
+  if (!gTransferUiActive) {
+    setStatus(statusText, ok ? 900 : 1600);
+    return;
+  }
+  if (!statusText.isEmpty()) {
+    gTransferDetail = statusText;
+  }
+  gTransferDone = gTransferTotal;
+  renderTransferUi();
+  gTransferUiActive = false;
+  setStatus(statusText, ok ? 900 : 1600);
+}
+
 void setFaceMode(FaceMode mode) {
   gFaceMode = mode;
 }
@@ -1318,6 +1736,89 @@ void pushError(const String& text) {
 void pushUser(const String& text) { pushLine("YOU", text, LineKind::User); }
 void pushAssistant(const String& text) { pushLine("AI", text, LineKind::Assistant); }
 
+LineKind topicHistoryLineKind(const String& role) {
+  if (role == "assistant") {
+    return LineKind::Assistant;
+  }
+  if (role == "device" || role == "human" || role == "user") {
+    return LineKind::User;
+  }
+  return LineKind::System;
+}
+
+String topicHistoryPrefix(const String& role, bool voice) {
+  if (voice) {
+    return "VO";
+  }
+  if (role == "assistant") {
+    return "AI";
+  }
+  if (role == "device") {
+    return "ME";
+  }
+  if (role == "human" || role == "user") {
+    return "TG";
+  }
+  return "MSG";
+}
+
+void replaceChatWithTopicHistory(const String& title, const std::vector<ChatLine>& lines) {
+  gChatLines.clear();
+  String header = "Topic: " + trimPreview(normalizeTopicTitleForDisplay(title, false), 72);
+  pushLine("CTX", header, LineKind::System);
+  if (lines.empty()) {
+    pushLine("CTX", "No recent messages", LineKind::System);
+    return;
+  }
+  for (const auto& line : lines) {
+    pushLine(line.prefix, line.text, line.kind);
+  }
+  gChatScrollOffset = 0;
+}
+
+String fallbackTopicEmojiForTitle(const String& title, int32_t threadId) {
+  String lower = title;
+  lower.toLowerCase();
+  if (lower.indexOf("card") >= 0 || lower.indexOf("adv") >= 0) {
+    return "💾";
+  }
+  if (lower.indexOf("marathon") >= 0 || lower.indexOf("run") >= 0) {
+    return "🏃";
+  }
+  if (lower.indexOf("body") >= 0 || lower.indexOf("health") >= 0) {
+    return "💪";
+  }
+  if (lower.indexOf("focus") >= 0 || lower.indexOf("task") >= 0) {
+    return "🎯";
+  }
+  if (lower.indexOf("video") >= 0) {
+    return "🎬";
+  }
+  if (lower.indexOf("audio") >= 0 || lower.indexOf("music") >= 0) {
+    return "🎧";
+  }
+  if (threadId == 1 || lower.indexOf("assistant") >= 0 || lower.indexOf("помощ") >= 0) {
+    return "🤖";
+  }
+  return "💬";
+}
+
+String topicDisplayTitle(const ConversationContext& ctx, bool keepAvailableEmoji = false) {
+  return normalizeTopicTitleForDisplay(ctx.label, keepAvailableEmoji);
+}
+
+String topicDisplayIcon(const ConversationContext& ctx) {
+  if (!ctx.emoji.isEmpty()) {
+    String emoji = normalizeEmojiDisplayText(ctx.emoji);
+    uint32_t codepoint = 0;
+    int consumed = 1;
+    if (decodeUtf8At(emoji, 0, codepoint, consumed) && emojiAssetAvailable(codepoint)) {
+      return emoji.substring(0, consumed);
+    }
+  }
+  return ctx.shortName.isEmpty() ? makeTopicShortName(ctx.label, ctx.threadId) : ctx.shortName;
+}
+
 bool decodeUtf8At(const String& value, int index, uint32_t& codepoint, int& consumed) {
   const auto* bytes = reinterpret_cast<const uint8_t*>(value.c_str());
   int len = value.length();
@@ -1391,10 +1892,24 @@ bool emojiAssetAvailable(uint32_t codepoint) {
   return SD.exists(path);
 }
 
-String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji = true) {
+String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji) {
   String cleaned = raw;
   cleaned.replace("to:root-main", "");
   cleaned.replace("root-main", "");
+  int slashPos = cleaned.lastIndexOf(" / ");
+  if (slashPos > 0) {
+    bool numericSuffix = true;
+    for (int i = slashPos + 3; i < cleaned.length(); ++i) {
+      char c = cleaned[i];
+      if (c < '0' || c > '9') {
+        numericSuffix = false;
+        break;
+      }
+    }
+    if (numericSuffix) {
+      cleaned = cleaned.substring(0, slashPos);
+    }
+  }
   cleaned.trim();
 
   String out;
@@ -1408,7 +1923,7 @@ String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji 
       i += consumed;
       continue;
     }
-    if (ok && isEmojiAssetCodepoint(codepoint) && !emojiAssetAvailable(codepoint)) {
+    if (ok && isEmojiAssetCodepoint(codepoint) && (!keepAvailableEmoji || !emojiAssetAvailable(codepoint))) {
       i += consumed;
       continue;
     }
@@ -1421,7 +1936,6 @@ String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji 
   if (out.isEmpty()) {
     out = "Topic";
   }
-  (void)keepAvailableEmoji;
   return out;
 }
 
@@ -1751,7 +2265,9 @@ bool configureHttpClient(HTTPClient& http, std::unique_ptr<WiFiClientSecure>& se
   return http.begin(url);
 }
 
-bool downloadUrlToFile(const String& url, const String& path, const String& expectedSha = "", uint32_t expectedSize = 0) {
+bool downloadUrlToFile(const String& url, const String& path, const String& expectedSha = "",
+                       uint32_t expectedSize = 0, const String& progressTitle = "Downloading",
+                       uint16_t progressAccent = TFT_CYAN) {
   if ((!gWifiReady && !ensureWifiForHttp("download", 3000)) || url.isEmpty()) {
     setStatus("Download no Wi-Fi", 1200);
     return false;
@@ -1770,12 +2286,13 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
     return false;
   }
 
+  beginTransferUi(progressTitle, "connecting", expectedSize, progressAccent);
   HTTPClient http;
   std::unique_ptr<WiFiClientSecure> secureClient;
   if (!configureHttpClient(http, secureClient, url, 90000)) {
     out.close();
     fsRemove(*fs, tempPath);
-    setStatus("Download connect failed", 1200);
+    finishTransferUi("connect failed", false);
     return false;
   }
   if (!gDeviceToken.isEmpty()) {
@@ -1786,7 +2303,7 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
     http.end();
     out.close();
     fsRemove(*fs, tempPath);
-    setStatus("HTTP " + String(code), 1500);
+    finishTransferUi("HTTP " + String(code), false);
     return false;
   }
 
@@ -1794,6 +2311,7 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
   uint8_t buffer[1024];
   uint32_t written = 0;
   int contentLength = http.getSize();
+  uint32_t progressTotal = contentLength > 0 ? static_cast<uint32_t>(contentLength) : expectedSize;
   uint32_t lastProgress = millis();
   while (http.connected() && (contentLength < 0 || written < static_cast<uint32_t>(contentLength))) {
     size_t available = stream->available();
@@ -1801,6 +2319,7 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
       if (millis() - lastProgress > 15000) {
         break;
       }
+      updateTransferUi(written, progressTotal, "waiting");
       delay(2);
       continue;
     }
@@ -1813,11 +2332,12 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
       http.end();
       out.close();
       fsRemove(*fs, tempPath);
-      setStatus("Download write failed", 1200);
+      finishTransferUi("write failed", false);
       return false;
     }
     written += readBytes;
     lastProgress = millis();
+    updateTransferUi(written, progressTotal, "receiving");
   }
   http.end();
   out.close();
@@ -1825,17 +2345,18 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
   if ((expectedSize > 0 && written != expectedSize) ||
       (contentLength > 0 && written != static_cast<uint32_t>(contentLength))) {
     fsRemove(*fs, tempPath);
-    setStatus("Download short", 1200);
+    finishTransferUi("download short", false);
     return false;
   }
   if (!expectedSha.isEmpty()) {
+    updateTransferUi(written, progressTotal, "verifying SHA");
     String actualSha = sha256File(*fs, tempPath);
     actualSha.toLowerCase();
     String expected = expectedSha;
     expected.toLowerCase();
     if (actualSha != expected) {
       fsRemove(*fs, tempPath);
-      setStatus("SHA mismatch", 1600);
+      finishTransferUi("SHA mismatch", false);
       appendRuntimeLog("SHA", path + " mismatch", true);
       return false;
     }
@@ -1843,9 +2364,10 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
   fsRemove(*fs, path);
   if (!fsRename(*fs, tempPath, path)) {
     fsRemove(*fs, tempPath);
-    setStatus("Rename failed", 1200);
+    finishTransferUi("rename failed", false);
     return false;
   }
+  finishTransferUi("saved", true);
   return true;
 }
 
@@ -2229,7 +2751,9 @@ void loadOtaManifestSummary() {
 
 bool fetchRemoteJsonToFile(const String& path, const String& localPath, const String& label) {
   String url = hubBaseUrl() + path;
-  bool ok = downloadUrlToFile(url, localPath);
+  String title = label == "OTA" ? "OTA Manifest" : (label == "ASSET" ? "Asset Manifest" : "Download");
+  uint16_t accent = label == "OTA" ? rgb565_local(255, 93, 88) : rgb565_local(88, 240, 141);
+  bool ok = downloadUrlToFile(url, localPath, "", 0, title, accent);
   appendRuntimeLog(label, ok ? "fetch ok" : "fetch failed", true);
   return ok;
 }
@@ -2288,7 +2812,10 @@ bool syncAssetsFromManifest() {
       sha.toLowerCase();
       alreadyOk = actual == sha;
     }
-    if (alreadyOk || downloadUrlToFile(url, path, sha, size)) {
+    if (alreadyOk || downloadUrlToFile(url, path, sha, size,
+                                       "Asset " + String(okCount + failCount + 1) + "/" +
+                                           String(doc["files"].as<JsonArray>().size()),
+                                       rgb565_local(88, 240, 141))) {
       ++okCount;
     } else {
       ++failCount;
@@ -2343,6 +2870,93 @@ bool uploadRuntimeLogs() {
   return ok;
 }
 
+bool probeOtaBridgeHealth(uint32_t timeoutMs) {
+  if ((!gWifiReady && !ensureWifiForHttp("ota-health", 3000)) || gHubHost.isEmpty()) {
+    appendRuntimeLog("OTA", "health skipped wifi/hub", false);
+    return false;
+  }
+
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  String url = hubBaseUrl() + "/healthz";
+  if (!configureHttpClient(http, secureClient, url, timeoutMs)) {
+    appendRuntimeLog("OTA", "health connect failed", false);
+    return false;
+  }
+  int code = http.GET();
+  String body = code > 0 ? http.getString() : "";
+  http.end();
+  if (code < 200 || code >= 300) {
+    appendRuntimeLog("OTA", "health http " + String(code), false);
+    return false;
+  }
+
+  DynamicJsonDocument doc(768);
+  auto err = deserializeJson(doc, body);
+  if (!err && doc["upstream_connected"].is<bool>() && !doc["upstream_connected"].as<bool>()) {
+    appendRuntimeLog("OTA", "health upstream false", false);
+    return false;
+  }
+  appendRuntimeLog("OTA", "health ok", false);
+  return true;
+}
+
+bool confirmOtaBootIfPending(const char* reason) {
+  if (!gOtaPendingVerify) {
+    return true;
+  }
+  esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+  if (err != ESP_OK) {
+    appendRuntimeLog("OTA", "confirm failed err=" + String(static_cast<int>(err)), true);
+    setStatus("OTA confirm failed", 1600);
+    return false;
+  }
+  gOtaPendingVerify = false;
+  gOtaConfirmedThisBoot = true;
+  gOtaBootState = "valid";
+  clearOtaGuardPrefs();
+  String why = reason && reason[0] ? String(reason) : String("boot ok");
+  appendRuntimeLog("OTA", "confirmed " + why + " slot=" + gOtaRunningSlot, true);
+  pushSystem("OTA confirmed: " + gOtaRunningSlot);
+  setStatus("OTA confirmed", 1200);
+  return true;
+}
+
+void rollbackPendingOta(const char* reason) {
+  if (!gOtaPendingVerify) {
+    setStatus("No pending OTA", 1000);
+    return;
+  }
+  String why = reason && reason[0] ? String(reason) : String("manual");
+  appendRuntimeLog("OTA", "rollback requested: " + why, true);
+  setStatus("Rolling back OTA...", 0);
+  render();
+  delay(400);
+  esp_err_t err = esp_ota_mark_app_invalid_rollback_and_reboot();
+  appendRuntimeLog("OTA", "rollback failed err=" + String(static_cast<int>(err)), true);
+  setStatus("Rollback failed", 1800);
+}
+
+void serviceOtaBootGuard() {
+  if (!gOtaPendingVerify) {
+    return;
+  }
+  uint32_t now = millis();
+  if (now - gOtaLastHealthProbeMs >= kOtaHealthProbeIntervalMs) {
+    gOtaLastHealthProbeMs = now;
+    if (probeOtaBridgeHealth(6000)) {
+      confirmOtaBootIfPending("bridge health");
+      return;
+    }
+  }
+  if (now - gOtaVerifyStartMs >= kOtaCoreBootGraceMs) {
+    // If the app survived the boot window, commit it to avoid false rollbacks
+    // caused by external Wi-Fi/bridge outages. Crashes before this point roll
+    // back automatically because the slot remains PENDING_VERIFY.
+    confirmOtaBootIfPending("core boot grace");
+  }
+}
+
 bool applyOtaFromManifest() {
   if (!gOtaManifest.parsed || gOtaManifest.url.isEmpty() || gOtaManifest.sha256.isEmpty()) {
     setStatus("OTA manifest incomplete", 1500);
@@ -2367,7 +2981,8 @@ bool applyOtaFromManifest() {
     appendRuntimeLog("OTA", "sd required", true);
     return false;
   }
-  if (!downloadUrlToFile(gOtaManifest.url, kOtaTempPath, gOtaManifest.sha256, gOtaManifest.size)) {
+  if (!downloadUrlToFile(gOtaManifest.url, kOtaTempPath, gOtaManifest.sha256, gOtaManifest.size,
+                         "Firmware OTA", rgb565_local(255, 93, 88))) {
     appendRuntimeLog("OTA", "firmware download failed", true);
     return false;
   }
@@ -2389,25 +3004,52 @@ bool applyOtaFromManifest() {
                               " size=" + String(static_cast<unsigned>(size)), true);
     return false;
   }
-  size_t written = Update.writeStream(firmware);
+  beginTransferUi("Flashing OTA", "writing flash", static_cast<uint32_t>(size), rgb565_local(255, 93, 88));
+  uint8_t otaBuffer[4096];
+  size_t written = 0;
+  while (firmware.available() && written < size) {
+    size_t toRead = min(sizeof(otaBuffer), size - written);
+    int readBytes = firmware.read(otaBuffer, toRead);
+    if (readBytes <= 0) {
+      break;
+    }
+    size_t updateWritten = Update.write(otaBuffer, static_cast<size_t>(readBytes));
+    if (updateWritten != static_cast<size_t>(readBytes)) {
+      uint8_t updateError = Update.getError();
+      Update.abort();
+      firmware.close();
+      finishTransferUi("flash write failed", false);
+      setStatus("OTA write err " + String(updateError), 1800);
+      appendRuntimeLog("OTA", "flash write failed err=" + String(updateError) +
+                                " written=" + String(static_cast<unsigned>(written)), true);
+      return false;
+    }
+    written += updateWritten;
+    updateTransferUi(static_cast<uint32_t>(written), static_cast<uint32_t>(size), "writing flash");
+    delay(1);
+  }
   firmware.close();
   if (written != size) {
     uint8_t updateError = Update.getError();
     Update.abort();
+    finishTransferUi("flash short", false);
     setStatus("OTA short err " + String(updateError), 1800);
     appendRuntimeLog("OTA", "short write err=" + String(updateError) +
                               " written=" + String(static_cast<unsigned>(written)) +
                               " size=" + String(static_cast<unsigned>(size)), true);
     return false;
   }
+  recordOtaApplyIntent();
   if (!Update.end(true)) {
     uint8_t updateError = Update.getError();
+    finishTransferUi("finalize failed", false);
     setStatus("OTA end err " + String(updateError), 1800);
     appendRuntimeLog("OTA", "end failed err=" + String(updateError), true);
     return false;
   }
-  appendRuntimeLog("OTA", "apply ok reboot", true);
-  setStatus("OTA applied", 800);
+  appendRuntimeLog("OTA", "apply ok reboot pending verify", true);
+  finishTransferUi("rebooting", true);
+  setStatus("OTA staged; rebooting", 900);
   delay(500);
   ESP.restart();
   return true;
@@ -2464,6 +3106,7 @@ bool addContextItem(const String& label, const String& key, const String& shortN
   }
   ConversationContext ctx;
   ctx.label = label;
+  ctx.emoji = fallbackTopicEmojiForTitle(label, threadId);
   ctx.key = key;
   ctx.shortName = shortName.isEmpty() ? makeTopicShortName(label, threadId) : shortName;
   ctx.topicKey = topicKey.isEmpty() ? key : topicKey;
@@ -2519,12 +3162,14 @@ void loadConversationContexts() {
           String label = item["label"] | item["name"] | "";
           String topicKey = item["topic_key"] | "";
           String key = item["key"] | item["conversation_key"] | topicKey;
+          String emoji = item["emoji"] | item["icon"] | "";
           int32_t threadId = item["thread_id"] | 0;
           String shortName = item["short"] | "";
-          label = normalizeTopicTitleForDisplay(label);
+          label = normalizeTopicTitleForDisplay(label, false);
           if (!label.isEmpty() && !key.isEmpty()) {
             ConversationContext ctx;
             ctx.label = label;
+            ctx.emoji = emoji.isEmpty() ? fallbackTopicEmojiForTitle(label, threadId) : emoji;
             ctx.key = key;
             ctx.shortName = shortName.isEmpty() ? makeTopicShortName(label, threadId) : shortName;
             ctx.topicKey = topicKey.isEmpty() ? key : topicKey;
@@ -2616,7 +3261,8 @@ bool fetchRemoteTopicCatalog() {
       break;
     }
     String topicKey = item["topic_key"] | "";
-    String title = item["title"] | "";
+    String title = item["display_title"] | item["title"] | "";
+    String emoji = item["emoji"] | item["icon"] | item["emoji_name"] | "";
     int32_t threadId = item["thread_id"] | 0;
     if (topicKey.isEmpty()) {
       continue;
@@ -2624,9 +3270,13 @@ bool fetchRemoteTopicCatalog() {
     if (title.isEmpty()) {
       title = "Topic " + String(threadId > 0 ? threadId : static_cast<int>(loaded.size() + 1));
     }
-    title = normalizeTopicTitleForDisplay(title);
+    if (!emoji.isEmpty() && title.indexOf(emoji) < 0) {
+      title = emoji + " " + title;
+    }
+    title = normalizeTopicTitleForDisplay(title, false);
     ConversationContext ctx;
     ctx.label = title;
+    ctx.emoji = emoji.isEmpty() ? fallbackTopicEmojiForTitle(title, threadId) : emoji;
     ctx.key = topicKey;
     ctx.shortName = makeTopicShortName(title, threadId);
     ctx.topicKey = topicKey;
@@ -2690,7 +3340,8 @@ bool fetchSelectedTopicHistory() {
   }
   gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
   String topicKey = gContexts[gSelectedContext].topicKey.isEmpty() ? gContexts[gSelectedContext].key : gContexts[gSelectedContext].topicKey;
-  String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) + "/history?limit=5";
+  String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) +
+               "/history?limit=5&compact=1&text_chars=150";
 
   auto getHistoryBody = [&](String& outBody) -> int {
     HTTPClient http;
@@ -2733,6 +3384,24 @@ bool fetchSelectedTopicHistory() {
     return false;
   }
 
+  String responseTitle = doc["topic"]["display_title"] | doc["topic"]["title"] | doc["title"] | "";
+  String responseEmoji = doc["topic"]["emoji"] | doc["topic"]["icon"] | "";
+  if (!responseEmoji.isEmpty() && responseTitle.indexOf(responseEmoji) < 0) {
+    responseTitle = responseEmoji + " " + responseTitle;
+  }
+  if (!responseTitle.isEmpty()) {
+    responseTitle = normalizeTopicTitleForDisplay(responseTitle, false);
+    if (!responseTitle.isEmpty() && responseTitle != "Topic") {
+      gContexts[gSelectedContext].label = responseTitle;
+      gContexts[gSelectedContext].emoji = responseEmoji.isEmpty()
+                                              ? fallbackTopicEmojiForTitle(responseTitle, gContexts[gSelectedContext].threadId)
+                                              : responseEmoji;
+      gContexts[gSelectedContext].shortName = makeTopicShortName(responseTitle, gContexts[gSelectedContext].threadId);
+    }
+  }
+
+  std::vector<ChatLine> historyChatLines;
+  historyChatLines.reserve(kMaxContextPreviewLines);
   gContextPreview.clear();
   for (JsonObject item : doc["items"].as<JsonArray>()) {
     if (gContextPreview.size() >= kMaxContextPreviewLines) {
@@ -2759,11 +3428,17 @@ bool fetchSelectedTopicHistory() {
     line.text = trimPreview(line.text, 92);
     if (!line.text.isEmpty()) {
       gContextPreview.push_back(line);
+      historyChatLines.push_back({
+          topicHistoryPrefix(line.role, line.voice),
+          trimPreview(line.text, 180),
+          topicHistoryLineKind(line.role),
+      });
     }
   }
   gContextHistoryKey = topicKey;
   gContextHistoryFetchedAtMs = millis();
   gContextError = "";
+  replaceChatWithTopicHistory(gContexts[gSelectedContext].label, historyChatLines);
   appendRuntimeLog("CTX", "history " + gContexts[gSelectedContext].shortName +
                             " lines=" + String(gContextPreview.size()), true);
   setStatus("History loaded", 800);
@@ -3183,6 +3858,383 @@ bool playVoiceNoteAt(int index) {
   }
   const auto& note = gVoiceNotes[index];
   return startPlaybackStreamFromWavFile(note.audioPath, String("note: ") + note.title);
+}
+
+String normalizeActionText(String value) {
+  value.trim();
+  value.toLowerCase();
+  value.replace("_", ".");
+  value.replace("-", "_");
+  return value;
+}
+
+bool actionBool(JsonVariantConst value, bool fallback = false) {
+  if (value.is<bool>()) {
+    return value.as<bool>();
+  }
+  if (value.is<int>()) {
+    return value.as<int>() != 0;
+  }
+  String text = value.as<String>();
+  text.trim();
+  text.toLowerCase();
+  if (text == "true" || text == "on" || text == "yes" || text == "1") {
+    return true;
+  }
+  if (text == "false" || text == "off" || text == "no" || text == "0") {
+    return false;
+  }
+  return fallback;
+}
+
+int actionInt(JsonObjectConst action, const char* key, int fallback, int minValue, int maxValue) {
+  if (action[key].isNull()) {
+    return fallback;
+  }
+  return clampValue<int>(action[key] | fallback, minValue, maxValue);
+}
+
+bool mapActionUiMode(String mode, UiMode& out) {
+  mode.trim();
+  mode.toLowerCase();
+  mode.replace("-", "_");
+  mode.replace(" ", "_");
+  if (mode == "home" || mode == "pulse") {
+    out = UiMode::Home;
+  } else if (mode == "chat" || mode == "chat_eyes") {
+    out = UiMode::ChatFace;
+  } else if (mode == "chat_full" || mode == "full_chat") {
+    out = UiMode::ChatFull;
+  } else if (mode == "face" || mode == "eyes") {
+    out = UiMode::Face;
+  } else if (mode == "hero") {
+    out = UiMode::Hero;
+  } else if (mode == "voice") {
+    out = UiMode::Voice;
+  } else if (mode == "library") {
+    out = UiMode::Library;
+  } else if (mode == "folders") {
+    out = UiMode::AudioFolders;
+  } else if (mode == "assets") {
+    out = UiMode::Assets;
+  } else if (mode == "focus") {
+    out = UiMode::Focus;
+  } else if (mode == "topics" || mode == "contexts") {
+    out = UiMode::Contexts;
+  } else if (mode == "logs") {
+    out = UiMode::Logs;
+  } else if (mode == "settings") {
+    out = UiMode::Settings;
+  } else if (mode == "battery") {
+    out = UiMode::Battery;
+  } else if (mode == "ota" || mode == "firmware") {
+    out = UiMode::Ota;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool actionLocalPathAllowed(const String& path) {
+  return path.startsWith("/audio/") || path.startsWith("/pomodoro/audio/") ||
+         path.startsWith("/voice/") || path.startsWith("/reply/");
+}
+
+bool textMatchesQuery(const String& value, const String& query) {
+  if (query.isEmpty()) {
+    return false;
+  }
+  String hay = value;
+  String needle = query;
+  hay.toLowerCase();
+  needle.toLowerCase();
+  return hay.indexOf(needle) >= 0;
+}
+
+bool playAudioAssetByAction(JsonObjectConst action) {
+  if (gAudioAssets.empty()) {
+    scanAudioAssets();
+  }
+  if (gAudioAssets.empty()) {
+    setStatus("No audio assets", 1200);
+    return false;
+  }
+
+  int index = -1;
+  if (!action["index"].isNull()) {
+    int requested = actionInt(action, "index", 0, 0, static_cast<int>(gAudioAssets.size()));
+    index = requested > 0 ? requested - 1 : 0;
+  }
+  String path = action["path"] | "";
+  if (index < 0 && !path.isEmpty() && actionLocalPathAllowed(path)) {
+    for (int i = 0; i < static_cast<int>(gAudioAssets.size()); ++i) {
+      if (gAudioAssets[i].path == path) {
+        index = i;
+        break;
+      }
+    }
+  }
+  String query = action["query"] | "";
+  if (index < 0 && !query.isEmpty()) {
+    for (int i = 0; i < static_cast<int>(gAudioAssets.size()); ++i) {
+      const auto& asset = gAudioAssets[i];
+      if (textMatchesQuery(asset.title, query) || textMatchesQuery(asset.path, query) ||
+          textMatchesQuery(asset.category, query)) {
+        index = i;
+        break;
+      }
+    }
+  }
+  if (index < 0 || index >= static_cast<int>(gAudioAssets.size())) {
+    setStatus("Audio not found", 1200);
+    return false;
+  }
+  gSelectedAudioAsset = index;
+  setUiMode(UiMode::Library);
+  return startPlaybackStreamFromWavFile(gAudioAssets[index].path, String("asset: ") + gAudioAssets[index].title);
+}
+
+bool playVoiceNoteByAction(JsonObjectConst action) {
+  if (gVoiceNotes.empty()) {
+    loadVoiceNotes();
+  }
+  if (gVoiceNotes.empty()) {
+    setStatus("No voice notes", 1200);
+    return false;
+  }
+  int index = -1;
+  if (!action["index"].isNull()) {
+    int requested = actionInt(action, "index", 0, 0, static_cast<int>(gVoiceNotes.size()));
+    index = requested > 0 ? requested - 1 : 0;
+  }
+  String query = action["query"] | "";
+  if (index < 0 && !query.isEmpty()) {
+    for (int i = 0; i < static_cast<int>(gVoiceNotes.size()); ++i) {
+      const auto& note = gVoiceNotes[i];
+      if (textMatchesQuery(note.title, query) || textMatchesQuery(note.preview, query) ||
+          textMatchesQuery(note.audioPath, query)) {
+        index = i;
+        break;
+      }
+    }
+  }
+  if (index < 0 || index >= static_cast<int>(gVoiceNotes.size())) {
+    setStatus("Voice note not found", 1200);
+    return false;
+  }
+  gSelectedVoiceNote = index;
+  setUiMode(UiMode::Voice);
+  return playVoiceNoteAt(index);
+}
+
+bool openTopicByAction(JsonObjectConst action) {
+  if (gContexts.empty()) {
+    startTopicTask(true, false, true, "Syncing topics...");
+    setStatus("Topics syncing", 1200);
+    return false;
+  }
+  int index = -1;
+  if (!action["index"].isNull()) {
+    int requested = actionInt(action, "index", 0, 0, static_cast<int>(gContexts.size()));
+    index = requested > 0 ? requested - 1 : 0;
+  }
+  String key = action["key"] | "";
+  String query = action["query"] | "";
+  if (index < 0 && !key.isEmpty()) {
+    for (int i = 0; i < static_cast<int>(gContexts.size()); ++i) {
+      if (gContexts[i].key == key || gContexts[i].topicKey == key) {
+        index = i;
+        break;
+      }
+    }
+  }
+  if (index < 0 && !query.isEmpty()) {
+    for (int i = 0; i < static_cast<int>(gContexts.size()); ++i) {
+      if (textMatchesQuery(gContexts[i].label, query) || textMatchesQuery(gContexts[i].shortName, query)) {
+        index = i;
+        break;
+      }
+    }
+  }
+  if (index < 0 || index >= static_cast<int>(gContexts.size())) {
+    setStatus("Topic not found", 1200);
+    return false;
+  }
+  gSelectedContext = index;
+  saveCurrentContext();
+  showTopicOverlay(0, 1800);
+  setUiMode(UiMode::ChatFace);
+  startTopicTask(false, true, true, "Topic loading...");
+  return true;
+}
+
+bool executeDeviceAction(JsonObjectConst action) {
+  String type = normalizeActionText(action["type"] | "");
+  if (type.isEmpty()) {
+    return false;
+  }
+
+  if (type == "focus.set_duration" || type == "focus.start") {
+    if (!action["minutes"].isNull()) {
+      uint32_t seconds = static_cast<uint32_t>(actionInt(action, "minutes", gFocusSettings.focusSec / 60, 1, 60)) * 60UL;
+      gFocusSettings.focusSec = clampValue<uint32_t>(seconds, kFocusMinDurationSec, kFocusMaxDurationSec);
+      if (gFocus.state == FocusState::Stopped) {
+        gFocus.remainingSec = gFocusSettings.focusSec;
+        gFocus.sessionTotalSec = gFocusSettings.focusSec;
+      }
+      saveFocusSettings();
+    }
+    setUiMode(UiMode::Focus);
+    if (type == "focus.start" && !focusStateRuns(gFocus.state)) {
+      focusStartOrResume();
+    }
+    setStatus("Action: focus " + String(gFocusSettings.focusSec / 60) + "m", 1200);
+    return true;
+  }
+  if (type == "focus.pause") {
+    setUiMode(UiMode::Focus);
+    if (focusStateRuns(gFocus.state)) {
+      focusStartOrResume();
+    }
+    return true;
+  }
+  if (type == "focus.resume") {
+    setUiMode(UiMode::Focus);
+    if (gFocus.state == FocusState::Paused || gFocus.state == FocusState::Stopped) {
+      focusStartOrResume();
+    }
+    return true;
+  }
+  if (type == "focus.reset") {
+    focusReset();
+    setUiMode(UiMode::Focus);
+    return true;
+  }
+  if (type == "focus.set_short_break") {
+    gFocusSettings.shortBreakSec = static_cast<uint32_t>(actionInt(action, "minutes", gFocusSettings.shortBreakSec / 60, 1, 60)) * 60UL;
+    saveFocusSettings();
+    setStatus("Action: short break " + String(gFocusSettings.shortBreakSec / 60) + "m", 1200);
+    return true;
+  }
+  if (type == "focus.set_long_break") {
+    gFocusSettings.longBreakSec = static_cast<uint32_t>(actionInt(action, "minutes", gFocusSettings.longBreakSec / 60, 1, 60)) * 60UL;
+    saveFocusSettings();
+    setStatus("Action: long break " + String(gFocusSettings.longBreakSec / 60) + "m", 1200);
+    return true;
+  }
+  if (type == "focus.set_cycles") {
+    gFocusSettings.cyclesPerRound = static_cast<uint8_t>(actionInt(action, "cycles", gFocusSettings.cyclesPerRound, 1, 9));
+    saveFocusSettings();
+    setStatus("Action: cycles " + String(gFocusSettings.cyclesPerRound), 1200);
+    return true;
+  }
+  if (type == "focus.set_autostart") {
+    gFocusSettings.autoStart = actionBool(action["value"], gFocusSettings.autoStart);
+    saveFocusSettings();
+    setStatus(gFocusSettings.autoStart ? "Action: auto on" : "Action: auto off", 1200);
+    return true;
+  }
+  if (type == "focus.set_metronome") {
+    gFocusSettings.metronome = actionBool(action["value"], gFocusSettings.metronome);
+    saveFocusSettings();
+    setStatus(gFocusSettings.metronome ? "Action: metro on" : "Action: metro off", 1200);
+    return true;
+  }
+  if (type == "focus.set_bpm") {
+    gFocusSettings.bpm = static_cast<uint16_t>(actionInt(action, "bpm", gFocusSettings.bpm, kFocusMinBpm, kFocusMaxBpm));
+    saveFocusSettings();
+    setStatus("Action: bpm " + String(gFocusSettings.bpm), 1200);
+    return true;
+  }
+  if (type == "ui.open") {
+    UiMode mode;
+    if (mapActionUiMode(action["mode"] | "", mode)) {
+      setUiMode(mode);
+      return true;
+    }
+    return false;
+  }
+  if (type == "audio.play") {
+    return playAudioAssetByAction(action);
+  }
+  if (type == "voice.play") {
+    return playVoiceNoteByAction(action);
+  }
+  if (type == "settings.set_audio_language") {
+    String language = action["value"] | "";
+    language.trim();
+    language.toLowerCase();
+    if (language == "ru" || language == "en" || language == "es") {
+      gDeviceSettings.audioLanguage = language;
+      saveDeviceSettings();
+      setStatus("Action: lang " + language, 1200);
+      return true;
+    }
+    return false;
+  }
+  if (type == "settings.set_ota_auto") {
+    gDeviceSettings.autoUpdateFirmware = actionBool(action["value"], gDeviceSettings.autoUpdateFirmware);
+    saveDeviceSettings();
+    setStatus(gDeviceSettings.autoUpdateFirmware ? "Action: OTA auto" : "Action: OTA manual", 1200);
+    return true;
+  }
+  if (type == "settings.set_ota_boot_check") {
+    gDeviceSettings.checkUpdatesOnBoot = actionBool(action["value"], gDeviceSettings.checkUpdatesOnBoot);
+    saveDeviceSettings();
+    setStatus(gDeviceSettings.checkUpdatesOnBoot ? "Action: boot check" : "Action: no boot check", 1200);
+    return true;
+  }
+  if (type == "settings.set_ota_min_battery") {
+    gDeviceSettings.minBatteryForUpdate = static_cast<uint8_t>(actionInt(action, "value", gDeviceSettings.minBatteryForUpdate, 5, 95));
+    saveDeviceSettings();
+    setStatus("Action: OTA battery " + String(gDeviceSettings.minBatteryForUpdate) + "%", 1200);
+    return true;
+  }
+  if (type == "topic.next") {
+    return switchTopicRelative(1, true);
+  }
+  if (type == "topic.prev") {
+    return switchTopicRelative(-1, true);
+  }
+  if (type == "topic.open") {
+    return openTopicByAction(action);
+  }
+  return false;
+}
+
+bool executeDeviceActions(JsonVariantConst actions) {
+  if (actions.isNull()) {
+    return false;
+  }
+  bool executed = false;
+  if (actions.is<JsonArrayConst>()) {
+    uint8_t count = 0;
+    for (JsonObjectConst action : actions.as<JsonArrayConst>()) {
+      if (count++ >= 4) {
+        break;
+      }
+      executed = executeDeviceAction(action) || executed;
+    }
+  } else if (actions.is<JsonObjectConst>()) {
+    executed = executeDeviceAction(actions.as<JsonObjectConst>());
+  }
+  if (executed) {
+    appendRuntimeLog("ACT", "device action executed", true);
+  }
+  return executed;
+}
+
+bool executeDeviceActionsJson(const String& json) {
+  if (json.isEmpty()) {
+    return false;
+  }
+  DynamicJsonDocument doc(1024);
+  DeserializationError err = deserializeJson(doc, json);
+  if (err) {
+    appendRuntimeLog("ACT", "device action json rejected", true);
+    return false;
+  }
+  return executeDeviceActions(doc.as<JsonVariantConst>());
 }
 
 bool findLauncherEntryForMode(UiMode mode, int& groupIndex, int& subIndex) {
@@ -5022,6 +6074,10 @@ bool sendTextTurn(const String& text) {
 
   String reply = resp["reply"] | resp["full_text"] | resp["text"] | "";
   String shortText = resp["short_text"] | "";
+  String deviceActionsJson;
+  if (!resp["device_actions"].isNull()) {
+    serializeJson(resp["device_actions"], deviceActionsJson);
+  }
   if (reply.isEmpty()) {
     reply = shortText;
   }
@@ -5047,6 +6103,9 @@ bool sendTextTurn(const String& text) {
   } else {
     pushSystem("Hub accepted the turn.");
     logf("[TEXT] accepted without reply");
+  }
+  if (!deviceActionsJson.isEmpty()) {
+    executeDeviceActionsJson(deviceActionsJson);
   }
   setFaceMode(FaceMode::Idle);
   setStatus("Reply received", 1200);
@@ -5145,6 +6204,10 @@ void textTurnTask(void* arg) {
           }
           result->shortText = shortText;
           result->telegramDelivered = resp["telegram"]["delivered"] | false;
+          if (!resp["device_actions"].isNull()) {
+            serializeJson(resp["device_actions"], result->deviceActionsJson);
+            result->hasDeviceActions = !result->deviceActionsJson.isEmpty();
+          }
           if (resp["audio"].is<JsonObject>()) {
             JsonObject audio = resp["audio"].as<JsonObject>();
             result->audioUrl = audio["url"] | "";
@@ -5269,9 +6332,15 @@ void processCompletedTextTurn() {
     }
     logf("[TEXT] async reply=%s", done->reply.c_str());
     setStatus("Reply received", 1200);
+    if (done->hasDeviceActions) {
+      executeDeviceActionsJson(done->deviceActionsJson);
+    }
   } else if (done->ok) {
     pushSystem("Hub accepted the turn.");
     logf("[TEXT] async accepted without reply");
+    if (done->hasDeviceActions) {
+      executeDeviceActionsJson(done->deviceActionsJson);
+    }
     if (!gPlaybackActive) {
       setFaceMode(FaceMode::Idle);
     }
@@ -5530,6 +6599,10 @@ bool stopRecordingAndSend() {
   String transcript = resp["transcript"] | resp["text"] | "";
   String reply = resp["reply"] | resp["full_text"] | "";
   String shortText = resp["short_text"] | "";
+  String deviceActionsJson;
+  if (!resp["device_actions"].isNull()) {
+    serializeJson(resp["device_actions"], deviceActionsJson);
+  }
   if (reply.isEmpty()) {
     reply = shortText;
   }
@@ -5563,6 +6636,9 @@ bool stopRecordingAndSend() {
   } else {
     setFaceMode(FaceMode::Idle);
     setStatus("No reply", 1200);
+  }
+  if (!deviceActionsJson.isEmpty()) {
+    executeDeviceActionsJson(deviceActionsJson);
   }
   return true;
 }
@@ -5776,6 +6852,9 @@ void handleHubJson(const JsonDocument& doc) {
     gSubmitting = false;
     gThinking = false;
     pushAssistant(doc["reply"].as<String>());
+    if (!doc["device_actions"].isNull()) {
+      executeDeviceActions(doc["device_actions"]);
+    }
     setFaceMode(FaceMode::Idle);
     setStatus("Reply received", 1200);
     return;
@@ -6370,6 +7449,14 @@ bool handleOtaKey(char key, const Keyboard_Class::KeysState& keys) {
     setStatus("OTA manifest reloaded", 900);
     return true;
   }
+  if (lowerKey == 'c') {
+    confirmOtaBootIfPending("manual confirm");
+    return true;
+  }
+  if (lowerKey == 'x' || lowerKey == 'b') {
+    rollbackPendingOta("manual key");
+    return true;
+  }
   if (lowerKey == 'a' || keys.enter || key == '\n' || key == '\r') {
     setStatus("OTA apply requested", 700);
     appendRuntimeLog("OTA", "apply requested by keyboard", true);
@@ -6505,7 +7592,7 @@ void processCompletedTopicTask() {
 bool handleLogsKey(char key) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
   if (key == ',' || key == ';') {
-    gLogScrollOffset = min<int>(gLogScrollOffset + 1, max<int>(0, static_cast<int>(gRuntimeLogs.size()) - 5));
+    gLogScrollOffset = min<int>(gLogScrollOffset + 1, max<int>(0, static_cast<int>(gRuntimeLogs.size()) - 9));
     return true;
   }
   if (key == '.' || key == '/') {
@@ -7405,15 +8492,17 @@ void renderDebugOverlay() {
     return;
   }
   auto& d = gCanvas;
-  d.fillRoundRect(8, 8, 224, 94, 10, 0x0000);
-  d.drawRoundRect(8, 8, 224, 94, 10, TFT_DARKGREY);
-  d.setFont(&fonts::Font2);
-  d.setTextColor(TFT_WHITE, TFT_BLACK);
-  d.setCursor(14, 14);
+  const uint16_t bg = rgb565_local(0, 3, 8);
+  const uint16_t line = rgb565_local(53, 68, 82);
+  d.fillRoundRect(8, 8, 224, 104, 10, bg);
+  d.drawRoundRect(8, 8, 224, 104, 10, line);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(TFT_WHITE, bg);
+  d.setCursor(14, 15);
   d.print("DBG");
-  d.setCursor(48, 14);
+  d.setCursor(48, 15);
   d.print(gWifiReady ? "wifi=ok" : "wifi=off");
-  d.setCursor(118, 14);
+  d.setCursor(118, 15);
   d.print(gWsReady ? "ws=ok" : "ws=off");
   d.setCursor(14, 28);
   d.print("face=");
@@ -7423,92 +8512,92 @@ void renderDebugOverlay() {
   d.print(gChatScrollOffset);
   d.setCursor(150, 28);
   d.print(layoutName(gKeyboardLayout));
-  d.setCursor(14, 42);
+  d.setCursor(14, 41);
   d.print("rec=");
   d.print(static_cast<unsigned>(gRecordCapacityBytes / 1024));
   d.print("k");
-  d.setCursor(86, 42);
+  d.setCursor(86, 41);
   d.print("tts=");
   d.print(static_cast<unsigned>(gTtsCapacityBytes / 1024));
   d.print("k");
-  d.setCursor(150, 42);
+  d.setCursor(150, 41);
   d.print(gStorageReady ? gStorageLabel : "fs=off");
-  d.setCursor(14, 56);
+  d.setCursor(14, 55);
   String diag = gLastVoiceDiag;
   if (diag.length() > 28) {
     diag = diag.substring(diag.length() - 28);
   }
   d.print(diag);
-  d.setCursor(14, 70);
+  d.setCursor(14, 69);
   String httpDiag = gLastHttpDiag;
   if (httpDiag.length() > 28) {
     httpDiag = httpDiag.substring(httpDiag.length() - 28);
   }
   d.print(httpDiag);
-  d.setCursor(14, 84);
+  d.setCursor(14, 83);
   String keyDiag = gLastKeyDiag;
   if (keyDiag.length() > 28) {
     keyDiag = keyDiag.substring(keyDiag.length() - 28);
   }
   d.print(keyDiag);
-  d.setCursor(150, 84);
+  d.setCursor(150, 83);
   d.print(String(uiModeName(gUiMode)).substring(0, 6));
+  d.setFont(&fonts::Font2);
 }
 
 void drawLauncherIcon(uint8_t group, int16_t x, int16_t y, int16_t s, uint16_t accent, uint16_t bg) {
   auto& d = gCanvas;
   int16_t cx = x + s / 2;
   int16_t cy = y + s / 2;
-  d.fillRoundRect(x, y, s, s, 14, bg);
-  d.drawRoundRect(x, y, s, s, 14, accent);
-  d.fillCircle(cx, cy, s / 3, rgb565_local(10, 14, 26));
-  d.drawCircle(cx, cy, s / 3 + 4, accent);
+  int16_t r = max<int16_t>(5, s / 4);
+  d.fillRoundRect(x, y, s, s, max<int16_t>(5, s / 5), bg);
+  d.drawRoundRect(x, y, s, s, max<int16_t>(5, s / 5), accent);
+  d.fillCircle(cx, cy, max<int16_t>(6, s / 3), rgb565_local(10, 14, 26));
+  d.drawCircle(cx, cy, max<int16_t>(8, s / 3 + 3), accent);
   switch (group) {
     case 0:
-      d.drawRoundRect(x + 12, y + 18, s - 24, 28, 8, accent);
-      d.fillTriangle(x + 28, y + 46, x + 38, y + 46, x + 28, y + 56, accent);
-      d.drawFastHLine(x + 24, y + 30, s - 48, accent);
-      d.drawFastHLine(x + 24, y + 38, s - 58, accent);
+      d.drawRoundRect(cx - r, cy - r / 2, r * 2, r, 4, accent);
+      d.drawFastHLine(cx - r / 2, cy - 1, r, accent);
+      d.fillCircle(cx - r / 2, cy - r / 2, 2, accent);
+      d.fillCircle(cx + r / 2, cy - r / 2, 2, accent);
       break;
     case 1:
-      d.drawRoundRect(x + 10, y + 22, 26, 22, 10, accent);
-      d.drawRoundRect(x + s - 36, y + 22, 26, 22, 10, accent);
-      d.fillCircle(x + 23, y + 33, 5, accent);
-      d.fillCircle(x + s - 23, y + 33, 5, accent);
+      d.drawRoundRect(cx - r - 3, cy - r / 2, r, r, 4, accent);
+      d.drawRoundRect(cx + 3, cy - r / 2, r, r, 4, accent);
+      d.fillCircle(cx - r / 2 - 3, cy, 2, accent);
+      d.fillCircle(cx + r / 2 + 3, cy, 2, accent);
       break;
     case 2:
-      d.setFont(&fonts::Font4);
-      d.setTextColor(accent, bg);
-      d.setCursor(x + 19, y + 24);
-      d.print("25");
-      d.drawArc(cx, cy, 31, 25, 35, 310, accent);
-      d.setFont(&fonts::Font2);
+      for (int i = 0; i < 6; ++i) {
+        int h = max<int>(5, (s / 5) + ((i * 7 + millis() / 90) % max<int>(6, s / 3)));
+        d.fillRoundRect(x + 7 + i * max<int>(3, s / 8), y + s - 7 - h, max<int>(2, s / 10), h, 2, accent);
+      }
       break;
     case 3:
-      for (int i = 0; i < 8; ++i) {
-        int h = 8 + ((i * 7 + millis() / 80) % 26);
-        d.fillRoundRect(x + 14 + i * 7, y + 52 - h, 4, h, 2, accent);
-      }
-      d.drawCircle(cx, cy, 18, accent);
+      d.setFont(&fonts::Font2);
+      d.setTextColor(accent, bg);
+      d.setCursor(cx - 10, cy - 6);
+      d.print("25");
+      d.drawArc(cx, cy, max<int16_t>(10, s / 2 - 4), max<int16_t>(7, s / 2 - 8), 35, 310, accent);
       break;
     case 4:
-      d.drawRoundRect(x + 17, y + 18, s - 34, 32, 8, accent);
-      d.drawLine(x + 28, y + 34, x + 42, y + 46, accent);
-      d.drawLine(x + 42, y + 46, x + 57, y + 24, accent);
-      d.fillCircle(x + 57, y + 24, 4, accent);
+      d.drawRoundRect(cx - r, cy - r, r * 2, r * 2, 4, accent);
+      d.drawLine(cx - r + 3, cy, cx - 1, cy + r - 3, accent);
+      d.drawLine(cx - 1, cy + r - 3, cx + r - 3, cy - r + 3, accent);
+      d.fillCircle(cx + r - 3, cy - r + 3, 2, accent);
       break;
     case 5:
-      d.drawCircle(cx, cy, 25, accent);
-      d.drawFastHLine(cx - 25, cy, 50, accent);
-      d.drawFastVLine(cx, cy - 25, 50, accent);
+      d.drawCircle(cx, cy, r + 2, accent);
+      d.drawFastHLine(cx - r - 2, cy, (r + 2) * 2, accent);
+      d.drawFastVLine(cx, cy - r - 2, (r + 2) * 2, accent);
       d.fillCircle(cx, cy, 5, accent);
       break;
     case 6:
     default:
-      d.drawRoundRect(x + 15, y + 22, s - 30, 28, 6, accent);
-      d.drawFastHLine(x + 23, y + 34, s - 46, accent);
-      d.drawFastHLine(x + 23, y + 43, s - 56, accent);
-      d.fillCircle(x + s - 22, y + 36, 5, accent);
+      d.drawRoundRect(cx - r, cy - r / 2, r * 2, r, 4, accent);
+      d.drawFastHLine(cx - r / 2, cy - 2, r, accent);
+      d.drawFastHLine(cx - r / 2, cy + 3, r - 3, accent);
+      d.fillCircle(cx + r / 2, cy, 2, accent);
       break;
   }
 }
@@ -7544,9 +8633,9 @@ void renderLauncherOverlay() {
 
   const int16_t railX = 10;
   const int16_t railY = 33;
-  const int16_t railW = 78;
-  const int16_t railH = 13;
-  const int16_t railGap = 3;
+  const int16_t railW = 82;
+  const int16_t railH = 10;
+  const int16_t railGap = 2;
 
   for (int idx = 0; idx < kLauncherGroupCount; ++idx) {
     const LauncherGroup& item = kLauncherGroups[idx];
@@ -7556,41 +8645,48 @@ void renderLauncherOverlay() {
     d.fillRoundRect(railX, y, railW, railH, 4, fill);
     d.drawRoundRect(railX, y, railW, railH, 4, isSelected ? item.accent : line);
 
+    d.setFont(&fonts::Font0);
     d.setTextColor(isSelected ? TFT_WHITE : muted, fill);
     d.setCursor(railX + 5, y + 1);
     d.print(String(idx + 1));
 
     d.setTextColor(isSelected ? item.accent : TFT_LIGHTGREY, fill);
-    d.setCursor(railX + 19, y + 1);
-    d.print(trimPreview(item.title, 8));
+    d.setCursor(railX + 17, y + 1);
+    d.print(fitCurrentFontToWidth(item.title, railW - 28));
 
     if (isSelected) {
       d.fillCircle(railX + railW - 7, y + railH / 2, 3, item.accent);
     }
   }
+  d.setFont(&fonts::Font2);
 
   d.fillRoundRect(94, 33, 136, 78, 7, panel);
   d.drawRoundRect(94, 33, 136, 78, 7, group.accent);
 
+  drawLauncherIcon(gLauncherSelection, 102, 41, 32, group.accent, rgb565_local(4, 9, 14));
+  d.setFont(&fonts::Font2);
   d.setTextColor(group.accent, panel);
-  d.setCursor(102, 40);
-  d.print(group.glyph);
+  d.setCursor(142, 41);
+  d.print(fitCurrentFontToWidth(group.glyph, 76));
+  d.setFont(&fonts::Font0);
   d.setTextColor(muted, panel);
-  d.setCursor(102, 54);
-  d.print(trimPreview(group.hint, 18));
+  d.setCursor(142, 56);
+  d.print(fitCurrentFontToWidth(group.hint, 78));
 
   for (int i = 0; i < group.count; ++i) {
-    const int16_t y = 68 + i * 10;
+    const int16_t y = 76 + i * 8;
     const bool selected = i == gLauncherSubSelection;
     const uint16_t fill = selected ? rgb565_local(18, 39, 48) : panel;
     if (selected) {
-      d.fillRoundRect(100, y - 1, 124, 10, 3, fill);
+      d.fillRoundRect(100, y - 1, 124, 8, 3, fill);
     }
+    d.setFont(&fonts::Font0);
     d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, fill);
     d.setCursor(104, y);
     d.print(selected ? "> " : "  ");
-    d.print(trimPreview(group.items[i].label, 16));
+    d.print(fitCurrentFontToWidth(group.items[i].label, 106));
   }
+  d.setFont(&fonts::Font2);
 
   d.fillRoundRect(10, 116, 220, 10, 4, panel);
   drawTinyFooter(panel, muted, "Up/Down app  Left/Right screen  Ent", 15, 118, 210);
@@ -7750,82 +8846,147 @@ String fitCurrentFontToWidth(String text, int32_t pixelLimit) {
 
 void drawTinyFooter(uint16_t bg, uint16_t fg, const String& text, int16_t x, int16_t y, int16_t w) {
   auto& d = gCanvas;
-  d.fillRect(max<int16_t>(0, x - 2), max<int16_t>(0, y - 2), min<int16_t>(240, w + 4), 10, bg);
+  const int16_t textY = min<int16_t>(y, 118);
+  const int16_t clearX = max<int16_t>(0, x - 2);
+  const int16_t clearY = max<int16_t>(0, textY - 2);
+  const int16_t clearW = min<int16_t>(240 - clearX, w + 4);
+  d.fillRect(clearX, clearY, clearW, 14, bg);
   d.setFont(&fonts::Font0);
   d.setTextColor(fg, bg);
-  d.setCursor(x, y);
+  d.setCursor(x, textY);
   d.print(fitCurrentFontToWidth(text, w));
   d.setFont(&fonts::Font2);
 }
 
 void renderFocusUi() {
   auto& d = gCanvas;
-  uint16_t bg = 0x0000;
-  uint16_t panel = 0x0841;
-  uint16_t accent = 0x07FF;
-  uint16_t soft = 0x39E7;
-  if (gFocus.state == FocusState::ShortBreak || gFocus.state == FocusState::LongBreak) {
-    bg = 0x0208;
-    panel = 0x0320;
-    accent = 0x07E0;
-    soft = 0x2589;
-  } else if (gFocus.state == FocusState::Reflect) {
-    bg = 0x0808;
-    panel = 0x180C;
-    accent = 0xFD20;
-    soft = 0x7BEF;
-  } else if (gFocus.state == FocusState::Paused || gFocus.state == FocusState::Stopped) {
-    bg = 0x0008;
-    panel = 0x1082;
-    accent = 0x867F;
-    soft = 0x4208;
-  }
+  const bool isBreak = gFocus.state == FocusState::ShortBreak || gFocus.state == FocusState::LongBreak;
+  const bool isReflect = gFocus.state == FocusState::Reflect;
+  const bool isPaused = gFocus.state == FocusState::Paused || gFocus.state == FocusState::Stopped;
+  uint16_t bg = isBreak ? rgb565_local(1, 10, 8) : isReflect ? rgb565_local(10, 4, 16) : rgb565_local(2, 6, 12);
+  uint16_t panel = isBreak ? rgb565_local(5, 23, 19) : isReflect ? rgb565_local(20, 11, 31) : rgb565_local(7, 14, 24);
+  uint16_t panel2 = isBreak ? rgb565_local(10, 40, 31) : isReflect ? rgb565_local(34, 18, 52) : rgb565_local(10, 23, 36);
+  uint16_t accent = isBreak ? rgb565_local(105, 255, 156)
+                    : isReflect ? rgb565_local(214, 133, 255)
+                    : isPaused ? rgb565_local(154, 143, 255)
+                               : rgb565_local(47, 227, 255);
+  uint16_t secondary = isBreak ? rgb565_local(47, 227, 255)
+                       : isReflect ? rgb565_local(255, 194, 74)
+                                   : rgb565_local(246, 194, 74);
+  uint16_t muted = rgb565_local(126, 143, 157);
+  uint32_t now = millis();
+  float t = now / 1000.0f;
+
+  String timeText = focusTimeString(gFocus.remainingSec);
+  uint32_t elapsed = gFocus.sessionTotalSec > gFocus.remainingSec ? gFocus.sessionTotalSec - gFocus.remainingSec : 0;
+  int progressDeg = gFocus.sessionTotalSec ? static_cast<int>((elapsed * 300ULL) / gFocus.sessionTotalSec) : 0;
+  progressDeg = clampValue<int>(progressDeg, 0, 300);
 
   d.fillScreen(bg);
-  d.fillRoundRect(6, 5, 228, 124, 12, panel);
-  d.drawRoundRect(6, 5, 228, 124, 12, accent);
+  for (int x = -20; x < 260; x += 20) {
+    int offset = static_cast<int>(sinf(t * 0.45f + x * 0.045f) * 5.0f);
+    d.drawFastVLine(x + offset, 0, 135, rgb565_local(5, 18, 27));
+  }
+  d.fillRoundRect(6, 5, 228, 124, 14, panel);
+  d.drawRoundRect(6, 5, 228, 124, 14, rgb565_local(28, 50, 70));
 
   d.setFont(&fonts::Font2);
   d.setTextColor(accent, panel);
   d.setCursor(14, 12);
-  d.print(focusStateName(gFocus.state));
-  d.setTextColor(TFT_LIGHTGREY, panel);
-  d.setCursor(88, 12);
+  d.print(fitCurrentFontToWidth(focusStateName(gFocus.state), 74));
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(101, 15);
   d.print("cycle ");
   d.print(gFocus.cycle);
   d.print("/");
   d.print(gFocusSettings.cyclesPerRound);
-  d.setCursor(171, 12);
-  d.print(String(gFocus.completedToday) + " done");
+  String done = String(gFocus.completedToday) + " done";
+  d.setCursor(222 - d.textWidth(done), 15);
+  d.print(done);
 
-  String timeText = focusTimeString(gFocus.remainingSec);
-  d.setFont(&fonts::Font7);
-  d.setTextColor(accent, panel);
-  int timeWidth = d.textWidth(timeText);
-  d.setCursor(max<int>(8, (240 - timeWidth) / 2), 31);
-  d.print(timeText);
-
-  uint16_t pulse = (millis() / 500) % 2 ? accent : soft;
-  int avatarX = 204;
-  int avatarY = 83;
-  d.drawCircle(avatarX, avatarY, 13, soft);
-  d.drawCircle(avatarX, avatarY, 8, pulse);
-  d.fillCircle(avatarX - 4, avatarY - 2, 2, accent);
-  d.fillCircle(avatarX + 4, avatarY - 2, 2, accent);
-  if (gFocus.state == FocusState::Focus) {
-    d.drawLine(avatarX - 5, avatarY + 5, avatarX + 5, avatarY + 5, accent);
-  } else if (gFocus.state == FocusState::Reflect) {
-    d.drawLine(avatarX - 5, avatarY + 5, avatarX, avatarY + 8, accent);
-    d.drawLine(avatarX, avatarY + 8, avatarX + 5, avatarY + 5, accent);
+  if (isBreak) {
+    float breath = (sinf(t * 1.3f) + 1.0f) * 0.5f;
+    int r = 20 + static_cast<int>(breath * 15.0f);
+    int cx = 70;
+    int cy = 67;
+    d.fillCircle(cx, cy, r + 13, rgb565_local(4, 18, 20));
+    d.drawCircle(cx, cy, r + 7, rgb565_local(28, 84, 74));
+    d.drawCircle(cx, cy, r, accent);
+    d.fillCircle(cx, cy, max<int>(8, r - 13), panel2);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(accent, panel2);
+    d.setCursor(cx - 22, cy - 3);
+    d.print(breath > 0.55f ? "inhale" : "exhale");
+    d.setFont(&fonts::Font7);
+    d.setTextColor(TFT_WHITE, panel);
+    d.setCursor(128, 45);
+    d.print(timeText);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, panel);
+    d.setCursor(130, 86);
+    d.print("follow the ball");
+  } else if (isReflect) {
+    d.fillRoundRect(18, 34, 204, 62, 10, panel2);
+    d.drawRoundRect(18, 34, 204, 62, 10, accent);
+    d.setFont(&fonts::Font2);
+    d.setTextColor(secondary, panel2);
+    d.setCursor(31, 43);
+    d.print("REFLECT");
+    d.setTextColor(TFT_WHITE, panel2);
+    d.setFont(&fonts::Font7);
+    d.setCursor(31, 58);
+    d.print(timeText);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, panel2);
+    d.setCursor(132, 46);
+    d.print("write 1 line");
+    d.setCursor(132, 58);
+    d.print("then return");
+    for (int i = 0; i < 9; ++i) {
+      int px = 156 + i * 6;
+      int py = 83 + static_cast<int>(sinf(t * 1.2f + i) * 3.0f);
+      d.fillCircle(px, py, 1, (i % 2) ? accent : secondary);
+    }
   } else {
-    d.drawLine(avatarX - 4, avatarY + 6, avatarX + 4, avatarY + 6, accent);
+    int cx = 72;
+    int cy = 70;
+    d.fillCircle(cx, cy, 47, rgb565_local(4, 16, 24));
+    d.drawCircle(cx, cy, 44, rgb565_local(22, 47, 64));
+    d.drawArc(cx, cy, 40, 33, -150, -150 + progressDeg, accent);
+    d.drawArc(cx, cy, 28, 23, 40 + static_cast<int>(t * 18) % 360,
+              280 + static_cast<int>(t * 18) % 360, secondary);
+    d.fillCircle(cx, cy, isPaused ? 16 : 19 + static_cast<int>(sinf(t * 2.0f) * 2.0f), panel2);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(accent, panel2);
+    d.setCursor(cx - 15, cy - 3);
+    d.print(isPaused ? "idle" : "deep");
+    d.setFont(&fonts::Font7);
+    d.setTextColor(TFT_WHITE, panel);
+    int timeWidth = d.textWidth(timeText);
+    d.setCursor(max<int>(116, 178 - timeWidth / 2), 44);
+    d.print(timeText);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, panel);
+    d.setCursor(132, 86);
+    d.print(gFocusSettings.metronome ? "metro pulse" : "quiet focus");
   }
 
-  uint32_t elapsed = gFocus.sessionTotalSec > gFocus.remainingSec ? gFocus.sessionTotalSec - gFocus.remainingSec : 0;
-  int progress = gFocus.sessionTotalSec ? static_cast<int>((elapsed * 208ULL) / gFocus.sessionTotalSec) : 0;
-  progress = clampValue<int>(progress, 0, 208);
-  d.drawRoundRect(16, 96, 208, 9, 5, soft);
-  d.fillRoundRect(17, 97, max<int>(1, progress), 7, 4, accent);
+  if (gFocusSettings.metronome && !isBreak && !isReflect) {
+    int pivotX = 204;
+    int pivotY = 39;
+    float swing = sinf(t * max<float>(0.6f, gFocusSettings.bpm / 60.0f) * kPi);
+    int tipX = pivotX + static_cast<int>(swing * 18.0f);
+    int tipY = pivotY + 42;
+    d.drawLine(pivotX, pivotY, tipX, tipY, secondary);
+    d.fillCircle(pivotX, pivotY, 3, secondary);
+    d.fillCircle(tipX, tipY, 5, accent);
+  }
+
+  int progressW = gFocus.sessionTotalSec ? static_cast<int>((elapsed * 204ULL) / gFocus.sessionTotalSec) : 0;
+  progressW = clampValue<int>(progressW, 0, 204);
+  d.fillRoundRect(18, 102, 204, 8, 4, rgb565_local(18, 33, 45));
+  d.fillRoundRect(19, 103, max<int>(1, progressW), 6, 3, accent);
 
   if (gFocus.helpVisible) {
     drawTinyFooter(panel, TFT_LIGHTGREY, "Ent pause  R reset  S +5  N next", 16, 114, 208);
@@ -7838,6 +8999,7 @@ void renderFocusUi() {
   if (gFocus.helpVisible) {
     d.fillRoundRect(18, 28, 204, 86, 10, 0x0000);
     d.drawRoundRect(18, 28, 204, 86, 10, accent);
+    d.setFont(&fonts::Font2);
     d.setTextColor(TFT_WHITE, 0x0000);
     d.setCursor(28, 38);
     d.print("Focus setup");
@@ -8030,6 +9192,55 @@ void renderAudioFoldersUi() {
   renderDebugOverlay();
 }
 
+void drawServiceOrb(int16_t cx, int16_t cy, uint16_t accent, uint16_t secondary, const String& label, bool active) {
+  auto& d = gCanvas;
+  uint32_t now = millis();
+  float t = now / 1000.0f;
+  int pulse = active ? static_cast<int>((sinf(t * 4.0f) + 1.0f) * 2.0f) : 0;
+  d.fillCircle(cx, cy, 37, rgb565_local(3, 12, 18));
+  d.drawCircle(cx, cy, 34 + pulse, rgb565_local(18, 45, 58));
+  d.drawArc(cx, cy, 31, 25, static_cast<int>(t * 42.0f) % 360,
+            (static_cast<int>(t * 42.0f) + 250) % 360, accent);
+  d.drawArc(cx, cy, 20, 15, (220 - static_cast<int>(t * 64.0f)) % 360,
+            (40 - static_cast<int>(t * 64.0f)) % 360, secondary);
+  d.fillCircle(cx, cy, 12, active ? accent : rgb565_local(13, 31, 40));
+  d.setFont(&fonts::Font0);
+  d.setTextColor(active ? rgb565_local(2, 6, 12) : accent, active ? accent : rgb565_local(13, 31, 40));
+  d.setCursor(cx - d.textWidth(label) / 2, cy - 3);
+  d.print(label);
+  d.setFont(&fonts::Font2);
+}
+
+void drawInfoRow(int16_t x, int16_t y, int16_t w, const String& label, const String& value,
+                 uint16_t bg, uint16_t labelColor, uint16_t valueColor) {
+  auto& d = gCanvas;
+  d.fillRoundRect(x, y, w, 12, 4, bg);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(labelColor, bg);
+  d.setCursor(x + 6, y + 3);
+  d.print(fitCurrentFontToWidth(label, 52));
+  String fitted = fitCurrentFontToWidth(value, w - 68);
+  d.setTextColor(valueColor, bg);
+  d.setCursor(x + w - 7 - d.textWidth(fitted), y + 3);
+  d.print(fitted);
+  d.setFont(&fonts::Font2);
+}
+
+void drawActionChip(int16_t x, int16_t y, int16_t w, const String& key, const String& label,
+                    uint16_t accent, uint16_t bg) {
+  auto& d = gCanvas;
+  d.fillRoundRect(x, y, w, 14, 5, bg);
+  d.drawRoundRect(x, y, w, 14, 5, accent);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(accent, bg);
+  d.setCursor(x + 5, y + 4);
+  d.print(key);
+  d.setTextColor(TFT_LIGHTGREY, bg);
+  d.setCursor(x + 18, y + 4);
+  d.print(fitCurrentFontToWidth(label, w - 23));
+  d.setFont(&fonts::Font2);
+}
+
 void renderAssetsUi() {
   if (!gSdReady) {
     renderSdRequiredBanner("Asset Sync");
@@ -8037,28 +9248,60 @@ void renderAssetsUi() {
     renderDebugOverlay();
     return;
   }
-  drawCardHeader("Asset Sync", 0x07E0);
   auto& d = gCanvas;
-  d.setTextColor(TFT_WHITE, 0x0841);
-  d.setCursor(16, 34);
-  d.print("manifest ");
-  d.print(gAssetManifest.present ? (gAssetManifest.parsed ? "ok" : "bad") : "missing");
-  d.setCursor(16, 48);
-  d.print("version ");
-  d.print(gAssetManifest.version.isEmpty() ? "-" : gAssetManifest.version.substring(0, 16));
-  d.setCursor(16, 62);
-  d.print("files ");
-  d.print(gAssetManifest.fileCount);
-  d.print("  ");
-  d.print(compactBytes(gAssetManifest.totalBytes));
-  d.setCursor(16, 76);
-  d.print("storage ");
-  d.print(gStorageReady ? gStorageLabel : "off");
-  d.setCursor(16, 90);
-  d.print("audio index ");
   fs::FS* fs = activeVoiceFs();
-  d.print((fs && fsExists(*fs, kAudioIndexPath)) ? "yes" : "no");
-  drawTinyFooter(0x0841, TFT_LIGHTGREY, "F fetch  S sync  R load", 16, 116, 208);
+  const bool indexReady = fs && fsExists(*fs, kAudioIndexPath);
+  const bool ready = gAssetManifest.parsed && gAssetManifest.fileCount > 0;
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(7, 14, 24);
+  const uint16_t panel2 = rgb565_local(10, 24, 34);
+  const uint16_t row = rgb565_local(13, 28, 40);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t muted = rgb565_local(126, 143, 157);
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 14, panel);
+  d.drawRoundRect(6, 5, 228, 124, 14, ready ? green : amber);
+  d.drawRoundRect(10, 9, 220, 116, 11, rgb565_local(18, 34, 48));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(green, panel);
+  d.setCursor(16, 14);
+  d.print("ASSET SYNC");
+  d.setFont(&fonts::Font0);
+  String state = ready ? "READY" : (gAssetManifest.present ? "CHECK" : "FETCH");
+  d.setTextColor(ready ? green : amber, panel);
+  d.setCursor(224 - d.textWidth(state), 17);
+  d.print(state);
+
+  drawServiceOrb(48, 66, green, cyan, "AS", ready);
+
+  int x = 91;
+  drawInfoRow(x, 34, 128, "manifest", gAssetManifest.present ? (gAssetManifest.parsed ? "ok" : "bad") : "missing",
+              row, muted, ready ? green : amber);
+  drawInfoRow(x, 49, 128, "version", gAssetManifest.version.isEmpty() ? "-" : gAssetManifest.version,
+              row, muted, TFT_WHITE);
+  drawInfoRow(x, 64, 128, "files", String(gAssetManifest.fileCount) + " / " + compactBytes(gAssetManifest.totalBytes),
+              row, muted, cyan);
+  drawInfoRow(x, 79, 128, "storage", String(gStorageReady ? gStorageLabel : "off") + (indexReady ? " index" : ""),
+              row, muted, gStorageReady ? green : amber);
+
+  if (!gAssetManifest.error.isEmpty()) {
+    d.setFont(&fonts::Font0);
+    d.setTextColor(amber, panel);
+    d.setCursor(18, 99);
+    d.print(fitCurrentFontToWidth(gAssetManifest.error, 202));
+  } else {
+    int fillW = ready ? min<int>(128, max<int>(12, gAssetManifest.fileCount * 128 / max<int>(1, gAssetManifest.fileCount))) : 24 + ((millis() / 90) % 82);
+    d.fillRoundRect(91, 100, 128, 7, 4, rgb565_local(19, 35, 46));
+    d.fillRoundRect(92, 101, fillW, 5, 3, ready ? green : amber);
+  }
+
+  drawActionChip(17, 112, 58, "F", "fetch", green, panel2);
+  drawActionChip(81, 112, 58, "S", "sync", cyan, panel2);
+  drawActionChip(145, 112, 58, "R", "load", amber, panel2);
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -8070,25 +9313,71 @@ void renderOtaUi() {
     renderDebugOverlay();
     return;
   }
-  drawCardHeader("Firmware OTA", 0xF800);
   auto& d = gCanvas;
-  d.setTextColor(TFT_WHITE, 0x0841);
-  d.setCursor(16, 34);
-  d.print("version ");
-  d.print(kAppVersion);
-  d.setCursor(16, 48);
-  d.print("git ");
-  d.print(String(kBuildGitSha).substring(0, 10));
-  d.setCursor(16, 62);
-  d.print("manifest ");
-  d.print(gOtaManifest.present ? (gOtaManifest.parsed ? "ok" : "bad") : "missing");
-  d.setCursor(16, 76);
-  d.print("candidate ");
-  d.print(gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version.substring(0, 14));
-  d.setCursor(16, 90);
-  d.print("policy ");
-  d.print(gOtaManifest.confirmRequired ? "manual confirm" : "auto allowed");
-  drawTinyFooter(0x0841, TFT_LIGHTGREY, "F fetch  R load  A/G0 apply", 16, 116, 208);
+  const bool hasCandidate = gOtaManifest.parsed && !gOtaManifest.version.isEmpty();
+  const bool updateReady = hasCandidate && gOtaManifest.version != kAppVersion;
+  const uint16_t bg = rgb565_local(3, 5, 10);
+  const uint16_t panel = rgb565_local(12, 12, 20);
+  const uint16_t panel2 = rgb565_local(25, 16, 24);
+  const uint16_t row = rgb565_local(18, 24, 35);
+  const uint16_t red = rgb565_local(255, 83, 92);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t muted = rgb565_local(126, 143, 157);
+  const uint16_t accent = gOtaPendingVerify ? amber : (updateReady ? red : green);
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 14, panel);
+  d.drawRoundRect(6, 5, 228, 124, 14, accent);
+  d.drawRoundRect(10, 9, 220, 116, 11, rgb565_local(42, 36, 48));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, panel);
+  d.setCursor(16, 14);
+  d.print("FIRMWARE OTA");
+  d.setFont(&fonts::Font0);
+  String state = gOtaPendingVerify ? "VERIFY" : updateReady ? "UPDATE" : hasCandidate ? "CURRENT" : "FETCH";
+  d.setTextColor(accent, panel);
+  d.setCursor(224 - d.textWidth(state), 17);
+  d.print(state);
+
+  drawServiceOrb(48, 66, accent, cyan, "OTA", updateReady || gOtaPendingVerify);
+
+  int x = 91;
+  drawInfoRow(x, 34, 128, "current", String(kAppVersion), row, muted, TFT_WHITE);
+  drawInfoRow(x, 49, 128, "candidate", gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version,
+              row, muted, updateReady ? red : green);
+  drawInfoRow(x, 64, 128, "size", gOtaManifest.size ? compactBytes(gOtaManifest.size) : "-",
+              row, muted, cyan);
+  drawInfoRow(x, 79, 128, "slot", gOtaRunningSlot + " " + (gOtaPendingVerify ? "pending" : gOtaBootState),
+              row, muted, gOtaPendingVerify ? amber : muted);
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(gOtaConfirmedThisBoot ? green : (gOtaPendingVerify ? amber : muted), panel);
+  d.setCursor(18, 99);
+  if (!gOtaManifest.error.isEmpty()) {
+    d.setTextColor(amber, panel);
+    d.print(fitCurrentFontToWidth(gOtaManifest.error, 202));
+  } else if (gOtaPendingVerify) {
+    d.print("new app is pending verification");
+  } else if (updateReady) {
+    d.print("ready to download and flash");
+  } else if (hasCandidate) {
+    d.print("installed version is current");
+  } else {
+    d.print("fetch manifest from bridge");
+  }
+
+  if (gOtaPendingVerify) {
+    drawActionChip(17, 112, 58, "C", "confirm", green, panel2);
+    drawActionChip(81, 112, 58, "X", "rollback", red, panel2);
+    drawActionChip(145, 112, 58, "F", "fetch", cyan, panel2);
+  } else {
+    drawActionChip(17, 112, 58, "F", "fetch", cyan, panel2);
+    drawActionChip(81, 112, 58, "A", "apply", red, panel2);
+    drawActionChip(145, 112, 58, "R", "load", amber, panel2);
+  }
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -8151,24 +9440,28 @@ void renderSettingsUi() {
   drawCardHeader("Settings", 0x7BEF);
   auto& d = gCanvas;
   gSelectedSetting = clampValue<int>(gSelectedSetting, 0, kSettingsItemCount - 1);
-  int start = max<int>(0, min<int>(gSelectedSetting - 2, kSettingsItemCount - 5));
-  for (int i = 0; i < 5; ++i) {
+  constexpr int visible = 7;
+  int start = max<int>(0, min<int>(gSelectedSetting - visible / 2, kSettingsItemCount - visible));
+  d.setFont(&fonts::Font0);
+  for (int i = 0; i < visible; ++i) {
     int idx = start + i;
     if (idx >= kSettingsItemCount) {
       break;
     }
-    int y = 35 + i * 15;
+    int y = 34 + i * 11;
     bool selected = idx == gSelectedSetting;
     uint16_t bg = selected ? 0x4208 : 0x0841;
-    d.fillRoundRect(14, y - 2, 212, 14, 4, bg);
+    d.fillRoundRect(14, y - 1, 212, 10, 3, bg);
     d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, bg);
-    d.setCursor(18, y);
-    d.print(settingLabel(idx));
+    d.setCursor(18, y + 1);
+    d.print(fitCurrentFontToWidth(settingLabel(idx), 126));
     String value = settingValue(idx);
-    int w = d.textWidth(value);
-    d.setCursor(max<int>(120, 222 - w), y);
-    d.print(value);
+    String fittedValue = fitCurrentFontToWidth(value, 72);
+    int w = d.textWidth(fittedValue);
+    d.setCursor(max<int>(144, 222 - w), y + 1);
+    d.print(fittedValue);
   }
+  d.setFont(&fonts::Font2);
   drawTinyFooter(0x0841, TFT_LIGHTGREY, "< > pick  +/- edit  Space toggle", 16, 116, 208);
   renderLauncherOverlay();
   renderDebugOverlay();
@@ -8242,12 +9535,12 @@ void renderContextsUi() {
   d.setTextColor(TFT_WHITE, panel2);
   d.setTextDatum(middle_center);
   d.setFont(&fonts::Font4);
-  d.drawString(ctx.shortName, cardX + 34, 59);
+  d.drawString(topicDisplayIcon(ctx), cardX + 34, 59);
   d.setTextDatum(top_left);
   d.setFont(&fonts::efontCN_12);
 
   d.setTextColor(TFT_WHITE, panel);
-  String title = marqueeText(normalizeTopicTitleForDisplay(ctx.label), 146, 260);
+  String title = marqueeText(topicDisplayTitle(ctx), 146, 260);
   d.setCursor(cardX + 70, 43);
   d.print(title);
   d.setTextColor(muted, panel);
@@ -8271,7 +9564,7 @@ void renderContextsUi() {
     int y = 90;
     int shown = 0;
     for (const auto& line : gContextPreview) {
-      if (shown >= 5) {
+      if (shown >= 4) {
         break;
       }
       uint16_t roleColor = line.role == "assistant" ? green : (line.voice ? amber : cyan);
@@ -8281,16 +9574,16 @@ void renderContextsUi() {
       d.print(prefix);
       d.setTextColor(TFT_LIGHTGREY, rgb565_local(4, 10, 16));
       d.setCursor(34, y);
-      d.print(trimPreview(line.text, 34));
-      y += 6;
+      d.print(fitCurrentFontToWidth(line.text, 184));
+      y += 8;
       shown++;
     }
-    if (gContextPreview.size() > 5) {
+    if (gContextPreview.size() > 4) {
       d.setTextColor(muted, rgb565_local(4, 10, 16));
       d.setFont(&fonts::Font0);
       d.setCursor(205, 115);
       d.print("+");
-      d.print(static_cast<int>(gContextPreview.size()) - 5);
+      d.print(static_cast<int>(gContextPreview.size()) - 4);
       d.setFont(&fonts::Font2);
     }
   } else {
@@ -8312,12 +9605,12 @@ void renderContextsUi() {
 void renderLogsUi() {
   drawCardHeader("Logs / Status", 0xC618);
   auto& d = gCanvas;
+  d.setFont(&fonts::Font0);
   d.setTextColor(TFT_WHITE, 0x0841);
-  d.setCursor(16, 34);
-  d.print(WiFi.isConnected() ? WiFi.localIP().toString() : "wifi off");
-  d.print(" ");
-  d.print(gStorageLabel);
-  int visible = 5;
+  String statusLine = String(WiFi.isConnected() ? WiFi.localIP().toString() : "wifi off") + " " + gStorageLabel;
+  d.setCursor(16, 32);
+  d.print(fitCurrentFontToWidth(statusLine, 208));
+  int visible = 9;
   int maxOffset = max<int>(0, static_cast<int>(gRuntimeLogs.size()) - visible);
   gLogScrollOffset = clampValue<int>(gLogScrollOffset, 0, maxOffset);
   int start = max<int>(0, static_cast<int>(gRuntimeLogs.size()) - visible - gLogScrollOffset);
@@ -8327,9 +9620,10 @@ void renderLogsUi() {
       break;
     }
     d.setTextColor(TFT_LIGHTGREY, 0x0841);
-    d.setCursor(16, 50 + i * 12);
-    d.print(trimPreview(gRuntimeLogs[idx], 34));
+    d.setCursor(16, 43 + i * 8);
+    d.print(fitCurrentFontToWidth(gRuntimeLogs[idx], 208));
   }
+  d.setFont(&fonts::Font2);
   drawTinyFooter(0x0841, TFT_LIGHTGREY, "< > scroll  R reload  U upload", 16, 116, 208);
   renderLauncherOverlay();
   renderDebugOverlay();
@@ -8365,12 +9659,12 @@ void renderTopicOverlayIfVisible() {
   d.setFont(&fonts::Font2);
   d.setTextColor(TFT_WHITE, panel);
   d.setCursor(16, 16);
-  d.print(fitCurrentFontToWidth(ctx.shortName, 30));
+  d.print(fitCurrentFontToWidth(topicDisplayIcon(ctx), 30));
 
   d.setFont(&fonts::efontCN_12);
   d.setTextColor(cyan, bg);
   d.setCursor(60 + dx, 9);
-  d.print(fitCurrentFontToWidth(normalizeTopicTitleForDisplay(ctx.label), 132));
+  d.print(fitCurrentFontToWidth(topicDisplayTitle(ctx), 132));
 
   d.setFont(&fonts::Font0);
   d.setTextColor(muted, bg);
@@ -8464,6 +9758,12 @@ void drawAssistantPulseArc(int16_t cx, int16_t cy, int16_t outerR, int16_t inner
   if (startDeg < 0) startDeg += 360;
   if (endDeg < 0) endDeg += 360;
   gCanvas.drawArc(cx, cy, outerR, innerR, startDeg, endDeg, color);
+  int16_t capR = max<int16_t>(2, (outerR - innerR) / 2);
+  float midR = (outerR + innerR) * 0.5f;
+  gCanvas.fillCircle(cx + static_cast<int16_t>(cosf(startRad) * midR),
+                     cy + static_cast<int16_t>(sinf(startRad) * midR), capR, color);
+  gCanvas.fillCircle(cx + static_cast<int16_t>(cosf(endRad) * midR),
+                     cy + static_cast<int16_t>(sinf(endRad) * midR), capR, color);
 }
 
 void drawAssistantPulseButton(int16_t x, int16_t y, int16_t w, int16_t h,
@@ -8560,16 +9860,22 @@ void renderAssistantPulseUi() {
   const int16_t cx = 58;
   const int16_t cy = 68;
   d.fillCircle(cx, cy, 50 + static_cast<int16_t>(breathe), rgb565_local(4, 16, 21));
+  d.drawCircle(cx, cy, 51 + static_cast<int16_t>(breathe), rgb565_local(8, 34, 43));
   d.drawCircle(cx, cy, 49 + static_cast<int16_t>(breathe), c3);
-  drawAssistantPulseArc(cx, cy, 43, 36, -2.25f + spin, 1.00f + spin, c1);
-  drawAssistantPulseArc(cx, cy, 29, 23, 0.58f - spin * 1.08f, 4.54f - spin * 1.08f, c2);
+  drawAssistantPulseArc(cx, cy, 45, 36, -2.25f, 1.00f, rgb565_local(10, 38, 48));
+  drawAssistantPulseArc(cx, cy, 31, 23, 0.58f, 4.54f, rgb565_local(11, 35, 48));
+  drawAssistantPulseArc(cx, cy, 45, 36, -2.25f + spin, 1.00f + spin, c1);
+  drawAssistantPulseArc(cx, cy, 31, 23, 0.58f - spin * 1.08f, 4.54f - spin * 1.08f, c2);
 
   if (state == AssistantPulseState::Recording) {
     int16_t pulseR = 18 + static_cast<int16_t>(level * 14.0f + sinf(t * 12.0f));
     d.fillCircle(cx, cy, pulseR, c1);
     d.fillCircle(cx, cy, 9, fg);
   } else if (state == AssistantPulseState::Thinking) {
-    drawAssistantPulseArc(cx, cy, 19, 14, 0.2f + spin * 1.7f, 5.3f + spin * 1.7f, fg);
+    for (int i = 0; i < 4; ++i) {
+      float a = spin * 1.9f + i * 1.55f;
+      drawAssistantPulseArc(cx, cy, 22, 16, a, a + 0.72f, (i % 2) ? c2 : c1);
+    }
     d.fillCircle(cx + static_cast<int16_t>(cosf(spin * 2.4f) * 27.0f),
                  cy + static_cast<int16_t>(sinf(spin * 2.4f) * 21.0f), 4, c1);
     d.fillCircle(cx + static_cast<int16_t>(cosf(spin * 2.0f + 2.1f) * 26.0f),
@@ -8656,118 +9962,96 @@ void renderVoicePlayerUi() {
     return;
   }
   auto& d = gCanvas;
-  const uint16_t bg = rgb565_local(74, 78, 94);
-  const uint16_t panel = TFT_BLACK;
-  const uint16_t edge = rgb565_local(190, 196, 220);
-  const uint16_t dim = rgb565_local(86, 94, 112);
-  const uint16_t orange = TFT_ORANGE;
+  const uint16_t bg = rgb565_local(2, 6, 12);
+  const uint16_t panel = rgb565_local(7, 14, 24);
+  const uint16_t panel2 = rgb565_local(10, 24, 36);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(105, 255, 156);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t muted = rgb565_local(126, 143, 157);
   d.fillScreen(bg);
-  d.setFont(&fonts::Font2);
-  d.drawFastHLine(0, 0, 240, edge);
-  d.drawFastHLine(0, 134, 240, edge);
-  d.fillRect(4, 8, 130, 122, panel);
-  d.drawRect(3, 7, 132, 124, edge);
-  d.fillRect(138, 0, 4, 135, TFT_BLACK);
-  d.drawFastVLine(143, 0, 135, edge);
+  d.fillRoundRect(6, 6, 228, 123, 14, panel);
+  d.drawRoundRect(6, 6, 228, 123, 14, rgb565_local(25, 48, 68));
 
-  d.setTextColor(orange, bg);
-  d.setCursor(8, 0);
-  d.print("VOICE");
-  d.setTextColor(TFT_LIGHTGREY, bg);
-  d.setCursor(55, 0);
-  d.print(gStorageLabel);
-  d.setCursor(194, 0);
-  d.print(String(gSelectedVoiceNote + 1) + "/" + String(max<int>(1, static_cast<int>(gVoiceNotes.size()))));
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(16, 14);
+  d.print("VOICE NOTES");
+  String count = String(max<int>(0, static_cast<int>(gVoiceNotes.size()))) + " wav";
+  d.setTextColor(muted, panel);
+  d.setCursor(224 - d.textWidth(count), 14);
+  d.print(count);
+
+  int cx = 52;
+  int cy = 68;
+  uint32_t now = millis();
+  for (int i = 0; i < 18; ++i) {
+    float a = i * 0.349f + now * 0.004f;
+    int r = 18 + (i % 3) * 4;
+    int x = cx + static_cast<int>(cosf(a) * r);
+    int y = cy + static_cast<int>(sinf(a) * r);
+    d.fillCircle(x, y, 1 + (i % 2), gPlaybackActive ? green : cyan);
+  }
+  d.fillCircle(cx, cy, 18, panel2);
+  d.drawCircle(cx, cy, 19, gPlaybackActive ? green : cyan);
+  d.setTextColor(gPlaybackActive ? green : cyan, panel2);
+  d.setTextDatum(middle_center);
+  d.setFont(&fonts::Font4);
+  d.drawString(gPlaybackActive ? "PLAY" : "WAV", cx, cy - 4);
+  d.setTextDatum(top_left);
+  d.setFont(&fonts::Font2);
 
   if (gVoiceNotes.empty()) {
-    d.setTextColor(TFT_YELLOW, panel);
-    d.setCursor(10, 54);
-    d.print("No saved voice notes");
+    d.setTextColor(amber, panel);
+    d.setCursor(92, 54);
+    d.print("No saved notes");
+    d.setTextColor(muted, panel);
+    d.setCursor(92, 70);
+    d.print("Record voice first");
   } else {
-    int start = max(0, gSelectedVoiceNote - 4);
-    int end = min(static_cast<int>(gVoiceNotes.size()), start + 10);
-    int y = 11;
-    for (int i = start; i < end; ++i) {
-      bool selected = i == gSelectedVoiceNote;
-      uint16_t rowBg = selected ? rgb565_local(30, 70, 50) : panel;
-      d.fillRect(5, y - 1, 128, 11, rowBg);
-      d.setTextColor(selected ? TFT_WHITE : (gVoiceNotes[i].assistant ? TFT_GREENYELLOW : TFT_CYAN), rowBg);
-      d.setCursor(8, y);
-      String rowTitle = String(gVoiceNotes[i].assistant ? "AI " : "ME ") + gVoiceNotes[i].title;
-      d.print(selected ? marqueeText(rowTitle, 118, 260) : trimPreview(rowTitle, 18));
-      y += 12;
+    gSelectedVoiceNote = clampValue<int>(gSelectedVoiceNote, 0, static_cast<int>(gVoiceNotes.size()) - 1);
+    const auto& note = gVoiceNotes[gSelectedVoiceNote];
+    String who = note.assistant ? "AI" : "ME";
+    d.fillRoundRect(88, 38, 134, 54, 10, panel2);
+    d.drawRoundRect(88, 38, 134, 54, 10, note.assistant ? green : cyan);
+    d.setTextColor(note.assistant ? green : cyan, panel2);
+    d.setCursor(98, 46);
+    d.print(who);
+    d.setTextColor(TFT_WHITE, panel2);
+    d.setCursor(120, 46);
+    d.print(marqueeText(note.title, 90, 260));
+    d.setTextColor(muted, panel2);
+    d.setCursor(98, 61);
+    d.print(trimPreview(note.preview, 22));
+    d.setCursor(98, 76);
+    d.print(String(gSelectedVoiceNote + 1) + "/" + String(gVoiceNotes.size()));
+
+    String timeText = "--:--";
+    if (gPlaybackActive && gPlaybackStreamSampleRate > 0) {
+      uint32_t leftMs = static_cast<uint32_t>((gPlaybackStreamRemainingBytes / 2ULL) * 1000ULL / gPlaybackStreamSampleRate);
+      char buf[6];
+      snprintf(buf, sizeof(buf), "%02u:%02u", static_cast<unsigned>(leftMs / 60000U),
+               static_cast<unsigned>((leftMs / 1000U) % 60U));
+      timeText = buf;
     }
-    int sliderY = map(gSelectedVoiceNote, 0, max<int>(1, static_cast<int>(gVoiceNotes.size()) - 1), 10, 108);
-    d.fillRect(129, 8, 5, 122, dim);
-    d.fillRect(129, sliderY, 5, 18, edge);
+    d.setTextColor(gPlaybackActive ? green : amber, panel);
+    d.setCursor(184, 96);
+    d.print(timeText);
   }
 
-  d.fillRect(148, 14, 86, 42, panel);
-  d.drawRect(147, 13, 88, 44, edge);
-  d.fillRect(148, 59, 86, 16, panel);
-  d.drawRect(147, 58, 88, 18, edge);
-  d.setTextColor(TFT_GREEN, panel);
-  d.setCursor(153, 17);
-  d.print(gPlaybackActive ? "PLAY" : "STOP");
-
-  d.setTextColor(TFT_GREEN, panel);
-  String timeText = "--:--";
-  if (gPlaybackActive && gPlaybackStreamSampleRate > 0) {
-    uint32_t leftMs = static_cast<uint32_t>((gPlaybackStreamRemainingBytes / 2ULL) * 1000ULL / gPlaybackStreamSampleRate);
-    char buf[6];
-    snprintf(buf, sizeof(buf), "%02u:%02u", static_cast<unsigned>(leftMs / 60000U),
-             static_cast<unsigned>((leftMs / 1000U) % 60U));
-    timeText = buf;
-  }
-  d.setCursor(190, 17);
-  d.print(timeText);
-
-  for (int i = 0; i < 14; ++i) {
-    if (gPlaybackActive && (gVoiceGraphSpeed % 4 == 0)) {
-      gVoiceEqBars[i] = random(1, 6);
+  for (int i = 0; i < 16; ++i) {
+    if (gPlaybackActive && (gVoiceGraphSpeed % 3 == 0)) {
+      gVoiceEqBars[i % 14] = random(1, 8);
     }
-    for (int j = 0; j < gVoiceEqBars[i]; ++j) {
-      d.fillRect(172 + (i * 4), 51 - j * 3, 3, 2, rgb565_local(165, 255, 120));
-    }
+    int h = gPlaybackActive ? gVoiceEqBars[i % 14] : (2 + ((i + now / 160) % 5));
+    d.fillRoundRect(18 + i * 7, 108 - h * 3, 4, h * 3, 2, gPlaybackActive ? green : cyan);
   }
   gVoiceGraphSpeed++;
 
-  String ticker = "NO VOICE NOTES";
-  if (!gVoiceNotes.empty()) {
-    const auto& note = gVoiceNotes[gSelectedVoiceNote];
-    ticker = note.title + " :: " + note.preview;
-  }
-  d.fillRect(149, 60, 84, 14, panel);
-  d.setTextColor(TFT_GREEN, panel);
-  d.setCursor(gVoiceTickerX, 63);
-  d.print(ticker);
-  if (d.textWidth(ticker) > 84 || gPlaybackActive) {
-    gVoiceTickerX -= 2;
-    if (gVoiceTickerX < -static_cast<int16_t>(max<int>(80, d.textWidth(ticker)))) {
-      gVoiceTickerX = 230;
-    }
-  }
-
-  d.setTextColor(TFT_LIGHTGREY, bg);
-  d.setCursor(150, 80);
-  d.print("VOL");
-  d.fillRoundRect(172, 83, 60, 3, 2, TFT_YELLOW);
-  int volX = map(gSpeakerVolume, 0, 255, 172, 224);
-  d.fillRoundRect(volX, 80, 9, 8, 2, edge);
-
-  for (int i = 0; i < 4; ++i) {
-    d.fillRoundRect(148 + (i * 22), 94, 18, 18, 3, rgb565_local(150, 156, 176));
-  }
-  d.setTextColor(TFT_BLACK, rgb565_local(150, 156, 176));
-  d.setCursor(154, 97);
-  d.print("A");
-  d.setCursor(176, 97);
-  d.print("P");
-  d.setCursor(198, 97);
-  d.print("N");
-  d.setCursor(220, 97);
-  d.print("B");
-  drawTinyFooter(bg, TFT_LIGHTGREY, "Ent play  V vol", 149, 122, 84);
+  int volW = map(gSpeakerVolume, 0, 255, 0, 58);
+  d.fillRoundRect(88, 99, 64, 7, 4, rgb565_local(21, 35, 46));
+  d.fillRoundRect(91, 101, volW, 3, 2, amber);
+  drawTinyFooter(panel, muted, "< > note  Ent play  V vol", 15, 120, 210);
 
   renderLauncherOverlay();
   renderDebugOverlay();
@@ -8775,7 +10059,16 @@ void renderVoicePlayerUi() {
 
 void renderChatUi() {
   auto& d = gCanvas;
-  d.fillScreen(0x0841);
+  const uint16_t bg = rgb565_local(3, 7, 13);
+  const uint16_t panel = rgb565_local(6, 13, 23);
+  const uint16_t userBg = rgb565_local(8, 43, 55);
+  const uint16_t aiBg = rgb565_local(11, 42, 31);
+  const uint16_t sysBg = rgb565_local(20, 25, 35);
+  const uint16_t accent = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(100, 255, 170);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t muted = rgb565_local(126, 143, 157);
+  d.fillScreen(bg);
   d.setTextSize(1);
   d.setFont(&fonts::Font2);
 
@@ -8785,17 +10078,22 @@ void renderChatUi() {
   }
 
   bool showStatus = !gStatusText.isEmpty() && gStatusText != "Ready";
+  int inputLines = 1;
+  if (gInputBuffer.length() > 36) {
+    inputLines = 2;
+  }
+  if (gInputBuffer.length() > 78) {
+    inputLines = 3;
+  }
+  int composerH = 17 + (inputLines - 1) * 11;
+  int composerY = 135 - composerH - 3;
+  int transcriptTop = showFace ? 78 : 8;
+  int transcriptBottom = composerY - (showStatus ? 14 : 4);
+
   d.setFont(&fonts::efontCN_12);
   int lineHeight = d.fontHeight() + 1;
-  int visibleRows = 0;
-  int y = 0;
-  if (showFace) {
-    visibleRows = showStatus ? 2 : 4;
-    y = 80;
-  } else {
-    visibleRows = showStatus ? 7 : 8;
-    y = 12;
-  }
+  int visibleRows = max<int>(1, (transcriptBottom - transcriptTop) / max<int>(1, lineHeight + 2));
+  int y = transcriptTop;
   auto lines = buildVisualLines(showFace ? 216 : 228);
   int maxOffset = max<int>(0, static_cast<int>(lines.size()) - visibleRows);
   if (gChatScrollOffset > maxOffset) {
@@ -8804,28 +10102,59 @@ void renderChatUi() {
   int startIndex = max<int>(0, static_cast<int>(lines.size()) - visibleRows - gChatScrollOffset);
   int endIndex = min<int>(static_cast<int>(lines.size()), startIndex + visibleRows);
 
-  for (int i = startIndex; i < endIndex; ++i) {
-    d.setTextColor(colorForLine(lines[i].kind), 0x0841);
-    d.setCursor(4, y);
-    d.print(lines[i].text);
-    y += lineHeight;
+  if (!showFace) {
+    d.fillRoundRect(4, 4, 232, transcriptBottom - 2, 10, panel);
+    d.drawRoundRect(4, 4, 232, transcriptBottom - 2, 10, rgb565_local(18, 35, 50));
   }
-  if (showFace) {
+
+  for (int i = startIndex; i < endIndex; ++i) {
+    LineKind kind = lines[i].kind;
+    uint16_t bubble = kind == LineKind::User ? userBg : (kind == LineKind::Assistant ? aiBg : sysBg);
+    uint16_t ink = kind == LineKind::User ? accent : (kind == LineKind::Assistant ? green : muted);
+    int bx = kind == LineKind::User ? 22 : 8;
+    int bw = showFace ? 212 : 224;
+    if (kind == LineKind::User && !showFace) {
+      bw = 210;
+    }
+    d.fillRoundRect(bx, y - 1, bw, lineHeight + 1, 4, bubble);
+    d.setTextColor(ink, bubble);
+    d.setCursor(bx + 5, y);
+    d.print(fitCurrentFontToWidth(lines[i].text, bw - 10));
+    y += lineHeight + 2;
+  }
+  if (maxOffset > 0 && !showFace) {
+    int railX = 232;
+    int railH = max<int>(12, transcriptBottom - transcriptTop - 8);
+    int knobH = max<int>(8, railH / (maxOffset + 1));
+    int knobY = transcriptTop + 4 + ((railH - knobH) * (maxOffset - gChatScrollOffset)) / max<int>(1, maxOffset);
+    d.fillRoundRect(railX, transcriptTop + 4, 3, railH, 2, rgb565_local(24, 35, 48));
+    d.fillRoundRect(railX, knobY, 3, knobH, 2, accent);
+  } else if (showFace) {
     drawScrollIndicators(gChatScrollOffset < maxOffset, gChatScrollOffset > 0);
   }
 
   if (showStatus) {
     d.setFont(&fonts::Font0);
-    d.setTextColor(TFT_LIGHTGREY, 0x0841);
-    d.setCursor(4, showFace ? 111 : 109);
-    d.print(fitCurrentFontToWidth(gStatusText, 228));
+    d.setTextColor(amber, bg);
+    d.setCursor(8, composerY - 11);
+    d.print(fitCurrentFontToWidth(gStatusText, 220));
   }
 
   d.setFont(&fonts::efontCN_12);
-  d.setTextColor(TFT_YELLOW, 0x0841);
-  d.setCursor(4, 121);
-  String inputLine = tailUtf8ToFit("> " + gInputBuffer, 232);
+  d.fillRoundRect(6, composerY, 228, composerH, 7, rgb565_local(2, 17, 29));
+  d.drawRoundRect(6, composerY, 228, composerH, 7, gInputBuffer.isEmpty() ? rgb565_local(28, 51, 65) : accent);
+  d.fillRoundRect(10, composerY + 4, 18, composerH - 8, 5, rgb565_local(4, 32, 45));
+  d.setTextColor(gInputBuffer.isEmpty() ? muted : amber, rgb565_local(4, 32, 45));
+  d.setCursor(15, composerY + 5);
+  d.print(">");
+  d.setTextColor(gInputBuffer.isEmpty() ? muted : TFT_WHITE, rgb565_local(2, 17, 29));
+  String inputLine = gInputBuffer.isEmpty() ? "type to chat" : tailUtf8ToFit(gInputBuffer, 174);
+  d.setCursor(34, composerY + 4);
   d.print(inputLine);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(accent, rgb565_local(2, 17, 29));
+  d.setCursor(204, composerY + composerH - 9);
+  d.print("ENT");
   renderTopicOverlayIfVisible();
   renderLauncherOverlay();
   renderDebugOverlay();
@@ -8949,6 +10278,21 @@ void renderBootSplash(const char* stage) {
   const uint16_t rungFront = rgb565_local(154, 169, 164);
   const uint16_t rungBack = rgb565_local(54, 70, 65);
   const uint16_t muted = rgb565_local(135, 154, 149);
+  uint8_t stageIndex = 0;
+  String stageName = stage && stage[0] ? String(stage) : String("");
+  if (stageName == "Display") {
+    stageIndex = 1;
+  } else if (stageName == "Audio") {
+    stageIndex = 2;
+  } else if (stageName == "Storage") {
+    stageIndex = 3;
+  } else if (stageName == "Input") {
+    stageIndex = 4;
+  } else if (stageName == "Config") {
+    stageIndex = 5;
+  } else if (stageName == "Wi-Fi") {
+    stageIndex = 6;
+  }
 
   auto line = [&](int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color, bool thick) {
     d.drawLine(x1, y1, x2, y2, color);
@@ -8963,7 +10307,7 @@ void renderBootSplash(const char* stage) {
     constexpr int16_t step = 14;
     constexpr int16_t count = 12;
     constexpr float amp = 24.0f;
-    float phase = millis() * 0.0021f;
+    float phase = stageIndex * 0.36f;
 
     for (int i = 0; i < count; ++i) {
       float theta = phase + i * 0.72f;
@@ -9009,26 +10353,28 @@ void renderBootSplash(const char* stage) {
   d.drawRoundRect(7, 7, 226, 121, 9, panelLine);
 
   drawHelix();
-  d.drawEllipse(120, 66, 82, 42 + static_cast<int16_t>((millis() / 320) % 3), mintDim);
+  d.drawEllipse(120, 66, 82, 42 + static_cast<int16_t>(stageIndex % 2), mintDim);
 
   d.setFont(&fonts::Font2);
   d.setTextSize(1);
-  d.fillRoundRect(15, 14, 50, 17, 7, rgb565_local(6, 16, 13));
-  d.drawRoundRect(15, 14, 50, 17, 7, mint);
+  d.fillRoundRect(15, 14, 86, 17, 7, rgb565_local(6, 16, 13));
+  d.drawRoundRect(15, 14, 86, 17, 7, mint);
   d.setTextColor(TFT_WHITE, rgb565_local(6, 16, 13));
-  d.setCursor(32, 18);
-  d.print("ADV");
+  d.setCursor(23, 18);
+  d.print("ADV ");
+  d.setTextColor(mint, rgb565_local(6, 16, 13));
+  d.print(kAppVersion);
 
-  uint8_t pct = static_cast<uint8_t>(18 + ((millis() / 95) % 78));
+  uint8_t pct = static_cast<uint8_t>(clampValue<int>(12 + stageIndex * 14, 12, 96));
   String pctText = String(pct) + "%";
   d.setTextColor(gold, panel);
   d.setCursor(220 - d.textWidth(pctText), 18);
   d.print(pctText);
-  d.drawRoundRect(74, 17, 93, 4, 2, panelLine);
-  d.fillRoundRect(77 + pct / 2, 18, 22 + ((millis() / 180) % 10), 2, 1, TFT_WHITE);
+  d.drawRoundRect(108, 17, 59, 4, 2, panelLine);
+  d.fillRoundRect(111 + pct / 4, 18, 18, 2, 1, TFT_WHITE);
 
   const char* states[] = {"DNA", "LINK", "SYNC", "READY"};
-  const char* label = states[(millis() / 900) % 4];
+  const char* label = states[clampValue<int>((stageIndex + 1) / 2, 0, 3)];
   d.setFont(&fonts::Font4);
   d.setTextColor(TFT_WHITE, panel);
   int16_t tw = d.textWidth(label);
@@ -9079,6 +10425,7 @@ void setup() {
   loadConfig();
   loadFocusSettings();
   loadDeviceSettings();
+  beginOtaBootGuard();
   pushSystem("Device ready: " + gDeviceId);
   pushSystem("Ctrl+Space = EN/RU");
   pushSystem("Voice: Ctrl x2 / Ctrl+V / hold G0");
@@ -9092,6 +10439,9 @@ void setup() {
   if (ensureWifi()) {
     render();
     startHubWebSocket();
+    if (gOtaPendingVerify && probeOtaBridgeHealth(8000)) {
+      confirmOtaBootIfPending("bridge health");
+    }
     if (gDeviceSettings.checkUpdatesOnBoot) {
       setStatus("Checking updates...", 900);
       render();
@@ -9125,6 +10475,7 @@ void loop() {
     if (kUseHubWebSocket) {
       gWs.loop();
     }
+    serviceOtaBootGuard();
     syncClockFromNtp(false);
     updateBatterySnapshot();
     updateFocusTimer();
