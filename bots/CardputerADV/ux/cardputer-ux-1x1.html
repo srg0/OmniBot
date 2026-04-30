@@ -984,66 +984,6 @@
       text(ctx, 26, 112, 'Space pause  Z/X bpm  Enter start', COLORS.muted);
     }
 
-    function drawClock(ctx, face) {
-      const now = new Date();
-      const bangkok = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Bangkok',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-      }).format(now);
-      const date = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Bangkok',
-        day: '2-digit',
-        month: 'short'
-      }).format(now).toUpperCase();
-
-      if (face === 1) {
-        clear(ctx, '#03050d');
-        const tick = Date.now() / 740;
-        for (let gy = -10; gy <= 150; gy += 15) {
-          let prev = null;
-          for (let x = 0; x <= 240; x += 12) {
-            const wave = Math.sin((x * .045) + tick) * 7 + Math.cos((gy * .055) - tick * .8) * 5;
-            const perspective = (gy - 67) * .12;
-            const y = gy + wave + perspective;
-            if (prev) line(ctx, prev.x, prev.y, x, y, 'rgba(56,231,255,.17)');
-            prev = { x, y };
-          }
-        }
-        for (let gx = -20; gx <= 260; gx += 20) {
-          let prev = null;
-          for (let y = 0; y <= 135; y += 14) {
-            const bend = Math.sin((y * .06) + tick + gx * .02) * 6;
-            const x = gx + bend + (y - 67) * .08;
-            if (prev) line(ctx, prev.x, prev.y, x, y, 'rgba(252,52,183,.12)');
-            prev = { x, y };
-          }
-        }
-        box(ctx, 0, 0, 240, 135, 'linear-gradient(180deg, rgba(3,5,13,.08), rgba(3,5,13,.52))');
-        text(ctx, 4, 42, bangkok, COLORS.cyan, 'mega', {
-          textShadow: '0 0 7px #22e8ff, 0 0 14px #22e8ff'
-        });
-        text(ctx, 58, 96, `BANGKOK ${date}`, COLORS.yellow, 'medium', {
-          textShadow: '0 0 6px #ffe46d'
-        });
-      } else if (face === 2) {
-        clear(ctx, '#0a0c10');
-        box(ctx, 61, 7, 118, 118, '#121922', 'circle');
-        box(ctx, 65, 11, 110, 110, 'transparent', 'circle', { border: '1px solid #d2dceb' });
-        for (let i = 0; i < 12; i++) {
-          const a = i / 12 * Math.PI * 2 - Math.PI / 2;
-          box(ctx, 119 + Math.cos(a) * 48, 65 + Math.sin(a) * 48, 3, 3, COLORS.cyan, 'circle');
-        }
-        line(ctx, 120, 66, 120, 39, COLORS.white, 2);
-        line(ctx, 120, 66, 154, 66, COLORS.cyan, 2);
-        line(ctx, 120, 66, 105, 24, COLORS.orange, 1);
-        box(ctx, 116, 62, 8, 8, COLORS.orange, 'circle');
-        text(ctx, 8, 118, bangkok, COLORS.muted);
-      }
-    }
-
     function line(ctx, x1, y1, x2, y2, color, thickness = 1) {
       const len = Math.hypot(x2 - x1, y2 - y1);
       const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;

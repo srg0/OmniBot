@@ -38,7 +38,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.2-dev"
+#define APP_VERSION "0.2.3-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -142,6 +142,7 @@ constexpr const char* kAssetManifestPath = "/pomodoro/manifest.json";
 constexpr const char* kAudioIndexPath = "/pomodoro/audio/index.json";
 constexpr const char* kOtaManifestPath = "/pomodoro/firmware.json";
 constexpr const char* kContextRegistryPath = "/pomodoro/contexts.json";
+constexpr const char* kEmojiDir = "/emoji";
 constexpr const char* kRuntimeLogPath = "/pomodoro/logs/runtime.ndjson";
 constexpr const char* kOtaTempPath = "/pomodoro/firmware.tmp.bin";
 constexpr const char* kFocusCuePath = "/pomodoro/audio/focus_ru.wav";
@@ -161,6 +162,8 @@ constexpr uint32_t kRecordDrainTimeoutMs = 900;
 constexpr size_t kPlaybackChunkSamples = 2048;
 constexpr size_t kPlaybackChunkBytes = kPlaybackChunkSamples * sizeof(int16_t);
 constexpr size_t kPlaybackBufferCount = 2;
+constexpr size_t kEmojiCacheCap = 10;
+constexpr size_t kEmojiMaxPngBytes = 64 * 1024;
 constexpr uint8_t kTca8418IntPin = 11;
 constexpr uint8_t kTca8418I2cAddr = 0x34;
 constexpr uint8_t kTca8418SdaPin = 8;
@@ -529,6 +532,14 @@ struct LauncherGroup {
   LauncherSubItem items[kLauncherMaxSubItems];
 };
 
+struct EmojiCacheEntry {
+  uint32_t codepoint = 0;
+  uint8_t* data = nullptr;
+  uint32_t len = 0;
+  int16_t width = 0;
+  int16_t height = 0;
+};
+
 constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
     {"Home", "PULSE", "Assistant pulse", rgb565_local(47, 227, 255), 3,
      {{"Pulse", UiMode::Home}, {"Chat", UiMode::ChatFull}, {"Eyes chat", UiMode::ChatFace}}},
@@ -634,6 +645,9 @@ String gLastHttpDiag = "boot";
 String gLastKeyDiag = "-";
 String gStorageLabel = "off";
 String gLastKeySignature;
+EmojiCacheEntry gEmojiCache[kEmojiCacheCap];
+uint8_t gEmojiCacheSize = 0;
+size_t gEmojiAssetCount = 0;
 bool gTcaPressedKeys[4][14] = {};
 bool gCtrlSoloHeld = false;
 bool gCtrlSoloCandidate = false;
@@ -731,6 +745,8 @@ fs::FS* fallbackVoiceFs();
 bool ensurePomodoroStorageOn(fs::FS& fs);
 uint64_t activeStorageTotalBytes();
 uint64_t activeStorageUsedBytes();
+void configureEmojiRendering();
+void scanEmojiAssets();
 
 void mapTcaRawKeyToPhysical(uint8_t keyValue, uint8_t& row, uint8_t& col) {
   uint8_t unit = keyValue % 10;
@@ -1212,10 +1228,70 @@ void pushError(const String& text) {
 void pushUser(const String& text) { pushLine("YOU", text, LineKind::User); }
 void pushAssistant(const String& text) { pushLine("AI", text, LineKind::Assistant); }
 
+bool decodeUtf8At(const String& value, int index, uint32_t& codepoint, int& consumed) {
+  const auto* bytes = reinterpret_cast<const uint8_t*>(value.c_str());
+  int len = value.length();
+  uint8_t b0 = bytes[index];
+  if (b0 < 0x80) {
+    codepoint = b0;
+    consumed = 1;
+    return true;
+  }
+  if ((b0 & 0xE0) == 0xC0 && index + 1 < len && (bytes[index + 1] & 0xC0) == 0x80) {
+    codepoint = ((b0 & 0x1F) << 6) | (bytes[index + 1] & 0x3F);
+    consumed = 2;
+    return true;
+  }
+  if ((b0 & 0xF0) == 0xE0 && index + 2 < len &&
+      (bytes[index + 1] & 0xC0) == 0x80 && (bytes[index + 2] & 0xC0) == 0x80) {
+    codepoint = ((b0 & 0x0F) << 12) | ((bytes[index + 1] & 0x3F) << 6) |
+                (bytes[index + 2] & 0x3F);
+    consumed = 3;
+    return true;
+  }
+  if ((b0 & 0xF8) == 0xF0 && index + 3 < len &&
+      (bytes[index + 1] & 0xC0) == 0x80 && (bytes[index + 2] & 0xC0) == 0x80 &&
+      (bytes[index + 3] & 0xC0) == 0x80) {
+    codepoint = ((b0 & 0x07) << 18) | ((bytes[index + 1] & 0x3F) << 12) |
+                ((bytes[index + 2] & 0x3F) << 6) | (bytes[index + 3] & 0x3F);
+    consumed = 4;
+    return true;
+  }
+  codepoint = b0;
+  consumed = 1;
+  return false;
+}
+
+bool shouldSuppressEmojiModifier(uint32_t codepoint) {
+  return codepoint == 0x200D || codepoint == 0x20E3 || codepoint == 0xFE0E ||
+         codepoint == 0xFE0F || (codepoint >= 0x1F3FB && codepoint <= 0x1F3FF) ||
+         (codepoint >= 0xE0100 && codepoint <= 0xE01EF);
+}
+
+String normalizeEmojiDisplayText(const String& raw) {
+  String out;
+  out.reserve(raw.length());
+  int i = 0;
+  while (i < raw.length()) {
+    uint32_t codepoint = 0;
+    int consumed = 1;
+    bool ok = decodeUtf8At(raw, i, codepoint, consumed);
+    if (ok && shouldSuppressEmojiModifier(codepoint)) {
+      i += consumed;
+      continue;
+    }
+    for (int n = 0; n < consumed && i + n < raw.length(); ++n) {
+      out += raw[i + n];
+    }
+    i += consumed;
+  }
+  return out;
+}
+
 std::vector<VisualLine> buildVisualLines(int32_t pixelLimit) {
   std::vector<VisualLine> lines;
   for (const auto& entry : gChatLines) {
-    String full = entry.prefix + ": " + entry.text;
+    String full = entry.prefix + ": " + normalizeEmojiDisplayText(entry.text);
     auto wrapped = wrapText(full, pixelLimit);
     for (const auto& part : wrapped) {
       lines.push_back({part, entry.kind});
@@ -1368,6 +1444,150 @@ uint64_t activeStorageUsedBytes() {
     return LittleFS.usedBytes();
   }
   return 0;
+}
+
+bool isEmojiAssetCodepoint(uint32_t codepoint) {
+  return codepoint == 0x00A9 || codepoint == 0x00AE || codepoint == 0x203C ||
+         codepoint == 0x2049 || codepoint == 0x2122 || codepoint == 0x2139 ||
+         (codepoint >= 0x2194 && codepoint <= 0x21AA) ||
+         (codepoint >= 0x2300 && codepoint <= 0x23FF) ||
+         (codepoint >= 0x2460 && codepoint <= 0x27BF) ||
+         (codepoint >= 0x2900 && codepoint <= 0x2BFF) ||
+         (codepoint >= 0x3000 && codepoint <= 0x32FF) ||
+         (codepoint >= 0x1F000 && codepoint <= 0x1FAFF) ||
+         (codepoint >= 0xFE000 && codepoint <= 0xFFFFD);
+}
+
+void releaseEmojiCacheEntry(EmojiCacheEntry& entry) {
+  if (entry.data) {
+    free(entry.data);
+  }
+  entry = EmojiCacheEntry{};
+}
+
+void clearEmojiCache() {
+  for (uint8_t i = 0; i < gEmojiCacheSize; ++i) {
+    releaseEmojiCacheEntry(gEmojiCache[i]);
+  }
+  gEmojiCacheSize = 0;
+}
+
+const EmojiCacheEntry* rememberEmojiEntry(const EmojiCacheEntry& entry) {
+  if (gEmojiCacheSize < kEmojiCacheCap) {
+    gEmojiCache[gEmojiCacheSize] = entry;
+    return &gEmojiCache[gEmojiCacheSize++];
+  }
+  releaseEmojiCacheEntry(gEmojiCache[0]);
+  memmove(&gEmojiCache[0], &gEmojiCache[1], sizeof(gEmojiCache[0]) * (kEmojiCacheCap - 1));
+  gEmojiCache[kEmojiCacheCap - 1] = entry;
+  return &gEmojiCache[kEmojiCacheCap - 1];
+}
+
+const EmojiCacheEntry* emojiCacheLookup(uint32_t codepoint) {
+  for (uint8_t i = 0; i < gEmojiCacheSize; ++i) {
+    if (gEmojiCache[i].codepoint == codepoint) {
+      return &gEmojiCache[i];
+    }
+  }
+
+  EmojiCacheEntry entry;
+  entry.codepoint = codepoint;
+  if (!gSdReady || !isEmojiAssetCodepoint(codepoint)) {
+    return rememberEmojiEntry(entry);
+  }
+
+  char path[40];
+  snprintf(path, sizeof(path), "%s/u%lX.png", kEmojiDir, static_cast<unsigned long>(codepoint));
+  File file = SD.open(path, "r");
+  if (!file) {
+    snprintf(path, sizeof(path), "%s/u%lx.png", kEmojiDir, static_cast<unsigned long>(codepoint));
+    file = SD.open(path, "r");
+  }
+  if (!file) {
+    return rememberEmojiEntry(entry);
+  }
+
+  size_t size = file.size();
+  if (size > 24 && size <= kEmojiMaxPngBytes) {
+    uint8_t* data = static_cast<uint8_t*>(malloc(size));
+    if (data && file.read(data, size) == size &&
+        memcmp(data, "\x89PNG\r\n\x1A\n", 8) == 0) {
+      uint32_t width = (static_cast<uint32_t>(data[16]) << 24) |
+                       (static_cast<uint32_t>(data[17]) << 16) |
+                       (static_cast<uint32_t>(data[18]) << 8) | data[19];
+      uint32_t height = (static_cast<uint32_t>(data[20]) << 24) |
+                        (static_cast<uint32_t>(data[21]) << 16) |
+                        (static_cast<uint32_t>(data[22]) << 8) | data[23];
+      if (width > 0 && width <= 240 && height > 0 && height <= 240) {
+        entry.data = data;
+        entry.len = static_cast<uint32_t>(size);
+        entry.width = static_cast<int16_t>(width);
+        entry.height = static_cast<int16_t>(height);
+        data = nullptr;
+      }
+    }
+    if (data) {
+      free(data);
+    }
+  }
+  file.close();
+  return rememberEmojiEntry(entry);
+}
+
+int32_t drawEmojiFromSd(lgfx::LGFXBase* gfx, int32_t x, int32_t y, uint32_t codepoint,
+                        int32_t fontHeight) {
+  const EmojiCacheEntry* entry = emojiCacheLookup(codepoint);
+  if (!gfx || !entry || !entry->data || entry->height <= 0 || fontHeight <= 0) {
+    return 0;
+  }
+
+  float scale = static_cast<float>(fontHeight) / static_cast<float>(entry->height);
+  int32_t drawY = y - static_cast<int32_t>((fontHeight * 90) / 100);
+  if (!gfx->drawPng(entry->data, entry->len, x, drawY, 0, 0, 0, 0, scale, 0)) {
+    return 0;
+  }
+  return max<int32_t>(1, static_cast<int32_t>(entry->width * scale));
+}
+
+void configureEmojiRendering() {
+  M5Cardputer.Display.setEmojiCallback(drawEmojiFromSd);
+  gCanvas.setEmojiCallback(drawEmojiFromSd);
+}
+
+void scanEmojiAssets() {
+  gEmojiAssetCount = 0;
+  clearEmojiCache();
+  if (!gSdReady) {
+    logf("[EMOJI] SD not mounted; emoji assets disabled");
+    return;
+  }
+  File dir = SD.open(kEmojiDir);
+  if (!dir || !dir.isDirectory()) {
+    if (dir) {
+      dir.close();
+    }
+    logf("[EMOJI] missing %s on SD", kEmojiDir);
+    return;
+  }
+
+  uint64_t totalBytes = 0;
+  while (true) {
+    File file = dir.openNextFile();
+    if (!file) {
+      break;
+    }
+    String path = file.path();
+    path.toLowerCase();
+    if (!file.isDirectory() && path.endsWith(".png")) {
+      ++gEmojiAssetCount;
+      totalBytes += file.size();
+    }
+    file.close();
+  }
+  dir.close();
+  logf("[EMOJI] SD assets count=%u bytes=%llu",
+       static_cast<unsigned>(gEmojiAssetCount),
+       static_cast<unsigned long long>(totalBytes));
 }
 
 String bytesToHex(const uint8_t* bytes, size_t len) {
@@ -3443,6 +3663,7 @@ void initStorage() {
     logf("[SD] not mounted; using LittleFS fallback");
   }
 
+  scanEmojiAssets();
   gStorageReady = gSdReady || gLittleFsReady;
   gStorageLabel = activeVoiceStorageLabel();
   if (!gStorageReady) {
@@ -3459,6 +3680,9 @@ void initStorage() {
   loadOtaManifestSummary();
   loadConversationContexts();
   pushSystem("Storage: " + gStorageLabel);
+  if (gEmojiAssetCount > 0) {
+    pushSystem("Emoji SD: " + String(gEmojiAssetCount));
+  }
 }
 
 void startMic() {
@@ -7599,6 +7823,7 @@ void setup() {
   gCanvas.setTextWrap(false);
   gCanvas.setFont(&fonts::Font2);
   gCanvas.setTextSize(1);
+  configureEmojiRendering();
 
   initSpeaker();
   initStorage();

@@ -82,3 +82,10 @@ Type these on the Cardputer and press `Enter`:
 3. Release the trigger
 4. The hub transcribes speech with OpenAI, generates a reply, and streams PCM back
 5. The Cardputer shows transcript + reply and plays the spoken answer through its speaker
+
+## Emoji SD Pack
+
+The firmware renders color emoji from the SD card only. Put PNG assets under
+`/emoji/uHEX.png` on the card root, for example `/emoji/u1F600.png`.
+
+See `docs/emoji-sd-handoff.md` for the transfer handoff.
