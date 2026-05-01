@@ -39,7 +39,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.11-dev"
+#define APP_VERSION "0.2.14-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -148,10 +148,13 @@ constexpr size_t kMaxAudioAssets = 96;
 constexpr size_t kMaxRuntimeLogLines = 36;
 constexpr size_t kMaxContexts = 32;
 constexpr size_t kMaxContextPreviewLines = 5;
+constexpr size_t kMaxNotes = 128;
+constexpr size_t kMaxNoteInputChars = 512;
 constexpr size_t kVoicePreviewLineThreshold = 5;
 constexpr const char* kVoiceDir = "/voice";
 constexpr const char* kVoiceMetaExt = ".json";
 constexpr const char* kVoiceAudioExt = ".wav";
+constexpr const char* kNotesDir = "/notes";
 constexpr const char* kPomodoroDir = "/pomodoro";
 constexpr const char* kPomodoroAudioDir = "/pomodoro/audio";
 constexpr const char* kSdAudioDir = "/audio";
@@ -375,6 +378,7 @@ enum class UiMode : uint8_t {
   Focus,
   Library,
   AudioFolders,
+  Notes,
   Assets,
   Ota,
   Contexts,
@@ -465,6 +469,53 @@ enum class AssistantPulseState : uint8_t {
   Playback,
 };
 
+enum class NotesMode : uint8_t {
+  List,
+  View,
+  Edit,
+};
+
+struct DeviceActionCatalogEntry {
+  const char* type;
+  const char* label;
+  const char* example;
+};
+
+constexpr const char* kDeviceActionCatalogVersion = "2026-05-01.2";
+constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
+    {"focus.start", "start focus", "set pomodoro to 45 minutes"},
+    {"focus.pause", "pause focus", "pause focus"},
+    {"focus.resume", "resume focus", "resume focus"},
+    {"focus.reset", "reset focus", "reset pomodoro"},
+    {"focus.set_duration", "focus length", "make focus 45 minutes"},
+    {"focus.set_short_break", "short break", "short break 10 minutes"},
+    {"focus.set_long_break", "long break", "long break 20 minutes"},
+    {"focus.set_cycles", "cycles", "set cycles to 4"},
+    {"focus.set_autostart", "auto start", "turn focus autostart on"},
+    {"focus.set_metronome", "metronome", "turn metronome off"},
+    {"focus.set_bpm", "bpm", "set bpm to 80"},
+    {"ui.open", "open screen", "open battery"},
+    {"audio.play", "play library", "play nutrition plan"},
+    {"voice.play", "play voice note", "play last voice note"},
+    {"settings.set_audio_language", "audio lang", "set language to russian"},
+    {"settings.set_ota_auto", "OTA auto", "turn auto updates on"},
+    {"settings.set_ota_boot_check", "OTA boot", "check updates on boot"},
+    {"settings.set_ota_min_battery", "OTA battery", "update above 50 percent"},
+    {"topic.next", "next topic", "next topic"},
+    {"topic.prev", "prev topic", "previous topic"},
+    {"topic.open", "open topic", "open project topic"},
+    {"pet.feed", "pet food", "feed the OpenClaw pet"},
+    {"pet.play", "pet play", "play with the pet"},
+    {"pet.clean", "pet clean", "clean the pet"},
+    {"pet.sleep", "pet sleep", "put the pet to sleep"},
+    {"pet.medicine", "pet medicine", "heal the sick pet"},
+    {"pet.discipline", "pet discipline", "discipline the pet"},
+    {"pet.hunt", "pet hunt", "send the pet hunting Wi-Fi"},
+    {"pet.explore", "pet explore", "let the pet explore"},
+    {"pet.reset", "pet reset", "reset the pet"},
+};
+constexpr size_t kDeviceActionCatalogCount = sizeof(kDeviceActionCatalog) / sizeof(kDeviceActionCatalog[0]);
+
 struct ChatLine {
   String prefix;
   String text;
@@ -485,6 +536,13 @@ struct VoiceNote {
   uint32_t sampleRate = 16000;
   uint32_t durationMs = 0;
   bool assistant = false;
+};
+
+struct NoteFile {
+  String name;
+  String path;
+  uint32_t size = 0;
+  uint32_t lineCount = 0;
 };
 
 struct AudioAsset {
@@ -694,8 +752,8 @@ struct EmojiCacheEntry {
 constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
     {"Assistant", "AI", "Voice, face, pet", rgb565_local(47, 227, 255), 4,
      {{"Pulse", UiMode::Home}, {"Big Eyes", UiMode::Face}, {"OpenClaw Pet", UiMode::Hero}, {"Chat Eyes", UiMode::ChatFace}}},
-    {"Chat", "CH", "Chat in active topic", rgb565_local(88, 210, 255), 2,
-     {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}}},
+    {"Chat", "CH", "Chat, topics, notes", rgb565_local(88, 210, 255), 3,
+     {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}, {"Notes", UiMode::Notes}}},
     {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
      {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice}, {"Assets", UiMode::Assets}}},
     {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 1,
@@ -724,6 +782,7 @@ std::deque<ChatLine> gChatLines;
 String gInputBuffer;
 String gStatusText = "Booting";
 std::vector<VoiceNote> gVoiceNotes;
+std::vector<NoteFile> gNotes;
 std::vector<AudioAsset> gAudioAssets;
 std::vector<AudioFolder> gAudioFolders;
 std::vector<ConversationContext> gContexts;
@@ -749,11 +808,15 @@ bool gLittleFsReady = false;
 bool gSdReady = false;
 bool gLauncherVisible = false;
 bool gAssistantPendingVisible = false;
+bool gNotesScanned = false;
 int gChatScrollOffset = 0;
 int gLauncherSelection = 0;
 int gLauncherSubSelection = 0;
 uint8_t gLauncherLastSub[kLauncherGroupCount] = {};
 int gSelectedVoiceNote = 0;
+int gSelectedNote = 0;
+int gNoteScrollOffset = 0;
+int gNoteListScrollOffset = 0;
 int gSelectedAudioAsset = 0;
 int gSelectedAudioFolder = 0;
 String gAudioFolderFilter;
@@ -806,6 +869,10 @@ uint8_t gSpeakerVolume = 255;
 String gLastVoiceDiag = "boot";
 String gLastHttpDiag = "boot";
 String gLastKeyDiag = "-";
+String gNoteInputBuffer;
+String gActiveNotePath;
+String gActiveNoteName;
+String gNotesStatus = "Ready";
 String gStorageLabel = "off";
 String gLastKeySignature;
 EmojiCacheEntry gEmojiCache[kEmojiCacheCap];
@@ -848,6 +915,7 @@ FocusRuntime gFocus;
 PetRuntime gPet;
 AssetManifestSummary gAssetManifest;
 OtaManifestSummary gOtaManifest;
+NotesMode gNotesMode = NotesMode::List;
 bool gOtaPendingVerify = false;
 bool gOtaConfirmedThisBoot = false;
 uint32_t gOtaVerifyStartMs = 0;
@@ -925,6 +993,8 @@ const char* clockFaceName(uint8_t face);
 void loadAssetManifestSummary();
 void loadOtaManifestSummary();
 void loadConversationContexts();
+void scanNotes();
+bool handleNotesKey(char key, const Keyboard_Class::KeysState& keys);
 String currentConversationKey();
 bool fetchRemoteTopicCatalog();
 bool fetchSelectedTopicHistory();
@@ -1183,6 +1253,8 @@ const char* uiModeName(UiMode mode) {
       return "Library";
     case UiMode::AudioFolders:
       return "Folders";
+    case UiMode::Notes:
+      return "Notes";
     case UiMode::Assets:
       return "Assets";
     case UiMode::Ota:
@@ -2064,6 +2136,38 @@ bool ensureVoiceStorage() {
   return ensureVoiceStorageOn(*fs);
 }
 
+fs::FS* activeNotesFs() {
+  if (gSdReady) {
+    return &SD;
+  }
+  if (gLittleFsReady) {
+    return &LittleFS;
+  }
+  return nullptr;
+}
+
+String activeNotesStorageLabel() {
+  if (gSdReady) {
+    return "SD";
+  }
+  if (gLittleFsReady) {
+    return "FLASH";
+  }
+  return "OFF";
+}
+
+bool ensureNotesStorageOn(fs::FS& fs) {
+  return ensureDirRecursive(fs, kNotesDir);
+}
+
+bool ensureNotesStorage() {
+  fs::FS* fs = activeNotesFs();
+  if (!fs) {
+    return false;
+  }
+  return ensureNotesStorageOn(*fs);
+}
+
 bool ensurePomodoroStorageOn(fs::FS& fs) {
   if (!fsExists(fs, kPomodoroDir) && !fs.mkdir(kPomodoroDir)) {
     return false;
@@ -2095,6 +2199,203 @@ uint64_t activeStorageUsedBytes() {
     return LittleFS.usedBytes();
   }
   return 0;
+}
+
+bool isNoteFileName(const String& name) {
+  String lower = name;
+  lower.toLowerCase();
+  return lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".note");
+}
+
+String basenameOfPath(const String& path) {
+  int slash = path.lastIndexOf('/');
+  return slash >= 0 ? path.substring(slash + 1) : path;
+}
+
+String sanitizeNoteTitle(String value) {
+  value.trim();
+  value.toLowerCase();
+  String out;
+  out.reserve(32);
+  for (int i = 0; i < value.length() && out.length() < 28; ++i) {
+    char c = value[i];
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      out += c;
+    } else if ((c == ' ' || c == '-' || c == '_' || c == '.') && !out.endsWith("-")) {
+      out += '-';
+    }
+  }
+  while (out.endsWith("-")) {
+    out.remove(out.length() - 1);
+  }
+  return out.isEmpty() ? "note" : out;
+}
+
+String makeNoteFileName(const String& titleHint = "") {
+  String stem = sanitizeNoteTitle(titleHint);
+  char stamp[24];
+  if (hasValidSystemTime()) {
+    time_t now = time(nullptr);
+    struct tm localNow;
+    localtime_r(&now, &localNow);
+    strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &localNow);
+  } else {
+    snprintf(stamp, sizeof(stamp), "%lu", static_cast<unsigned long>(millis() / 1000UL));
+  }
+  return stem + "-" + String(stamp) + ".md";
+}
+
+uint32_t countNoteLines(fs::FS& fs, const String& path) {
+  File file = fs.open(path, "r");
+  if (!file) {
+    return 0;
+  }
+  uint32_t lines = 0;
+  bool hasChars = false;
+  while (file.available()) {
+    char c = static_cast<char>(file.read());
+    hasChars = true;
+    if (c == '\n') {
+      ++lines;
+    }
+  }
+  file.close();
+  return lines + (hasChars ? 1 : 0);
+}
+
+void clampNoteSelection() {
+  if (gNotes.empty()) {
+    gSelectedNote = 0;
+    gNoteListScrollOffset = 0;
+    return;
+  }
+  gSelectedNote = clampValue<int>(gSelectedNote, 0, static_cast<int>(gNotes.size()) - 1);
+}
+
+void scanNotes() {
+  gNotes.clear();
+  fs::FS* fs = activeNotesFs();
+  if (!fs || !ensureNotesStorage()) {
+    gNotesStatus = "Storage unavailable";
+    gNotesScanned = true;
+    return;
+  }
+  File dir = fs->open(kNotesDir);
+  if (!dir || !dir.isDirectory()) {
+    gNotesStatus = "Notes dir unavailable";
+    gNotesScanned = true;
+    return;
+  }
+  while (gNotes.size() < kMaxNotes) {
+    File file = dir.openNextFile();
+    if (!file) {
+      break;
+    }
+    if (!file.isDirectory()) {
+      String path = file.name();
+      if (!path.startsWith("/")) {
+        path = String(kNotesDir) + "/" + path;
+      }
+      String name = basenameOfPath(path);
+      if (isNoteFileName(name)) {
+        NoteFile note;
+        note.name = name;
+        note.path = path;
+        note.size = static_cast<uint32_t>(file.size());
+        note.lineCount = countNoteLines(*fs, path);
+        gNotes.push_back(note);
+      }
+    }
+    file.close();
+  }
+  dir.close();
+  std::sort(gNotes.begin(), gNotes.end(), [](const NoteFile& a, const NoteFile& b) {
+    return a.name > b.name;
+  });
+  clampNoteSelection();
+  gNotesStatus = String(gNotes.size()) + " notes on " + activeNotesStorageLabel();
+  gNotesScanned = true;
+}
+
+bool createNewNote(const String& titleHint = "") {
+  fs::FS* fs = activeNotesFs();
+  if (!fs || !ensureNotesStorage()) {
+    gNotesStatus = "Storage unavailable";
+    setStatus("Notes storage unavailable", 1200);
+    return false;
+  }
+  String name = makeNoteFileName(titleHint);
+  String path = String(kNotesDir) + "/" + name;
+  int suffix = 2;
+  while (fsExists(*fs, path) && suffix < 50) {
+    name = makeNoteFileName(titleHint);
+    name.replace(".md", "-" + String(suffix++) + ".md");
+    path = String(kNotesDir) + "/" + name;
+  }
+  File file = fs->open(path, "w");
+  if (!file) {
+    gNotesStatus = "Create failed";
+    setStatus("Note create failed", 1200);
+    return false;
+  }
+  file.println(String("# ") + name);
+  file.println();
+  file.close();
+  gActiveNotePath = path;
+  gActiveNoteName = name;
+  gNoteInputBuffer = "";
+  gNoteScrollOffset = 0;
+  gNotesMode = NotesMode::Edit;
+  scanNotes();
+  for (int i = 0; i < static_cast<int>(gNotes.size()); ++i) {
+    if (gNotes[i].path == path) {
+      gSelectedNote = i;
+      break;
+    }
+  }
+  gNotesStatus = "Editing new note";
+  setStatus("New note", 900);
+  return true;
+}
+
+bool openSelectedNote(NotesMode mode) {
+  if (gNotes.empty()) {
+    return createNewNote();
+  }
+  clampNoteSelection();
+  gActiveNotePath = gNotes[gSelectedNote].path;
+  gActiveNoteName = gNotes[gSelectedNote].name;
+  gNoteScrollOffset = 0;
+  gNoteInputBuffer = "";
+  gNotesMode = mode;
+  gNotesStatus = mode == NotesMode::Edit ? "Append mode" : "Viewing";
+  return true;
+}
+
+bool appendLineToActiveNote(const String& line) {
+  fs::FS* fs = activeNotesFs();
+  if (!fs || gActiveNotePath.isEmpty()) {
+    gNotesStatus = "No note open";
+    return false;
+  }
+  File file = fs->open(gActiveNotePath, "a");
+  if (!file) {
+    gNotesStatus = "Save failed";
+    setStatus("Note save failed", 1200);
+    return false;
+  }
+  file.println(line);
+  file.close();
+  gNotesStatus = "Saved line";
+  setStatus("Note saved", 700);
+  scanNotes();
+  for (int i = 0; i < static_cast<int>(gNotes.size()); ++i) {
+    if (gNotes[i].path == gActiveNotePath) {
+      gSelectedNote = i;
+      break;
+    }
+  }
+  return true;
 }
 
 bool isEmojiAssetCodepoint(uint32_t codepoint) {
@@ -3907,7 +4208,8 @@ bool mapActionUiMode(String mode, UiMode& out) {
     out = UiMode::ChatFull;
   } else if (mode == "face" || mode == "eyes") {
     out = UiMode::Face;
-  } else if (mode == "hero") {
+  } else if (mode == "hero" || mode == "pet" || mode == "tama" ||
+             mode == "tamagotchi" || mode == "companion") {
     out = UiMode::Hero;
   } else if (mode == "voice") {
     out = UiMode::Voice;
@@ -3915,6 +4217,8 @@ bool mapActionUiMode(String mode, UiMode& out) {
     out = UiMode::Library;
   } else if (mode == "folders") {
     out = UiMode::AudioFolders;
+  } else if (mode == "notes" || mode == "note" || mode == "notepad") {
+    out = UiMode::Notes;
   } else if (mode == "assets") {
     out = UiMode::Assets;
   } else if (mode == "focus") {
@@ -4068,10 +4372,71 @@ bool openTopicByAction(JsonObjectConst action) {
   return true;
 }
 
+String normalizePetActionText(String value) {
+  value.trim();
+  value.toLowerCase();
+  value.replace("-", ".");
+  value.replace("_", ".");
+  if (value.startsWith("pet.")) {
+    value = value.substring(4);
+  } else if (value.startsWith("tama.")) {
+    value = value.substring(5);
+  } else if (value.startsWith("tamagotchi.")) {
+    value = value.substring(11);
+  }
+  return value;
+}
+
+bool executePetActionByName(String actionName) {
+  String op = normalizePetActionText(actionName);
+  bool executed = false;
+  if (op == "open" || op == "status" || op == "show") {
+    executed = true;
+    setStatus("Pet screen", 900);
+  } else if (op == "feed" || op == "food" || op == "eat") {
+    executed = applyPetCare(PetCareAction::Feed);
+  } else if (op == "play" || op == "fun") {
+    executed = applyPetCare(PetCareAction::Play);
+  } else if (op == "clean" || op == "wash" || op == "bath") {
+    executed = applyPetCare(PetCareAction::Clean);
+  } else if (op == "sleep" || op == "rest") {
+    executed = applyPetCare(PetCareAction::Sleep);
+  } else if (op == "medicine" || op == "heal" || op == "doctor") {
+    executed = applyPetCare(PetCareAction::Medicine);
+  } else if (op == "discipline" || op == "train" || op == "scold") {
+    executed = applyPetCare(PetCareAction::Discipline);
+  } else if (op == "hunt" || op == "wifi" || op == "forage") {
+    executed = applyPetCare(PetCareAction::Hunt);
+  } else if (op == "explore" || op == "scan") {
+    executed = applyPetCare(PetCareAction::Explore);
+  } else if (op == "reset" || op == "new") {
+    resetPet(true);
+    executed = true;
+  }
+  if (executed) {
+    setUiMode(UiMode::Hero);
+  }
+  return executed;
+}
+
 bool executeDeviceAction(JsonObjectConst action) {
   String type = normalizeActionText(action["type"] | "");
   if (type.isEmpty()) {
     return false;
+  }
+
+  String petType = type;
+  petType.replace("_", ".");
+  if (petType == "pet.care" || petType == "tama.care" || petType == "tamagotchi.care") {
+    String care = action["action"] | "";
+    if (care.isEmpty()) {
+      care = action["value"] | "";
+    }
+    return executePetActionByName(care);
+  }
+  if (petType == "pet" || petType == "tama" || petType == "tamagotchi" ||
+      petType.startsWith("pet.") || petType.startsWith("tama.") || petType.startsWith("tamagotchi.")) {
+    return executePetActionByName(petType);
   }
 
   if (type == "focus.set_duration" || type == "focus.start") {
@@ -4278,6 +4643,8 @@ void setUiMode(UiMode mode) {
     if (needCatalog || needHistory) {
       startTopicTask(needCatalog, false, true, needCatalog ? "Syncing topics..." : "Loading history...");
     }
+  } else if (mode == UiMode::Notes && !gNotesScanned) {
+    scanNotes();
   }
 }
 
@@ -5172,6 +5539,807 @@ void serviceFocusMetronome() {
   uint32_t beatMs = 60000UL / max<uint16_t>(1, gFocusSettings.bpm);
   gFocus.nextMetronomeMs = now + beatMs;
   focusTone(660, 35);
+}
+
+uint8_t petClampStat(int value) {
+  return static_cast<uint8_t>(clampValue<int>(value, 0, 100));
+}
+
+uint32_t petEpochNow() {
+  if (!hasValidSystemTime()) {
+    return 0;
+  }
+  time_t now = time(nullptr);
+  return now > 0 ? static_cast<uint32_t>(now) : 0;
+}
+
+const char* petStageName(PetStage stage) {
+  switch (stage) {
+    case PetStage::Egg:
+      return "EGG";
+    case PetStage::Baby:
+      return "BABY";
+    case PetStage::Teen:
+      return "TEEN";
+    case PetStage::Adult:
+      return "ADULT";
+    case PetStage::Elder:
+    default:
+      return "ELDER";
+  }
+}
+
+const char* petMoodName(PetMood mood) {
+  switch (mood) {
+    case PetMood::Happy:
+      return "HAPPY";
+    case PetMood::Hungry:
+      return "HUNGRY";
+    case PetMood::Bored:
+      return "BORED";
+    case PetMood::Curious:
+      return "CURIOUS";
+    case PetMood::Sick:
+      return "SICK";
+    case PetMood::Excited:
+      return "EXCITED";
+    case PetMood::Sleepy:
+      return "SLEEPY";
+    case PetMood::Dirty:
+      return "DIRTY";
+    case PetMood::Dead:
+      return "DEAD";
+    case PetMood::Calm:
+    default:
+      return "CALM";
+  }
+}
+
+const char* petActivityName(PetActivity activity) {
+  switch (activity) {
+    case PetActivity::Eating:
+      return "EATING";
+    case PetActivity::Playing:
+      return "PLAY";
+    case PetActivity::Cleaning:
+      return "CLEAN";
+    case PetActivity::Sleeping:
+      return "SLEEP";
+    case PetActivity::Hunting:
+      return "HUNT";
+    case PetActivity::Exploring:
+      return "EXPLORE";
+    case PetActivity::Medicine:
+      return "MED";
+    case PetActivity::Discipline:
+      return "DISC";
+    case PetActivity::Evolving:
+      return "EVOLVE";
+    case PetActivity::Dead:
+      return "DEAD";
+    case PetActivity::Idle:
+    default:
+      return "IDLE";
+  }
+}
+
+String petAgeText() {
+  uint32_t days = gPet.ageMinutes / 1440UL;
+  uint32_t hours = (gPet.ageMinutes / 60UL) % 24UL;
+  uint32_t minutes = gPet.ageMinutes % 60UL;
+  if (days > 0) {
+    return String(days) + "d " + String(hours) + "h";
+  }
+  if (hours > 0) {
+    return String(hours) + "h " + String(minutes) + "m";
+  }
+  return String(minutes) + "m";
+}
+
+uint8_t petCareAverage() {
+  return static_cast<uint8_t>((gPet.hunger + gPet.happiness + gPet.health +
+                               gPet.energy + gPet.cleanliness + gPet.discipline) / 6);
+}
+
+void petSetDefaults(bool fullReset) {
+  uint32_t keepAge = fullReset ? 0 : gPet.ageMinutes;
+  uint32_t keepBorn = fullReset ? petEpochNow() : gPet.bornEpoch;
+  gPet = PetRuntime();
+  gPet.hunger = 70;
+  gPet.happiness = 70;
+  gPet.health = 75;
+  gPet.energy = 80;
+  gPet.cleanliness = 80;
+  gPet.discipline = 45;
+  gPet.traitCuriosity = static_cast<uint8_t>(random(45, 91));
+  gPet.traitActivity = static_cast<uint8_t>(random(35, 86));
+  gPet.traitStress = static_cast<uint8_t>(random(20, 76));
+  gPet.ageMinutes = keepAge;
+  gPet.bornEpoch = keepBorn;
+  gPet.lastSavedEpoch = petEpochNow();
+  gPet.lastTickMs = millis();
+  gPet.lastMinuteMs = millis();
+  gPet.lastSaveMs = 0;
+  gPet.nextDecisionMs = static_cast<uint32_t>(random(kPetDecisionMinMs, kPetDecisionMaxMs));
+  gPet.stage = gPet.ageMinutes < 3 ? PetStage::Egg : PetStage::Baby;
+  gPet.mood = PetMood::Calm;
+  gPet.activity = PetActivity::Idle;
+}
+
+void savePetState(bool force) {
+  uint32_t nowMs = millis();
+  if (!force && nowMs - gPet.lastSaveMs < kPetAutoSaveMs) {
+    return;
+  }
+  uint32_t nowEpoch = petEpochNow();
+  gPrefs.begin(kPrefsPetNs, false);
+  gPrefs.putUChar("magic", 0xC1);
+  gPrefs.putUChar("hun", gPet.hunger);
+  gPrefs.putUChar("hap", gPet.happiness);
+  gPrefs.putUChar("hea", gPet.health);
+  gPrefs.putUChar("ene", gPet.energy);
+  gPrefs.putUChar("cln", gPet.cleanliness);
+  gPrefs.putUChar("disc", gPet.discipline);
+  gPrefs.putUChar("poop", gPet.poop);
+  gPrefs.putUChar("mist", gPet.careMistakes);
+  gPrefs.putUChar("cur", gPet.traitCuriosity);
+  gPrefs.putUChar("act", gPet.traitActivity);
+  gPrefs.putUChar("str", gPet.traitStress);
+  gPrefs.putUInt("age", gPet.ageMinutes);
+  gPrefs.putUInt("born", gPet.bornEpoch);
+  gPrefs.putUInt("epoch", nowEpoch);
+  gPrefs.putBool("alive", gPet.alive);
+  gPrefs.putBool("sick", gPet.sick);
+  gPrefs.putUChar("stage", static_cast<uint8_t>(gPet.stage));
+  gPrefs.end();
+  gPet.lastSavedEpoch = nowEpoch;
+  gPet.lastSaveMs = nowMs;
+}
+
+void updatePetMood() {
+  if (!gPet.alive) {
+    gPet.mood = PetMood::Dead;
+    gPet.activity = PetActivity::Dead;
+    return;
+  }
+  if (gPet.activity == PetActivity::Sleeping) {
+    gPet.mood = PetMood::Sleepy;
+    return;
+  }
+  if (gPet.sick || gPet.health < 28) {
+    gPet.mood = PetMood::Sick;
+    return;
+  }
+  if (gPet.hunger < 25) {
+    gPet.mood = PetMood::Hungry;
+    return;
+  }
+  if (gPet.cleanliness < 25 || gPet.poop >= 4) {
+    gPet.mood = PetMood::Dirty;
+    return;
+  }
+  if (gPet.energy < 18) {
+    gPet.mood = PetMood::Sleepy;
+    return;
+  }
+  if (gPet.happiness < 30) {
+    gPet.mood = PetMood::Bored;
+    return;
+  }
+  if (gPet.env.hiddenCount > 0 || gPet.env.openCount > 0) {
+    gPet.mood = PetMood::Curious;
+    return;
+  }
+  uint8_t avg = petCareAverage();
+  if (avg > 82 && gPet.env.netCount > 3) {
+    gPet.mood = PetMood::Excited;
+  } else if (avg > 64) {
+    gPet.mood = PetMood::Happy;
+  } else {
+    gPet.mood = PetMood::Calm;
+  }
+}
+
+void maybePetDeath() {
+  if (!gPet.alive) {
+    return;
+  }
+  bool collapse = gPet.health == 0 ||
+                  (gPet.hunger == 0 && gPet.energy == 0 && gPet.cleanliness < 15) ||
+                  gPet.careMistakes >= 20;
+  if (!collapse) {
+    return;
+  }
+  gPet.alive = false;
+  gPet.sick = false;
+  gPet.activity = PetActivity::Dead;
+  gPet.mood = PetMood::Dead;
+  gPet.restPhase = PetRestPhase::None;
+  setStatus("Pet lost. /petreset", 2500);
+  appendRuntimeLog("PET", "dead age=" + String(gPet.ageMinutes) +
+                          " mistakes=" + String(gPet.careMistakes), true);
+  savePetState(true);
+}
+
+void updatePetEvolution() {
+  if (!gPet.alive || gPet.activity == PetActivity::Dead) {
+    return;
+  }
+  PetStage target = gPet.stage;
+  uint8_t avg = petCareAverage();
+  if (gPet.ageMinutes >= 360 && avg >= 42) {
+    target = PetStage::Elder;
+  } else if (gPet.ageMinutes >= 120 && avg >= 40) {
+    target = PetStage::Adult;
+  } else if (gPet.ageMinutes >= 30 && avg >= 35) {
+    target = PetStage::Teen;
+  } else if (gPet.ageMinutes >= 3) {
+    target = PetStage::Baby;
+  } else {
+    target = PetStage::Egg;
+  }
+  if (static_cast<uint8_t>(target) <= static_cast<uint8_t>(gPet.stage)) {
+    return;
+  }
+  gPet.stage = target;
+  gPet.activity = PetActivity::Evolving;
+  gPet.actionUntilMs = millis() + 4500;
+  setStatus(String("Pet evolved: ") + petStageName(target), 1600);
+  focusTone(1568, 120);
+  appendRuntimeLog("PET", String("evolved ") + petStageName(target), true);
+  savePetState(true);
+}
+
+void applyPetElapsedMinute(bool offline) {
+  if (!gPet.alive) {
+    return;
+  }
+  ++gPet.ageMinutes;
+
+  bool sleeping = gPet.activity == PetActivity::Sleeping;
+  if (sleeping) {
+    gPet.hunger = petClampStat(gPet.hunger - 1);
+    gPet.happiness = petClampStat(gPet.happiness - 1);
+    gPet.energy = petClampStat(gPet.energy + 8);
+    gPet.cleanliness = petClampStat(gPet.cleanliness - 1);
+    if (gPet.hunger > 20 && gPet.cleanliness > 25) {
+      gPet.health = petClampStat(gPet.health + 2);
+    }
+  } else {
+    uint8_t happyDrain = (gPet.env.lastScanMs == 0 || millis() - gPet.env.lastScanMs > 180000) ? 2 : 1;
+    gPet.hunger = petClampStat(gPet.hunger - 2);
+    gPet.happiness = petClampStat(gPet.happiness - happyDrain);
+    gPet.energy = petClampStat(gPet.energy - 1);
+    gPet.cleanliness = petClampStat(gPet.cleanliness - 1);
+  }
+
+  if ((gPet.ageMinutes % 9UL) == 0 && gPet.poop < kPetMaxPoop) {
+    uint8_t chance = offline ? 25 : static_cast<uint8_t>(12 + max<int>(0, gPet.hunger - 65) / 3);
+    if (random(0, 100) < chance) {
+      ++gPet.poop;
+      gPet.cleanliness = petClampStat(gPet.cleanliness - 10);
+    }
+  }
+  if ((gPet.ageMinutes % 10UL) == 0 && gPet.discipline > 0) {
+    gPet.discipline = petClampStat(gPet.discipline - 1);
+  }
+
+  if (gPet.hunger < 18 || gPet.cleanliness < 18 || gPet.poop >= 4) {
+    gPet.health = petClampStat(gPet.health - 3);
+  } else if (gPet.happiness < 18 || gPet.energy < 10) {
+    gPet.health = petClampStat(gPet.health - 1);
+  } else if (!sleeping && gPet.health < 92 && gPet.hunger > 55 && gPet.cleanliness > 55) {
+    gPet.health = petClampStat(gPet.health + 1);
+  }
+
+  if (gPet.health < 25) {
+    gPet.sick = true;
+  }
+  if (gPet.hunger == 0 || gPet.cleanliness == 0 || gPet.poop >= kPetMaxPoop) {
+    gPet.careMistakes = petClampStat(gPet.careMistakes + 1);
+  }
+  if (gPet.energy >= 100 && sleeping && gPet.restPhase == PetRestPhase::Deep) {
+    gPet.restPhase = PetRestPhase::Wake;
+    gPet.restPhaseStartMs = millis();
+  }
+  updatePetMood();
+  updatePetEvolution();
+  maybePetDeath();
+}
+
+void applyPetElapsedMinutes(uint32_t minutes, bool offline) {
+  minutes = min<uint32_t>(minutes, kPetOfflineMaxMinutes);
+  for (uint32_t i = 0; i < minutes; ++i) {
+    applyPetElapsedMinute(offline);
+    if (!gPet.alive) {
+      break;
+    }
+  }
+}
+
+void loadPetState() {
+  gPrefs.begin(kPrefsPetNs, true);
+  uint8_t magic = gPrefs.getUChar("magic", 0);
+  if (magic != 0xC1) {
+    gPrefs.end();
+    petSetDefaults(true);
+    savePetState(true);
+    appendRuntimeLog("PET", "new pet created", true);
+    return;
+  }
+  gPet.hunger = gPrefs.getUChar("hun", 70);
+  gPet.happiness = gPrefs.getUChar("hap", 70);
+  gPet.health = gPrefs.getUChar("hea", 75);
+  gPet.energy = gPrefs.getUChar("ene", 80);
+  gPet.cleanliness = gPrefs.getUChar("cln", 80);
+  gPet.discipline = gPrefs.getUChar("disc", 45);
+  gPet.poop = min<uint8_t>(gPrefs.getUChar("poop", 0), kPetMaxPoop);
+  gPet.careMistakes = gPrefs.getUChar("mist", 0);
+  gPet.traitCuriosity = gPrefs.getUChar("cur", 70);
+  gPet.traitActivity = gPrefs.getUChar("act", 60);
+  gPet.traitStress = gPrefs.getUChar("str", 40);
+  gPet.ageMinutes = gPrefs.getUInt("age", 0);
+  gPet.bornEpoch = gPrefs.getUInt("born", 0);
+  uint32_t savedEpoch = gPrefs.getUInt("epoch", 0);
+  gPet.lastSavedEpoch = savedEpoch;
+  gPet.alive = gPrefs.getBool("alive", true);
+  gPet.sick = gPrefs.getBool("sick", false);
+  uint8_t stageRaw = clampValue<uint8_t>(gPrefs.getUChar("stage", 0), 0, 4);
+  gPet.stage = static_cast<PetStage>(stageRaw);
+  gPrefs.end();
+
+  gPet.lastTickMs = millis();
+  gPet.lastMinuteMs = millis();
+  gPet.lastSaveMs = millis();
+  gPet.activity = gPet.alive ? PetActivity::Idle : PetActivity::Dead;
+  gPet.restPhase = PetRestPhase::None;
+  gPet.nextDecisionMs = static_cast<uint32_t>(random(kPetDecisionMinMs, kPetDecisionMaxMs));
+
+  uint32_t nowEpoch = petEpochNow();
+  if (nowEpoch > savedEpoch + 90 && savedEpoch > 0) {
+    uint32_t offlineMinutes = (nowEpoch - savedEpoch) / 60UL;
+    applyPetElapsedMinutes(offlineMinutes, true);
+    appendRuntimeLog("PET", "offline minutes=" + String(min<uint32_t>(offlineMinutes, kPetOfflineMaxMinutes)), true);
+    savePetState(true);
+  } else {
+    updatePetMood();
+    updatePetEvolution();
+  }
+}
+
+void resetPet(bool fullReset) {
+  petSetDefaults(fullReset);
+  updatePetMood();
+  setStatus(fullReset ? "Pet reset" : "Pet restored", 1200);
+  appendRuntimeLog("PET", fullReset ? "reset full" : "reset stats", true);
+  savePetState(true);
+}
+
+void setPetActivity(PetActivity activity, uint32_t ttlMs = kPetActionMs) {
+  gPet.activity = activity;
+  gPet.actionUntilMs = ttlMs > 0 ? millis() + ttlMs : 0;
+  if (activity != PetActivity::Sleeping) {
+    gPet.restPhase = PetRestPhase::None;
+  }
+}
+
+void beginPetRest() {
+  gPet.activity = PetActivity::Sleeping;
+  gPet.restPhase = PetRestPhase::Enter;
+  gPet.restPhaseStartMs = millis();
+  gPet.restDurationMs = static_cast<uint32_t>(random(kPetRestMinMs, kPetRestMaxMs));
+  gPet.restStatsApplied = false;
+  gPet.actionUntilMs = 0;
+  setStatus("Pet sleeping", 1000);
+}
+
+void wakePet() {
+  gPet.activity = PetActivity::Idle;
+  gPet.restPhase = PetRestPhase::None;
+  gPet.energy = petClampStat(gPet.energy + 4);
+  setStatus("Pet awake", 900);
+}
+
+void useConnectedWifiAsPetEnv() {
+  gPet.env.netCount = WiFi.status() == WL_CONNECTED ? 1 : 0;
+  gPet.env.hiddenCount = 0;
+  gPet.env.openCount = 0;
+  int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -100;
+  gPet.env.strongCount = rssi > -67 ? 1 : 0;
+  gPet.env.avgRssi = static_cast<int16_t>(rssi);
+  gPet.env.lastScanMs = millis();
+  gPet.env.scanFresh = false;
+}
+
+void resolvePetHunt() {
+  if (gPet.env.netCount <= 0) {
+    gPet.hunger = petClampStat(gPet.hunger - 10);
+    gPet.happiness = petClampStat(gPet.happiness - 6);
+    gPet.health = petClampStat(gPet.health - 4);
+    setStatus("Hunt found nothing", 1200);
+    focusTone(220, 120);
+  } else {
+    int hungerDelta = min<int>(34, gPet.env.netCount * 2 + gPet.env.strongCount * 4);
+    int variety = gPet.env.hiddenCount * 2 + gPet.env.openCount;
+    int happyDelta = min<int>(26, variety * 3 + max<int>(0, gPet.env.avgRssi + 95) / 3);
+    int healthDelta = (gPet.env.avgRssi > -75 ? 4 : 0) + (gPet.env.avgRssi > -63 ? 4 : 0);
+    gPet.hunger = petClampStat(gPet.hunger + hungerDelta);
+    gPet.happiness = petClampStat(gPet.happiness + happyDelta);
+    gPet.health = petClampStat(gPet.health + healthDelta);
+    gPet.energy = petClampStat(gPet.energy - 4);
+    setStatus("Hunt +" + String(hungerDelta) + " food", 1200);
+    focusTone(1047, 90);
+  }
+  setPetActivity(PetActivity::Eating, 3800);
+  updatePetMood();
+  savePetState(true);
+}
+
+void resolvePetExplore() {
+  if (gPet.env.netCount <= 0) {
+    gPet.happiness = petClampStat(gPet.happiness - 5);
+    gPet.hunger = petClampStat(gPet.hunger - 3);
+    setStatus("Explore quiet", 1000);
+    focusTone(330, 90);
+  } else {
+    int curiosity = gPet.env.hiddenCount * 4 + gPet.env.openCount * 3 + gPet.env.netCount;
+    int happyDelta = min<int>(32, curiosity / 2);
+    gPet.happiness = petClampStat(gPet.happiness + happyDelta);
+    gPet.hunger = petClampStat(gPet.hunger - 5);
+    gPet.energy = petClampStat(gPet.energy - 5);
+    setStatus("Explore +" + String(happyDelta) + " fun", 1000);
+    focusTone(1319, 80);
+  }
+  setPetActivity(PetActivity::Exploring, 3600);
+  updatePetMood();
+  savePetState(true);
+}
+
+bool startPetWifiScan(PetActivity activity) {
+  if (gPet.env.scanPending) {
+    setStatus("Pet scan running", 700);
+    return false;
+  }
+  if (!gPet.alive) {
+    setStatus("Pet is gone", 1200);
+    return false;
+  }
+  gPet.activity = activity;
+  gPet.actionUntilMs = 0;
+  gPet.env.scanPending = true;
+  gPet.env.lastScanMs = millis();
+  WiFi.scanDelete();
+  int started = WiFi.scanNetworks(true, true);
+  if (started == -2) {
+    gPet.env.scanPending = false;
+    useConnectedWifiAsPetEnv();
+    if (activity == PetActivity::Hunting) {
+      resolvePetHunt();
+    } else {
+      resolvePetExplore();
+    }
+    return true;
+  }
+  setStatus(activity == PetActivity::Hunting ? "Pet hunting Wi-Fi" : "Pet exploring", 1000);
+  return true;
+}
+
+void completePetWifiScan(int count) {
+  if (count < 0) {
+    useConnectedWifiAsPetEnv();
+  } else {
+    int totalRssi = 0;
+    int seen = min<int>(count, 48);
+    gPet.env.netCount = seen;
+    gPet.env.hiddenCount = 0;
+    gPet.env.openCount = 0;
+    gPet.env.strongCount = 0;
+    for (int i = 0; i < seen; ++i) {
+      String ssid = WiFi.SSID(i);
+      int rssi = WiFi.RSSI(i);
+      totalRssi += rssi;
+      if (ssid.isEmpty()) {
+        ++gPet.env.hiddenCount;
+      }
+      if (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) {
+        ++gPet.env.openCount;
+      }
+      if (rssi > -67) {
+        ++gPet.env.strongCount;
+      }
+    }
+    gPet.env.avgRssi = seen > 0 ? static_cast<int16_t>(totalRssi / seen) : -100;
+    gPet.env.lastScanMs = millis();
+    gPet.env.scanFresh = true;
+    WiFi.scanDelete();
+  }
+  gPet.env.scanPending = false;
+  if (gPet.activity == PetActivity::Hunting) {
+    resolvePetHunt();
+  } else if (gPet.activity == PetActivity::Exploring) {
+    resolvePetExplore();
+  }
+}
+
+void servicePetWifiScan() {
+  if (!gPet.env.scanPending) {
+    return;
+  }
+  int count = WiFi.scanComplete();
+  if (count == -1 && millis() - gPet.env.lastScanMs < 16000) {
+    return;
+  }
+  completePetWifiScan(count >= 0 ? count : -1);
+}
+
+bool applyPetCare(PetCareAction action) {
+  if (!gPet.alive) {
+    setStatus("Pet is gone. /petreset", 1600);
+    return false;
+  }
+  gPet.lastInteractionMs = millis();
+  switch (action) {
+    case PetCareAction::Feed: {
+      int before = gPet.hunger;
+      gPet.hunger = petClampStat(gPet.hunger + 22);
+      gPet.energy = petClampStat(gPet.energy - 4);
+      gPet.happiness = petClampStat(gPet.happiness + 4);
+      gPet.cleanliness = petClampStat(gPet.cleanliness - 2);
+      if (before > 88) {
+        gPet.health = petClampStat(gPet.health - 4);
+        gPet.poop = min<uint8_t>(kPetMaxPoop, gPet.poop + 1);
+        setStatus("Pet overfed", 1100);
+      } else {
+        if (before < 25) {
+          gPet.health = petClampStat(gPet.health + 4);
+        }
+        if (random(0, 100) < 35 && gPet.poop < kPetMaxPoop) {
+          ++gPet.poop;
+        }
+        setStatus("Pet fed", 900);
+      }
+      setPetActivity(PetActivity::Eating);
+      focusTone(988, 70);
+      break;
+    }
+    case PetCareAction::Play:
+      if (gPet.energy < 10 || gPet.health < 15) {
+        setStatus("Too tired to play", 1100);
+        return false;
+      }
+      gPet.happiness = petClampStat(gPet.happiness + 18);
+      gPet.energy = petClampStat(gPet.energy - 14);
+      gPet.hunger = petClampStat(gPet.hunger - 8);
+      gPet.cleanliness = petClampStat(gPet.cleanliness - 4);
+      gPet.discipline = petClampStat(gPet.discipline + 2);
+      setPetActivity(PetActivity::Playing);
+      setStatus("Pet played", 900);
+      focusTone(1175, 80);
+      break;
+    case PetCareAction::Clean:
+      gPet.cleanliness = 100;
+      gPet.poop = 0;
+      gPet.health = petClampStat(gPet.health + 6);
+      gPet.happiness = petClampStat(gPet.happiness + 2);
+      setPetActivity(PetActivity::Cleaning);
+      setStatus("Pet clean", 900);
+      focusTone(1397, 70);
+      break;
+    case PetCareAction::Sleep:
+      if (gPet.activity == PetActivity::Sleeping) {
+        wakePet();
+      } else {
+        beginPetRest();
+      }
+      break;
+    case PetCareAction::Medicine:
+      if (!gPet.sick && gPet.health > 64) {
+        setStatus("No medicine needed", 1000);
+        return false;
+      }
+      gPet.health = petClampStat(gPet.health + 28);
+      gPet.energy = petClampStat(gPet.energy - 3);
+      gPet.happiness = petClampStat(gPet.happiness - 4);
+      if (gPet.health > 42) {
+        gPet.sick = false;
+      }
+      setPetActivity(PetActivity::Medicine);
+      setStatus("Medicine given", 1000);
+      focusTone(784, 100);
+      break;
+    case PetCareAction::Discipline: {
+      bool fair = gPet.poop >= 3 || gPet.cleanliness < 30 || gPet.discipline < 20 || gPet.hunger > 92;
+      gPet.discipline = petClampStat(gPet.discipline + (fair ? 16 : 5));
+      gPet.happiness = petClampStat(gPet.happiness - (fair ? 5 : 12));
+      if (!fair) {
+        gPet.careMistakes = petClampStat(gPet.careMistakes + 1);
+      }
+      setPetActivity(PetActivity::Discipline);
+      setStatus(fair ? "Discipline understood" : "Unfair discipline", 1200);
+      focusTone(fair ? 880 : 262, 90);
+      break;
+    }
+    case PetCareAction::Hunt:
+      return startPetWifiScan(PetActivity::Hunting);
+    case PetCareAction::Explore:
+      return startPetWifiScan(PetActivity::Exploring);
+  }
+  updatePetMood();
+  updatePetEvolution();
+  maybePetDeath();
+  savePetState(true);
+  return true;
+}
+
+void servicePetRest() {
+  if (gPet.activity != PetActivity::Sleeping || gPet.restPhase == PetRestPhase::None) {
+    return;
+  }
+  uint32_t now = millis();
+  if (gPet.restPhase == PetRestPhase::Enter && now - gPet.restPhaseStartMs > 1600) {
+    gPet.restPhase = PetRestPhase::Deep;
+    gPet.restPhaseStartMs = now;
+    gPet.restStatsApplied = false;
+    return;
+  }
+  if (gPet.restPhase == PetRestPhase::Deep) {
+    if (!gPet.restStatsApplied && now - gPet.restPhaseStartMs > gPet.restDurationMs / 2) {
+      gPet.happiness = petClampStat(gPet.happiness + 10);
+      gPet.health = petClampStat(gPet.health + 15);
+      gPet.energy = petClampStat(gPet.energy + 22);
+      gPet.hunger = petClampStat(gPet.hunger - 3);
+      gPet.restStatsApplied = true;
+      savePetState(true);
+    }
+    if (now - gPet.restPhaseStartMs >= gPet.restDurationMs || gPet.energy >= 100) {
+      gPet.restPhase = PetRestPhase::Wake;
+      gPet.restPhaseStartMs = now;
+      focusTone(659, 80);
+    }
+    return;
+  }
+  if (gPet.restPhase == PetRestPhase::Wake && now - gPet.restPhaseStartMs > 1600) {
+    wakePet();
+    savePetState(true);
+  }
+}
+
+void decideNextPetActivity() {
+  if (!gPet.alive || gPet.env.scanPending || gPet.activity != PetActivity::Idle ||
+      gUiMode != UiMode::Hero || gRecording || gSubmitting || gThinking || gPlaybackActive) {
+    return;
+  }
+  uint32_t now = millis();
+  if (now - gPet.lastDecisionMs < gPet.nextDecisionMs) {
+    return;
+  }
+  gPet.lastDecisionMs = now;
+  gPet.nextDecisionMs = static_cast<uint32_t>(random(kPetDecisionMinMs, kPetDecisionMaxMs));
+
+  int desireHunt = (100 - gPet.hunger) + gPet.traitCuriosity / 3;
+  int desireExplore = gPet.traitCuriosity + gPet.env.hiddenCount * 7 + gPet.env.openCount * 5 + random(0, 18);
+  int desireRest = (100 - gPet.energy) + (100 - gPet.health) + gPet.traitStress / 2;
+  if (gPet.mood == PetMood::Hungry) {
+    desireHunt += 24;
+  } else if (gPet.mood == PetMood::Curious || gPet.mood == PetMood::Bored) {
+    desireExplore += 20;
+  } else if (gPet.mood == PetMood::Sick || gPet.mood == PetMood::Sleepy) {
+    desireRest += 22;
+  }
+  if (gPet.hunger < 15) {
+    desireRest -= 12;
+  }
+
+  int best = 20;
+  PetActivity chosen = PetActivity::Idle;
+  if (desireHunt > best) {
+    best = desireHunt;
+    chosen = PetActivity::Hunting;
+  }
+  if (desireExplore > best) {
+    best = desireExplore;
+    chosen = PetActivity::Exploring;
+  }
+  if (desireRest > best) {
+    chosen = PetActivity::Sleeping;
+  }
+
+  if (chosen == PetActivity::Hunting) {
+    startPetWifiScan(PetActivity::Hunting);
+  } else if (chosen == PetActivity::Exploring) {
+    startPetWifiScan(PetActivity::Exploring);
+  } else if (chosen == PetActivity::Sleeping) {
+    beginPetRest();
+  }
+}
+
+void servicePet() {
+  uint32_t now = millis();
+  if (gPet.lastTickMs == 0) {
+    gPet.lastTickMs = now;
+    gPet.lastMinuteMs = now;
+  }
+  if (now - gPet.lastTickMs < kPetTickMs) {
+    servicePetWifiScan();
+    servicePetRest();
+    return;
+  }
+  gPet.lastTickMs = now;
+
+  servicePetWifiScan();
+  servicePetRest();
+
+  uint8_t applied = 0;
+  while (now - gPet.lastMinuteMs >= kPetMinuteMs && applied < 5) {
+    gPet.lastMinuteMs += kPetMinuteMs;
+    applyPetElapsedMinute(false);
+    ++applied;
+  }
+
+  if (gPet.actionUntilMs != 0 && now > gPet.actionUntilMs &&
+      gPet.activity != PetActivity::Sleeping && !gPet.env.scanPending) {
+    gPet.activity = gPet.alive ? PetActivity::Idle : PetActivity::Dead;
+    gPet.actionUntilMs = 0;
+  }
+  updatePetMood();
+  decideNextPetActivity();
+  savePetState(false);
+}
+
+PetCareAction suggestedPetAction() {
+  if (gPet.sick || gPet.health < 35) {
+    return PetCareAction::Medicine;
+  }
+  if (gPet.hunger < 35) {
+    return PetCareAction::Feed;
+  }
+  if (gPet.cleanliness < 45 || gPet.poop >= 3) {
+    return PetCareAction::Clean;
+  }
+  if (gPet.energy < 28) {
+    return PetCareAction::Sleep;
+  }
+  if (gPet.happiness < 55) {
+    return PetCareAction::Play;
+  }
+  return PetCareAction::Explore;
+}
+
+bool handlePetKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+    return applyPetCare(suggestedPetAction());
+  }
+  if (lowerKey == 'f') {
+    return applyPetCare(PetCareAction::Feed);
+  }
+  if (lowerKey == 'p') {
+    return applyPetCare(PetCareAction::Play);
+  }
+  if (lowerKey == 'c') {
+    return applyPetCare(PetCareAction::Clean);
+  }
+  if (lowerKey == 's') {
+    return applyPetCare(PetCareAction::Sleep);
+  }
+  if (lowerKey == 'm') {
+    return applyPetCare(PetCareAction::Medicine);
+  }
+  if (lowerKey == 'd') {
+    return applyPetCare(PetCareAction::Discipline);
+  }
+  if (lowerKey == 'h') {
+    return applyPetCare(PetCareAction::Hunt);
+  }
+  if (lowerKey == 'e') {
+    return applyPetCare(PetCareAction::Explore);
+  }
+  if (lowerKey == 'r') {
+    updatePetMood();
+    setStatus(String(petMoodName(gPet.mood)) + " " + petAgeText(), 1000);
+    return true;
+  }
+  return false;
 }
 
 bool copyFileBetweenFs(fs::FS& fromFs, fs::FS& toFs, const String& path) {
@@ -6814,6 +7982,9 @@ void sendDeviceHello() {
   caps["presence_scan"] = false;
   caps["face_enrollment"] = false;
   caps["ble_provisioning"] = true;
+  caps["device_actions"] = true;
+  caps["device_actions_version"] = kDeviceActionCatalogVersion;
+  caps["device_actions_count"] = static_cast<uint32_t>(kDeviceActionCatalogCount);
 
   String payload;
   serializeJson(doc, payload);
@@ -6991,7 +8162,8 @@ bool handleLocalCommand(const String& input) {
     pushSystem("Voice: Ctrl x2, Ctrl+V, or hold G0");
     pushSystem("Tab = next screen, Tab+Down/Right = next app");
     pushSystem("Ctrl+L = launcher map, arrows = group/item");
-    pushSystem("Ctrl+D = debug, /voice /focus /topics");
+    pushSystem("Ctrl+D = debug, /voice /focus /topics /pet");
+    pushSystem("Pet: F food P play C clean S sleep H hunt");
     return true;
   }
 
@@ -7038,7 +8210,13 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
-  if (cmd == "/hero") {
+  if (cmd == "/hero" || cmd == "/pet" || cmd == "/tama") {
+    setUiMode(UiMode::Hero);
+    return true;
+  }
+
+  if (cmd == "/petreset" || cmd == "/tamareset") {
+    resetPet(true);
     setUiMode(UiMode::Hero);
     return true;
   }
@@ -7414,6 +8592,108 @@ bool handleAudioFoldersKey(char key, const Keyboard_Class::KeysState& keys) {
     clampSelectedAudioAssetToFolder();
     setUiMode(UiMode::Library);
     return true;
+  }
+  return false;
+}
+
+bool handleNotesKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (!gNotesScanned) {
+    scanNotes();
+  }
+
+  if (keys.ctrl && lowerKey == 's') {
+    if (gNotesMode == NotesMode::Edit && !gNoteInputBuffer.isEmpty()) {
+      appendLineToActiveNote(gNoteInputBuffer);
+      gNoteInputBuffer = "";
+    }
+    gNotesMode = NotesMode::View;
+    gNotesStatus = "Saved";
+    return true;
+  }
+
+  if (gNotesMode == NotesMode::Edit) {
+    if (keys.enter || key == '\n' || key == '\r') {
+      appendLineToActiveNote(gNoteInputBuffer);
+      gNoteInputBuffer = "";
+      return true;
+    }
+    if (keys.del || key == '\b') {
+      if (!gNoteInputBuffer.isEmpty()) {
+        removeLastUtf8Char(gNoteInputBuffer);
+      }
+      return true;
+    }
+    if (keys.ctrl && (lowerKey == 'x' || lowerKey == 'q')) {
+      gNotesMode = NotesMode::View;
+      gNotesStatus = "View mode";
+      return true;
+    }
+    if (key >= 32 && key < 127 && gNoteInputBuffer.length() < static_cast<int>(kMaxNoteInputChars)) {
+      gNoteInputBuffer += translateInputChar(key);
+      return true;
+    }
+    return false;
+  }
+
+  if (lowerKey == 'r') {
+    scanNotes();
+    setStatus("Notes rescanned", 700);
+    return true;
+  }
+  if (lowerKey == 'n') {
+    return createNewNote();
+  }
+  if (lowerKey == 'e') {
+    return openSelectedNote(NotesMode::Edit);
+  }
+  if (lowerKey == 'l' || keys.del || key == '\b') {
+    gNotesMode = NotesMode::List;
+    gNoteInputBuffer = "";
+    gNotesStatus = "List";
+    return true;
+  }
+
+  if (gNotesMode == NotesMode::List) {
+    if (gNotes.empty()) {
+      return lowerKey == 'r' || lowerKey == 'n';
+    }
+    if (key == ',' || key == ';') {
+      gSelectedNote = max<int>(0, gSelectedNote - 1);
+      gNoteListScrollOffset = max<int>(0, gSelectedNote - 2);
+      setStatus(gNotes[gSelectedNote].name, 600);
+      return true;
+    }
+    if (key == '.' || key == '/') {
+      gSelectedNote = min<int>(static_cast<int>(gNotes.size()) - 1, gSelectedNote + 1);
+      gNoteListScrollOffset = max<int>(0, gSelectedNote - 2);
+      setStatus(gNotes[gSelectedNote].name, 600);
+      return true;
+    }
+    if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+      return openSelectedNote(NotesMode::View);
+    }
+    return false;
+  }
+
+  if (key == ',' || key == ';') {
+    gNoteScrollOffset = max<int>(0, gNoteScrollOffset - 1);
+    return true;
+  }
+  if (key == '.' || key == '/') {
+    uint32_t lineCount = 0;
+    if (!gActiveNotePath.isEmpty()) {
+      fs::FS* fs = activeNotesFs();
+      if (fs) {
+        lineCount = countNoteLines(*fs, gActiveNotePath);
+      }
+    }
+    int maxScroll = max<int>(0, static_cast<int>(lineCount) - 7);
+    gNoteScrollOffset = min<int>(maxScroll, gNoteScrollOffset + 1);
+    return true;
+  }
+  if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+    return openSelectedNote(NotesMode::Edit);
   }
   return false;
 }
@@ -7797,9 +9077,16 @@ bool handleGlobalEscape() {
     gInputBuffer = "";
     changed = true;
   }
-  if (gChatScrollOffset != 0 || gLogScrollOffset != 0) {
+  if (!gNoteInputBuffer.isEmpty() || gNotesMode != NotesMode::List) {
+    gNoteInputBuffer = "";
+    gNotesMode = NotesMode::List;
+    changed = true;
+  }
+  if (gChatScrollOffset != 0 || gLogScrollOffset != 0 || gNoteScrollOffset != 0 || gNoteListScrollOffset != 0) {
     gChatScrollOffset = 0;
     gLogScrollOffset = 0;
+    gNoteScrollOffset = 0;
+    gNoteListScrollOffset = 0;
     changed = true;
   }
 
@@ -7878,6 +9165,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     handleVoicePlayerKey(key, keys);
     return;
   }
+  if (gUiMode == UiMode::Hero && handlePetKey(key, keys)) {
+    return;
+  }
   if (gUiMode == UiMode::Focus && handleFocusKey(key, keys)) {
     return;
   }
@@ -7885,6 +9175,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (gUiMode == UiMode::AudioFolders && handleAudioFoldersKey(key, keys)) {
+    return;
+  }
+  if (gUiMode == UiMode::Notes && handleNotesKey(key, keys)) {
     return;
   }
   if (gUiMode == UiMode::Assets && handleAssetsKey(key)) {
@@ -8039,6 +9332,10 @@ void pollTyping() {
   } else if (gUiMode == UiMode::Contexts && (leftDown || upDown)) {
     handleTypingKey(',', keys);
   } else if (gUiMode == UiMode::Contexts && (rightDown || downDown)) {
+    handleTypingKey('.', keys);
+  } else if (gUiMode == UiMode::Notes && (leftDown || upDown)) {
+    handleTypingKey(',', keys);
+  } else if (gUiMode == UiMode::Notes && (rightDown || downDown)) {
     handleTypingKey('.', keys);
   } else if (spaceDown && keys.ctrl) {
     handleTypingKey(' ', keys);
@@ -8381,6 +9678,188 @@ void renderOmniEyePair(int16_t leftEyeX, int16_t rightEyeX, int16_t eyeCenterY,
   }
 }
 
+uint16_t petMoodAccent() {
+  switch (gPet.mood) {
+    case PetMood::Happy:
+      return rgb565_local(88, 240, 141);
+    case PetMood::Hungry:
+      return rgb565_local(255, 194, 74);
+    case PetMood::Bored:
+      return rgb565_local(126, 143, 157);
+    case PetMood::Curious:
+      return rgb565_local(47, 227, 255);
+    case PetMood::Sick:
+      return rgb565_local(128, 230, 104);
+    case PetMood::Excited:
+      return rgb565_local(255, 105, 135);
+    case PetMood::Sleepy:
+      return rgb565_local(143, 126, 255);
+    case PetMood::Dirty:
+      return rgb565_local(181, 142, 86);
+    case PetMood::Dead:
+      return rgb565_local(120, 128, 136);
+    case PetMood::Calm:
+    default:
+      return rgb565_local(34, 209, 189);
+  }
+}
+
+uint16_t petBodyColor() {
+  if (!gPet.alive) {
+    return rgb565_local(84, 90, 96);
+  }
+  if (gPet.mood == PetMood::Sick) {
+    return rgb565_local(119, 176, 95);
+  }
+  if (gPet.mood == PetMood::Sleepy) {
+    return rgb565_local(130, 86, 198);
+  }
+  switch (gPet.stage) {
+    case PetStage::Egg:
+      return rgb565_local(236, 218, 172);
+    case PetStage::Baby:
+      return rgb565_local(228, 74, 62);
+    case PetStage::Teen:
+      return rgb565_local(222, 58, 64);
+    case PetStage::Adult:
+      return rgb565_local(203, 52, 58);
+    case PetStage::Elder:
+    default:
+      return rgb565_local(186, 74, 88);
+  }
+}
+
+void drawPetSpark(int16_t x, int16_t y, int16_t r, uint16_t color) {
+  auto& d = gCanvas;
+  d.drawFastHLine(x - r, y, r * 2 + 1, color);
+  d.drawFastVLine(x, y - r, r * 2 + 1, color);
+  d.drawLine(x - r + 1, y - r + 1, x + r - 1, y + r - 1, color);
+  d.drawLine(x - r + 1, y + r - 1, x + r - 1, y - r + 1, color);
+}
+
+void drawProceduralOpenClawPet(int16_t cx, int16_t cy, int16_t size, bool mini) {
+  auto& d = gCanvas;
+  uint32_t now = millis();
+  uint16_t body = petBodyColor();
+  uint16_t accent = petMoodAccent();
+  uint16_t line = rgb565_local(13, 18, 22);
+  uint16_t highlight = rgb565_local(255, 134, 108);
+  int16_t r = max<int16_t>(8, size / 2);
+  int16_t bob = mini ? 0 : static_cast<int16_t>(abs(static_cast<int>((now / 170) % 10) - 5) / 2);
+  cy += bob;
+
+  d.fillRoundRect(cx - r + 4, cy + r - 3, (r - 4) * 2, max<int16_t>(4, r / 4), max<int16_t>(2, r / 8), rgb565_local(0, 0, 0));
+
+  if (gPet.stage == PetStage::Egg && gPet.alive) {
+    uint16_t shell = rgb565_local(238, 224, 184);
+    uint16_t shell2 = rgb565_local(255, 242, 202);
+    d.fillCircle(cx, cy + r / 8, r, shell);
+    d.fillRoundRect(cx - r, cy - r / 2, r * 2, r + r / 2, r / 2, shell);
+    d.fillCircle(cx - r / 4, cy - r / 5, r / 3, shell2);
+    d.drawCircle(cx, cy + r / 8, r, accent);
+    d.drawLine(cx - r / 4, cy - r / 5, cx, cy, line);
+    d.drawLine(cx, cy, cx - r / 7, cy + r / 4, line);
+    d.drawLine(cx - r / 7, cy + r / 4, cx + r / 5, cy + r / 2, line);
+    if (!mini) {
+      d.setFont(&fonts::Font0);
+      d.setTextColor(accent, rgb565_local(8, 18, 26));
+      d.setCursor(cx - 18, cy + r + 4);
+      d.print("hatching");
+    }
+    return;
+  }
+
+  int16_t bodyW = r * 2;
+  int16_t bodyH = r * 2 + r / 4;
+  d.fillTriangle(cx - r + 3, cy - r + 4, cx - r / 2, cy - r - r / 2, cx - r / 6, cy - r + 8, line);
+  d.fillTriangle(cx + r - 3, cy - r + 4, cx + r / 2, cy - r - r / 2, cx + r / 6, cy - r + 8, line);
+  d.fillRoundRect(cx - r, cy - r, bodyW, bodyH, r / 2, line);
+  d.fillRoundRect(cx - r + 3, cy - r + 3, bodyW - 6, bodyH - 6, r / 2, body);
+  d.fillCircle(cx - r / 3, cy - r / 3, max<int16_t>(3, r / 5), highlight);
+  d.fillCircle(cx + r / 3, cy - r / 3, max<int16_t>(3, r / 5), highlight);
+
+  int16_t clawY = cy + r / 2;
+  d.fillCircle(cx - r - 2, clawY, max<int16_t>(3, r / 5), line);
+  d.fillCircle(cx + r + 2, clawY, max<int16_t>(3, r / 5), line);
+  d.fillCircle(cx - r - 2, clawY, max<int16_t>(2, r / 5 - 2), rgb565_local(196, 45, 48));
+  d.fillCircle(cx + r + 2, clawY, max<int16_t>(2, r / 5 - 2), rgb565_local(196, 45, 48));
+
+  int16_t eyeY = cy - r / 5;
+  int16_t leftEye = cx - r / 3;
+  int16_t rightEye = cx + r / 3;
+  if (!gPet.alive) {
+    int16_t e = max<int16_t>(3, r / 7);
+    d.drawLine(leftEye - e, eyeY - e, leftEye + e, eyeY + e, line);
+    d.drawLine(leftEye - e, eyeY + e, leftEye + e, eyeY - e, line);
+    d.drawLine(rightEye - e, eyeY - e, rightEye + e, eyeY + e, line);
+    d.drawLine(rightEye - e, eyeY + e, rightEye + e, eyeY - e, line);
+  } else if (gPet.mood == PetMood::Sleepy || gPet.activity == PetActivity::Sleeping) {
+    d.drawFastHLine(leftEye - r / 7, eyeY, max<int16_t>(4, r / 4), line);
+    d.drawFastHLine(rightEye - r / 7, eyeY, max<int16_t>(4, r / 4), line);
+  } else if (gPet.mood == PetMood::Happy || gPet.mood == PetMood::Excited) {
+    d.drawArc(leftEye, eyeY + 2, max<int16_t>(5, r / 5), max<int16_t>(3, r / 5 - 2), 205, 335, line);
+    d.drawArc(rightEye, eyeY + 2, max<int16_t>(5, r / 5), max<int16_t>(3, r / 5 - 2), 205, 335, line);
+  } else {
+    d.fillCircle(leftEye, eyeY, max<int16_t>(2, r / 8), line);
+    d.fillCircle(rightEye, eyeY, max<int16_t>(2, r / 8), line);
+  }
+
+  int16_t mouthY = cy + r / 5;
+  if (gPet.mood == PetMood::Hungry || gPet.mood == PetMood::Bored || gPet.mood == PetMood::Sick) {
+    d.drawArc(cx, mouthY + r / 8, max<int16_t>(6, r / 4), max<int16_t>(4, r / 4 - 2), 205, 335, line);
+  } else if (gPet.activity == PetActivity::Eating) {
+    d.fillRoundRect(cx - r / 5, mouthY - 1, max<int16_t>(4, r / 3), max<int16_t>(3, r / 7), 2, line);
+  } else {
+    d.drawArc(cx, mouthY - r / 8, max<int16_t>(7, r / 4), max<int16_t>(5, r / 4 - 2), 25, 155, line);
+  }
+
+  if (mini) {
+    return;
+  }
+
+  if (gPet.activity == PetActivity::Eating || gPet.activity == PetActivity::Hunting) {
+    for (int i = 0; i < 5; ++i) {
+      int16_t fx = cx - r - 16 + i * 7;
+      int16_t fy = cy - 18 + static_cast<int16_t>((now / 120 + i * 3) % 18);
+      d.fillCircle(fx, fy, 2, rgb565_local(255, 194, 74));
+    }
+  }
+  if (gPet.activity == PetActivity::Playing || gPet.mood == PetMood::Excited) {
+    drawPetSpark(cx - r - 11, cy - r + 10, 4, accent);
+    drawPetSpark(cx + r + 12, cy - r / 3, 3, rgb565_local(255, 194, 74));
+  }
+  if (gPet.activity == PetActivity::Cleaning || gPet.mood == PetMood::Dirty) {
+    for (int i = 0; i < 4; ++i) {
+      int16_t bx = cx + r + 9 + (i % 2) * 8;
+      int16_t by = cy - r / 2 + i * 10 - static_cast<int16_t>((now / 150) % 5);
+      d.drawCircle(bx, by, 3 + (i % 2), rgb565_local(47, 227, 255));
+    }
+  }
+  if (gPet.activity == PetActivity::Sleeping) {
+    d.setFont(&fonts::Font2);
+    d.setTextColor(accent, rgb565_local(8, 18, 26));
+    d.setCursor(cx + r + 9, cy - r - 8);
+    d.print("Z");
+    d.setCursor(cx + r + 17, cy - r - 16);
+    d.print("z");
+  }
+  if (gPet.activity == PetActivity::Exploring) {
+    int sweep = static_cast<int>((now / 10) % 360);
+    d.drawArc(cx, cy, r + 13, r + 10, sweep, sweep + 70, accent);
+    d.drawArc(cx, cy, r + 23, r + 20, 220 - sweep, 290 - sweep, rgb565_local(255, 194, 74));
+  }
+  if (gPet.activity == PetActivity::Medicine || gPet.mood == PetMood::Sick) {
+    d.drawFastHLine(cx + r + 8, cy + r / 2, 13, rgb565_local(128, 230, 104));
+    d.drawFastVLine(cx + r + 14, cy + r / 2 - 6, 13, rgb565_local(128, 230, 104));
+  }
+  if (gPet.activity == PetActivity::Discipline) {
+    d.setFont(&fonts::Font4);
+    d.setTextColor(rgb565_local(255, 194, 74), rgb565_local(8, 18, 26));
+    d.setCursor(cx + r + 8, cy - r / 2);
+    d.print("!");
+  }
+}
+
 const uint16_t* currentHeroFrame() {
   uint32_t tick = millis();
   switch (gFaceMode) {
@@ -8425,11 +9904,11 @@ void drawHeroSprite(int16_t x, int16_t y, int scale, const uint16_t* sprite) {
 void renderLauncherLivingPreview(int16_t x, int16_t y, int16_t w, int16_t h) {
   auto& d = gCanvas;
   d.fillRoundRect(x, y, w, h, 10, 0x0841);
-  d.drawRoundRect(x, y, w, h, 10, 0x31C7);
+  d.drawRoundRect(x, y, w, h, 10, petMoodAccent());
   d.setFont(&fonts::Font2);
-  d.setTextColor(TFT_CYAN, 0x0841);
+  d.setTextColor(petMoodAccent(), 0x0841);
   d.setCursor(x + 8, y + 8);
-  d.print("Live");
+  d.print("Pet");
 
   int16_t cellY = y + 18;
   int16_t cellW = 38;
@@ -8444,14 +9923,14 @@ void renderLauncherLivingPreview(int16_t x, int16_t y, int16_t w, int16_t h) {
 
   renderOmniEyePair(eyeX + 12, eyeX + 26, cellY + 19, 7, 8, 0x18C3);
 
-  drawHeroSprite(heroX + 3, cellY + 3, 2, currentHeroFrame());
+  drawProceduralOpenClawPet(heroX + cellW / 2, cellY + cellH / 2, 25, true);
 
   d.setTextColor(TFT_LIGHTGREY, 0x0841);
   d.setCursor(x + 8, y + h - 18);
-  d.print(uiModeName(gUiMode));
-  d.setTextColor(TFT_WHITE, 0x0841);
+  d.print(String(petStageName(gPet.stage)) + " " + petAgeText());
+  d.setTextColor(petMoodAccent(), 0x0841);
   d.setCursor(x + 8, y + h - 8);
-  d.print(gFaceMode == FaceMode::Error ? "error" : eyeEmotionName(currentEyeEmotion()));
+  d.print(String(petMoodName(gPet.mood)) + " " + petActivityName(gPet.activity));
 }
 
 void renderFacePanel(bool fullscreen = false) {
@@ -8920,7 +10399,8 @@ void renderFocusUi() {
     d.print(breath > 0.55f ? "inhale" : "exhale");
     d.setFont(&fonts::Font7);
     d.setTextColor(TFT_WHITE, panel);
-    d.setCursor(128, 45);
+    int timeWidth = d.textWidth(timeText);
+    d.setCursor(clampValue<int>(226 - timeWidth, 98, 128), 45);
     d.print(timeText);
     d.setFont(&fonts::Font0);
     d.setTextColor(muted, panel);
@@ -8964,7 +10444,7 @@ void renderFocusUi() {
     d.setFont(&fonts::Font7);
     d.setTextColor(TFT_WHITE, panel);
     int timeWidth = d.textWidth(timeText);
-    d.setCursor(max<int>(116, 178 - timeWidth / 2), 44);
+    d.setCursor(clampValue<int>(226 - timeWidth, 92, 124), 44);
     d.print(timeText);
     d.setFont(&fonts::Font0);
     d.setTextColor(muted, panel);
@@ -9188,6 +10668,190 @@ void renderAudioFoldersUi() {
   }
 
   drawTinyFooter(panel, muted, "< > folder  Ent open  R scan", 15, 118, 210);
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+String readNoteLineAt(fs::FS& fs, const String& path, uint32_t targetLine) {
+  File file = fs.open(path, "r");
+  if (!file) {
+    return "";
+  }
+  uint32_t line = 0;
+  String value;
+  while (file.available()) {
+    value = file.readStringUntil('\n');
+    value.trim();
+    if (line == targetLine) {
+      file.close();
+      return value;
+    }
+    ++line;
+  }
+  file.close();
+  return "";
+}
+
+void drawNotesHeader(const String& title, uint16_t accent, uint16_t bg, uint16_t panel) {
+  auto& d = gCanvas;
+  d.fillScreen(bg);
+  d.fillRoundRect(5, 5, 230, 125, 8, panel);
+  d.drawRoundRect(5, 5, 230, 125, 8, rgb565_local(42, 55, 63));
+  d.fillRoundRect(10, 10, 220, 17, 5, rgb565_local(3, 11, 17));
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, rgb565_local(3, 11, 17));
+  d.setCursor(16, 14);
+  d.print(fitCurrentFontToWidth(title, 148));
+  String store = activeNotesStorageLabel();
+  d.setTextColor(TFT_LIGHTGREY, rgb565_local(3, 11, 17));
+  d.setCursor(224 - d.textWidth(store), 14);
+  d.print(store);
+}
+
+void renderNotesUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(5, 13, 19);
+  const uint16_t rowBg = rgb565_local(7, 18, 25);
+  const uint16_t selected = rgb565_local(14, 40, 48);
+  const uint16_t line = rgb565_local(35, 52, 62);
+  const uint16_t accent = rgb565_local(255, 211, 106);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(100, 255, 170);
+  const uint16_t muted = rgb565_local(132, 148, 160);
+
+  if (!gNotesScanned) {
+    scanNotes();
+  }
+  if (!activeNotesFs()) {
+    renderSdRequiredBanner("Notes");
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
+
+  if (gNotesMode == NotesMode::List) {
+    drawNotesHeader("Notes", accent, bg, panel);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, panel);
+    d.setCursor(16, 31);
+    d.print(fitCurrentFontToWidth(gNotesStatus, 208));
+
+    if (gNotes.empty()) {
+      d.fillRoundRect(20, 48, 200, 42, 9, rowBg);
+      d.drawRoundRect(20, 48, 200, 42, 9, accent);
+      d.setFont(&fonts::Font2);
+      d.setTextColor(accent, rowBg);
+      d.setCursor(54, 61);
+      d.print("No notes yet");
+      d.setFont(&fonts::Font0);
+      d.setTextColor(muted, rowBg);
+      d.setCursor(44, 77);
+      d.print("Press N to create first note");
+      drawTinyFooter(panel, muted, "N new  R rescan  Tab menu", 16, 118, 208);
+      renderLauncherOverlay();
+      renderDebugOverlay();
+      return;
+    }
+
+    clampNoteSelection();
+    constexpr int visible = 6;
+    int maxStart = max<int>(0, static_cast<int>(gNotes.size()) - visible);
+    int start = clampValue<int>(min<int>(gNoteListScrollOffset, gSelectedNote), 0, maxStart);
+    if (gSelectedNote < start) {
+      start = gSelectedNote;
+    } else if (gSelectedNote >= start + visible) {
+      start = gSelectedNote - visible + 1;
+    }
+    gNoteListScrollOffset = start;
+    for (int i = 0; i < visible; ++i) {
+      int idx = start + i;
+      if (idx >= static_cast<int>(gNotes.size())) {
+        break;
+      }
+      const NoteFile& note = gNotes[idx];
+      bool isSelected = idx == gSelectedNote;
+      int y = 43 + i * 12;
+      uint16_t fill = isSelected ? selected : rowBg;
+      d.fillRoundRect(14, y, 212, 10, 4, fill);
+      d.drawRoundRect(14, y, 212, 10, 4, isSelected ? accent : line);
+      d.setTextColor(isSelected ? TFT_WHITE : TFT_LIGHTGREY, fill);
+      d.setCursor(20, y + 2);
+      d.print(fitCurrentFontToWidth(note.name, 145));
+      String meta = String(note.lineCount) + "l " + compactBytes(note.size);
+      d.setTextColor(isSelected ? accent : muted, fill);
+      d.setCursor(222 - d.textWidth(meta), y + 2);
+      d.print(meta);
+    }
+    drawTinyFooter(panel, muted, "< > pick  Ent open  N new  E edit", 13, 118, 214);
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
+
+  const bool edit = gNotesMode == NotesMode::Edit;
+  drawNotesHeader(edit ? "Edit Note" : "Read Note", edit ? green : cyan, bg, panel);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(16, 31);
+  d.print(fitCurrentFontToWidth(gActiveNoteName.isEmpty() ? "untitled" : gActiveNoteName, 150));
+  d.setTextColor(edit ? green : cyan, panel);
+  String mode = edit ? "APPEND" : "VIEW";
+  d.setCursor(224 - d.textWidth(mode), 31);
+  d.print(mode);
+
+  fs::FS* fs = activeNotesFs();
+  uint32_t lines = 0;
+  if (fs && !gActiveNotePath.isEmpty()) {
+    lines = countNoteLines(*fs, gActiveNotePath);
+  }
+  int previewRows = edit ? 3 : 5;
+  int maxScroll = max<int>(0, static_cast<int>(lines) - previewRows);
+  gNoteScrollOffset = clampValue<int>(gNoteScrollOffset, 0, maxScroll);
+  int startLine = edit ? max<int>(0, static_cast<int>(lines) - previewRows) : gNoteScrollOffset;
+
+  d.fillRoundRect(12, 43, 216, edit ? 49 : 71, 7, rgb565_local(3, 10, 15));
+  d.drawRoundRect(12, 43, 216, edit ? 49 : 71, 7, rgb565_local(22, 40, 52));
+  d.setFont(&fonts::efontCN_12);
+  int y = 47;
+  for (int i = 0; i < previewRows; ++i) {
+    uint32_t lineNo = static_cast<uint32_t>(startLine + i);
+    if (lineNo >= lines) {
+      break;
+    }
+    String lineText = fs ? readNoteLineAt(*fs, gActiveNotePath, lineNo) : "";
+    d.setTextColor(i % 2 == 0 ? TFT_LIGHTGREY : muted, rgb565_local(3, 10, 15));
+    d.setCursor(18, y);
+    d.print(fitCurrentFontToWidth(lineText, 202));
+    y += 13;
+  }
+  d.setFont(&fonts::Font0);
+  if (!edit && maxScroll > 0) {
+    int railH = 64;
+    int knobH = max<int>(8, railH / (maxScroll + 1));
+    int knobY = 47 + ((railH - knobH) * gNoteScrollOffset) / max<int>(1, maxScroll);
+    d.fillRoundRect(224, 48, 2, railH, 1, rgb565_local(23, 32, 42));
+    d.fillRoundRect(224, knobY, 2, knobH, 1, cyan);
+  }
+
+  if (edit) {
+    d.fillRoundRect(12, 98, 216, 18, 7, rgb565_local(2, 17, 22));
+    d.drawRoundRect(12, 98, 216, 18, 7, gNoteInputBuffer.isEmpty() ? line : green);
+    d.setTextColor(gNoteInputBuffer.isEmpty() ? muted : TFT_WHITE, rgb565_local(2, 17, 22));
+    d.setFont(&fonts::efontCN_12);
+    String input = gNoteInputBuffer.isEmpty() ? "type note line..." : tailUtf8ToFit(gNoteInputBuffer, 190);
+    d.setCursor(20, 101);
+    d.print(input);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(green, panel);
+    d.setCursor(16, 119);
+    d.print("Enter save line  Ctrl+S done");
+  } else {
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, panel);
+    d.setCursor(16, 119);
+    d.print("< > scroll  E append  L list");
+  }
   renderLauncherOverlay();
   renderDebugOverlay();
 }
@@ -9709,43 +11373,82 @@ void renderFaceOnlyUi() {
   renderDebugOverlay();
 }
 
+void drawPetStatBar(int16_t x, int16_t y, int16_t w, const char* label, uint8_t value, uint16_t color, uint16_t bg) {
+  auto& d = gCanvas;
+  d.setFont(&fonts::Font0);
+  d.setTextColor(rgb565_local(150, 164, 176), bg);
+  d.setCursor(x, y);
+  d.print(label);
+  int16_t barX = x + 22;
+  int16_t barW = max<int16_t>(20, w - 24);
+  d.fillRoundRect(barX, y + 1, barW, 6, 3, rgb565_local(20, 32, 43));
+  int16_t fillW = max<int16_t>(2, (barW * value) / 100);
+  d.fillRoundRect(barX, y + 1, fillW, 6, 3, color);
+}
+
 void renderHeroUi() {
   auto& d = gCanvas;
-  d.fillScreen(0x0210);
+  const uint16_t bg = rgb565_local(2, 6, 12);
+  const uint16_t panel = rgb565_local(7, 14, 24);
+  const uint16_t panel2 = rgb565_local(9, 20, 31);
+  const uint16_t grid = rgb565_local(13, 32, 45);
+  const uint16_t muted = rgb565_local(132, 148, 160);
+  const uint16_t accent = petMoodAccent();
+  d.fillScreen(bg);
 
-  int16_t arenaX = 7;
-  int16_t arenaY = 5;
-  int16_t arenaW = 226;
-  int16_t arenaH = 125;
-  d.fillRoundRect(arenaX, arenaY, arenaW, arenaH, 16, 0x0841);
-  d.drawRoundRect(arenaX, arenaY, arenaW, arenaH, 16, 0x31C7);
+  d.fillRoundRect(6, 5, 228, 124, 14, panel);
+  d.drawRoundRect(6, 5, 228, 124, 14, accent);
+  d.drawRoundRect(10, 9, 220, 116, 11, rgb565_local(18, 34, 48));
 
-  for (int16_t gx = arenaX + 12; gx < arenaX + arenaW - 8; gx += 24) {
-    d.drawFastVLine(gx, arenaY + 14, arenaH - 28, 0x18C3);
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, panel);
+  d.setCursor(16, 14);
+  d.print("OPENCLAW PET");
+  String stage = petStageName(gPet.stage);
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(222 - d.textWidth(stage), 14);
+  d.print(stage);
+
+  int16_t arenaX = 15;
+  int16_t arenaY = 29;
+  int16_t arenaW = 116;
+  int16_t arenaH = 82;
+  d.fillRoundRect(arenaX, arenaY, arenaW, arenaH, 10, panel2);
+  d.drawRoundRect(arenaX, arenaY, arenaW, arenaH, 10, rgb565_local(30, 52, 68));
+  for (int16_t gx = arenaX + 10; gx < arenaX + arenaW - 8; gx += 22) {
+    d.drawFastVLine(gx, arenaY + 8, arenaH - 16, grid);
   }
-  for (int16_t gy = arenaY + 14; gy < arenaY + arenaH - 8; gy += 18) {
-    d.drawFastHLine(arenaX + 12, gy, arenaW - 24, 0x18C3);
+  for (int16_t gy = arenaY + 12; gy < arenaY + arenaH - 8; gy += 16) {
+    d.drawFastHLine(arenaX + 8, gy, arenaW - 16, grid);
   }
 
-  int scale = 5;
-  int16_t heroW = kHeroSpriteW * scale;
-  int16_t heroH = kHeroSpriteH * scale;
-  int16_t margin = 8;
-  int16_t rangeX = max<int16_t>(0, arenaW - heroW - margin * 2);
-  int16_t rangeY = max<int16_t>(0, arenaH - heroH - margin * 2);
-  int16_t heroOffsetX = static_cast<int16_t>((gEyeLookX / 18.0f) * (rangeX / 2.0f));
-  int16_t heroOffsetY = static_cast<int16_t>((gEyeLookY / 14.0f) * (rangeY / 2.0f));
-  int16_t bob = abs(static_cast<int>((millis() / 170) % 10) - 5);
-  int16_t heroX = arenaX + margin + rangeX / 2 - heroW / 2 + heroOffsetX;
-  int16_t heroY = arenaY + margin + rangeY / 2 - heroH / 2 + heroOffsetY + bob / 2;
-  heroX = clampValue<int16_t>(heroX, arenaX + margin, arenaX + arenaW - margin - heroW);
-  heroY = clampValue<int16_t>(heroY, arenaY + margin, arenaY + arenaH - margin - heroH);
+  int16_t petX = arenaX + arenaW / 2 + static_cast<int16_t>(gEyeLookX / 5.5f);
+  int16_t petY = arenaY + 45 + static_cast<int16_t>(gEyeLookY / 7.0f);
+  drawProceduralOpenClawPet(petX, petY, gPet.stage == PetStage::Egg ? 38 : 42, false);
 
-  int16_t shadowW = heroW - 18;
-  int16_t shadowX = heroX + (heroW - shadowW) / 2;
-  int16_t shadowY = heroY + heroH - 6;
-  d.fillRoundRect(shadowX, shadowY, shadowW, 10, 5, 0x0000);
-  drawHeroSprite(heroX, heroY, scale, currentHeroFrame());
+  int16_t statX = 139;
+  int16_t statY = 32;
+  int16_t statW = 87;
+  d.fillRoundRect(statX - 4, statY - 4, 91, 79, 9, rgb565_local(4, 11, 19));
+  d.drawRoundRect(statX - 4, statY - 4, 91, 79, 9, rgb565_local(24, 42, 56));
+  drawPetStatBar(statX, statY, statW, "HUN", gPet.hunger, rgb565_local(255, 194, 74), rgb565_local(4, 11, 19));
+  drawPetStatBar(statX, statY + 11, statW, "FUN", gPet.happiness, rgb565_local(88, 240, 141), rgb565_local(4, 11, 19));
+  drawPetStatBar(statX, statY + 22, statW, "HP", gPet.health, rgb565_local(128, 230, 104), rgb565_local(4, 11, 19));
+  drawPetStatBar(statX, statY + 33, statW, "EN", gPet.energy, rgb565_local(47, 227, 255), rgb565_local(4, 11, 19));
+  drawPetStatBar(statX, statY + 44, statW, "CLN", gPet.cleanliness, rgb565_local(34, 209, 189), rgb565_local(4, 11, 19));
+  drawPetStatBar(statX, statY + 55, statW, "DSC", gPet.discipline, rgb565_local(170, 130, 255), rgb565_local(4, 11, 19));
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(18, 114);
+  String bottom = String(petMoodName(gPet.mood)) + " " + petActivityName(gPet.activity) +
+                  "  age " + petAgeText();
+  d.print(fitCurrentFontToWidth(bottom, 130));
+  d.setCursor(152, 114);
+  String meta = String("poop ") + String(gPet.poop) + " wifi " + String(gPet.env.netCount);
+  d.print(fitCurrentFontToWidth(meta, 72));
+
+  drawTinyFooter(panel, muted, "F food P play C clean S sleep H hunt", 14, 123, 212);
 
   renderLauncherOverlay();
   renderDebugOverlay();
@@ -10241,6 +11944,9 @@ void render() {
       case UiMode::AudioFolders:
         renderAudioFoldersUi();
         break;
+      case UiMode::Notes:
+        renderNotesUi();
+        break;
       case UiMode::Assets:
         renderAssetsUi();
         break;
@@ -10425,12 +12131,13 @@ void setup() {
   loadConfig();
   loadFocusSettings();
   loadDeviceSettings();
+  loadPetState();
   beginOtaBootGuard();
   pushSystem("Device ready: " + gDeviceId);
   pushSystem("Ctrl+Space = EN/RU");
   pushSystem("Voice: Ctrl x2 / Ctrl+V / hold G0");
   pushSystem("Tab screen, Tab+Down app, Ctrl+L menu");
-  pushSystem("/hero = Klo screen");
+  pushSystem("/pet = OpenClaw pet, /petreset resets");
   pushSystem(String("FW ") + kAppVersion + " " + String(kBuildGitSha).substring(0, 10));
   logf("[BOOT] device_id=%s", gDeviceId.c_str());
   logf("[BOOT] version=%s git=%s build=%s", kAppVersion, kBuildGitSha, kBuildTime);
@@ -10480,6 +12187,7 @@ void loop() {
     updateBatterySnapshot();
     updateFocusTimer();
     serviceFocusMetronome();
+    servicePet();
     processCompletedTopicTask();
     processCompletedTextTurn();
     updateG0VoiceTrigger();

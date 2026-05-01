@@ -61,6 +61,13 @@ Purpose: single active task list for the current Cardputer ADV firmware iteratio
 - [next] Keep numeric keys as shortcuts to the first 1-6 main groups only; sub-screen selection stays horizontal.
 - [next] Verify `Tab`, arrows, WASD, `Enter`, and `Esc` on hardware.
 
+## P1 - OpenClaw Pet / Tamagotchi
+
+- [accepted] Handoff captured in `/Users/s1z0v/kd-projects/adv_cardputer/docs/openclaw-pet-tamagotchi-handoff.md`.
+- [accepted] Patch export `/Users/s1z0v/kd-projects/adv_cardputer/tmp/openclaw-pet-tamagotchi.patch` is an older full diff from `0.2.11-dev` to `0.2.13-dev`; do not apply it wholesale over current `0.2.14-dev`, because it would collide with Notes and focus geometry fixes.
+- [done] Current firmware already contains the pet runtime, NVS persistence, stats/mood/stage/activity, offline catch-up, autonomous hunt/explore/rest, procedural OpenClaw pet renderer, pet hotkeys, `/pet`/`/tama`/`/petreset`, and `pet.*` device actions.
+- [next] Hardware QA pet screen: verify launcher entry, care hotkeys `F/P/C/S/M/D/H/E/R`, Enter/Space auto-care, accelerometer movement, persistence across reboot, and autonomous state changes over time.
+
 ## P1 - Assistant Pulse / Animation Quality
 
 - [done] Assistant Pulse is the main home/watch screen.
