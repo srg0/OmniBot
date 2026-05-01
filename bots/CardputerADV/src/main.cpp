@@ -40,7 +40,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.16-dev"
+#define APP_VERSION "0.2.18-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -627,6 +627,7 @@ struct TextTurnTaskResult {
   bool parsed = false;
   bool hasReply = false;
   bool hasDeviceActions = false;
+  bool hasAudio = false;
   bool telegramDelivered = false;
   String reply;
   String shortText;
@@ -854,6 +855,8 @@ uint32_t gLastLauncherToggleMs = 0;
 uint32_t gLedFlashUntilMs = 0;
 uint32_t gLastBatterySampleMs = 0;
 uint32_t gClientTurnSeq = 0;
+uint32_t gLastBlockingRenderPumpMs = 0;
+bool gBlockingRenderPumpEnabled = false;
 
 FaceMode gFaceMode = FaceMode::Idle;
 KeyboardLayout gKeyboardLayout = KeyboardLayout::En;
@@ -1769,6 +1772,43 @@ String makeClientTurnId(const char* prefix) {
            static_cast<unsigned long>(millis()),
            static_cast<unsigned long>(seq & 0xFFFF));
   return String(buf);
+}
+
+void pumpBlockingNetworkUi() {
+  uint32_t now = millis();
+  if (gBlockingRenderPumpEnabled && now - gLastBlockingRenderPumpMs >= kBusyRenderIntervalMs) {
+    gLastBlockingRenderPumpMs = now;
+    if (gTransferUiActive) {
+      renderTransferUi();
+    } else {
+      render();
+      gLastRenderMs = now;
+    }
+  }
+  yield();
+  delay(1);
+}
+
+bool shouldSpeakAssistantTextReply(const String& reply) {
+  String text = cleanReplyForDevice(reply);
+  if (text.length() > 90) {
+    return true;
+  }
+  uint8_t words = 0;
+  bool inWord = false;
+  for (size_t i = 0; i < text.length(); ++i) {
+    bool space = isspace(static_cast<unsigned char>(text[i]));
+    if (!space && !inWord) {
+      ++words;
+      inWord = true;
+      if (words > 5) {
+        return true;
+      }
+    } else if (space) {
+      inWord = false;
+    }
+  }
+  return false;
 }
 
 void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs) {
@@ -6652,9 +6692,17 @@ void flushCompletedRecordChunksToFile(size_t completedCount) {
     gRecordInflightChunks.pop_front();
     updateVoiceLevelFromSamples(gRecordChunkBuffers[chunkIndex], kRecordChunkSamples);
     if (gActiveRecordFile) {
-      gActiveRecordFile.write(reinterpret_cast<const uint8_t*>(gRecordChunkBuffers[chunkIndex]), kRecordChunkBytes);
-      gActiveRecordBytes += kRecordChunkBytes;
-      gActiveRecordCommittedBytes += kRecordChunkBytes;
+      size_t written = gActiveRecordFile.write(reinterpret_cast<const uint8_t*>(gRecordChunkBuffers[chunkIndex]),
+                                               kRecordChunkBytes);
+      gActiveRecordBytes += written;
+      gActiveRecordCommittedBytes += written;
+      if (written != kRecordChunkBytes) {
+        setHttpDiag("record fs short " + String(static_cast<unsigned>(written)) + "/" +
+                    String(static_cast<unsigned>(kRecordChunkBytes)));
+        logf("[VOICE] record fs short write=%u expected=%u",
+             static_cast<unsigned>(written),
+             static_cast<unsigned>(kRecordChunkBytes));
+      }
     }
   }
 }
@@ -6820,18 +6868,27 @@ bool parseHttpStatusAndHeaders(
   unsigned long deadline = millis() + timeoutMs;
   String line;
   auto readLine = [&](String& out) -> bool {
+    out = "";
     while (millis() < deadline) {
-      if (client.available()) {
-        out = client.readStringUntil('\n');
-        return true;
+      while (client.available() > 0) {
+        int raw = client.read();
+        if (raw < 0) {
+          break;
+        }
+        char c = static_cast<char>(raw);
+        if (c == '\n') {
+          return true;
+        }
+        if (out.length() < 512) {
+          out += c;
+        }
       }
       if (!client.connected()) {
-        break;
+        return out.length() > 0;
       }
-      delay(1);
+      pumpBlockingNetworkUi();
     }
-    out = "";
-    return false;
+    return out.length() > 0;
   };
 
   while (millis() < deadline) {
@@ -6906,14 +6963,12 @@ bool writeClientAll(WiFiClient& client, const uint8_t* data, size_t length, cons
              static_cast<unsigned>(length));
         break;
       }
-      yield();
-      delay(2);
+      pumpBlockingNetworkUi();
       continue;
     }
     written += sent;
     lastProgress = millis();
-    yield();
-    delay(1);
+    pumpBlockingNetworkUi();
   }
 
   if (written != length) {
@@ -6966,8 +7021,7 @@ bool writeClientAllStaged(WiFiClient& client, const uint8_t* data, size_t length
              static_cast<unsigned>(length));
         break;
       }
-      yield();
-      delay(2);
+      pumpBlockingNetworkUi();
       continue;
     }
     written += sent;
@@ -6976,8 +7030,7 @@ bool writeClientAllStaged(WiFiClient& client, const uint8_t* data, size_t length
       setHttpDiag(String(label) + ": " + String(static_cast<unsigned>(written / 1024)) + "k/" +
                   String(static_cast<unsigned>(length / 1024)) + "k");
     }
-    yield();
-    delay(1);
+    pumpBlockingNetworkUi();
   }
 
   if (written != length) {
@@ -7032,8 +7085,7 @@ bool writeClientAllFileStaged(WiFiClient& client, File& file, size_t length, con
           setHttpDiag(String(label) + ": stalled");
           return false;
         }
-        yield();
-        delay(2);
+        pumpBlockingNetworkUi();
         continue;
       }
       sentFromStage += sent;
@@ -7043,8 +7095,7 @@ bool writeClientAllFileStaged(WiFiClient& client, File& file, size_t length, con
         setHttpDiag(String(label) + ": " + String(static_cast<unsigned>(written / 1024)) + "k/" +
                     String(static_cast<unsigned>(length / 1024)) + "k");
       }
-      yield();
-      delay(1);
+      pumpBlockingNetworkUi();
     }
   }
 
@@ -7119,6 +7170,171 @@ String authHeaderLine() {
   return "Authorization: Bearer " + gDeviceToken + "\r\n" +
          "X-Device-Token: " + gDeviceToken + "\r\n" +
          "X-Device-Id: " + gDeviceId + "\r\n";
+}
+
+bool readHttpResponseBody(WiFiClient& client, int contentLength, String& response,
+                          uint32_t timeoutMs, size_t maxBytes = 16384) {
+  response = "";
+  if (contentLength > 0) {
+    response.reserve(min<size_t>(static_cast<size_t>(contentLength), maxBytes));
+  } else {
+    response.reserve(1024);
+  }
+  size_t total = 0;
+  unsigned long deadline = millis() + timeoutMs;
+  uint8_t buffer[384];
+  while (millis() < deadline && (contentLength < 0 || total < static_cast<size_t>(contentLength))) {
+    int avail = client.available();
+    if (avail <= 0) {
+      if (!client.connected()) {
+        break;
+      }
+      pumpBlockingNetworkUi();
+      continue;
+    }
+    size_t chunk = static_cast<size_t>(avail);
+    if (chunk > sizeof(buffer)) {
+      chunk = sizeof(buffer);
+    }
+    if (contentLength > 0) {
+      size_t left = static_cast<size_t>(contentLength) - total;
+      if (chunk > left) {
+        chunk = left;
+      }
+    }
+    int got = client.read(buffer, chunk);
+    if (got <= 0) {
+      pumpBlockingNetworkUi();
+      continue;
+    }
+    size_t n = static_cast<size_t>(got);
+    if (response.length() < static_cast<int>(maxBytes)) {
+      size_t room = maxBytes - static_cast<size_t>(response.length());
+      size_t copyLen = min(room, n);
+      for (size_t i = 0; i < copyLen; ++i) {
+        response += static_cast<char>(buffer[i]);
+      }
+    }
+    total += n;
+    pumpBlockingNetworkUi();
+  }
+  if (contentLength > 0 && total < static_cast<size_t>(contentLength)) {
+    setHttpDiag("response short " + String(static_cast<unsigned>(total)) + "/" +
+                String(static_cast<unsigned>(contentLength)));
+    return false;
+  }
+  return true;
+}
+
+bool postRawVoiceTurn(const uint8_t* ramPayload, const String& filePath, size_t dataSize,
+                      const String& turnId, int& statusCode, String& response) {
+  statusCode = -1;
+  response = "";
+  if (dataSize == 0 || (!ramPayload && filePath.isEmpty())) {
+    setHttpDiag("voice_post: empty payload");
+    return false;
+  }
+  if (!ensureWifiForHttp("voice-post", 3000) || gHubHost.isEmpty()) {
+    setHttpDiag("voice_post: wifi/hub unavailable");
+    return false;
+  }
+
+  WiFiClient plainClient;
+  WiFiClientSecure secureClient;
+  WiFiClient* client = nullptr;
+  if (hubUsesTls()) {
+    secureClient.setInsecure();
+    secureClient.setHandshakeTimeout(12);
+    secureClient.setTimeout((kTurnHttpTimeoutMs + 999) / 1000);
+    client = &secureClient;
+  } else {
+    plainClient.setTimeout((kTurnHttpTimeoutMs + 999) / 1000);
+    plainClient.setNoDelay(true);
+    client = &plainClient;
+  }
+
+  setHttpDiag("voice_post: connect");
+  if (!client->connect(gHubHost.c_str(), gHubPort)) {
+    setHttpDiag("voice_post: connect failed");
+    logf("[VOICE] raw post connect failed host=%s port=%u", gHubHost.c_str(), gHubPort);
+    return false;
+  }
+
+  String hostHeader = gHubHost;
+  if ((!hubUsesTls() && gHubPort != 80) || (hubUsesTls() && gHubPort != 443)) {
+    hostHeader += ":" + String(gHubPort);
+  }
+  String headers;
+  headers.reserve(768);
+  headers += "POST ";
+  headers += kDeviceAudioTurnRawPath;
+  headers += " HTTP/1.1\r\nHost: ";
+  headers += hostHeader;
+  headers += "\r\nUser-Agent: OpenClaw-Cardputer/";
+  headers += kAppVersion;
+  headers += "\r\nConnection: close\r\nContent-Type: application/octet-stream\r\nContent-Length: ";
+  headers += String(static_cast<unsigned>(dataSize));
+  headers += "\r\nX-Audio-Sample-Rate: ";
+  headers += String(kMicSampleRate);
+  headers += "\r\nX-Device-Id: ";
+  headers += gDeviceId;
+  headers += "\r\nX-Firmware-Version: ";
+  headers += kAppVersion;
+  headers += "\r\nX-Conversation-Key: ";
+  headers += currentConversationKey();
+  headers += "\r\nX-Client-Msg-Id: ";
+  headers += turnId;
+  headers += "\r\nX-Turn-Id: ";
+  headers += turnId;
+  headers += "\r\nX-Reply-Audio: true\r\nX-Save-Reply-Audio: true\r\n";
+  if (!gDeviceToken.isEmpty()) {
+    headers += "Authorization: Bearer ";
+    headers += gDeviceToken;
+    headers += "\r\nX-Device-Token: ";
+    headers += gDeviceToken;
+    headers += "\r\n";
+  }
+  headers += "\r\n";
+
+  if (!writeClientAll(*client, headers, "voice_headers")) {
+    client->stop();
+    return false;
+  }
+
+  bool payloadOk = false;
+  if (!filePath.isEmpty()) {
+    fs::FS* fs = activeVoiceFs();
+    File pcmFile = fs ? fs->open(filePath, "r") : File();
+    if (!pcmFile) {
+      setHttpDiag("voice_body: file open failed");
+      client->stop();
+      return false;
+    }
+    payloadOk = writeClientAllFileStaged(*client, pcmFile, dataSize, "voice_body");
+    pcmFile.close();
+  } else {
+    payloadOk = writeClientAllStaged(*client, ramPayload, dataSize, "voice_body");
+  }
+  if (!payloadOk) {
+    client->stop();
+    return false;
+  }
+
+  setHttpDiag("voice_post: wait reply");
+  int contentLength = -1;
+  uint32_t ignoredSampleRate = kTtsDefaultSampleRate;
+  if (!parseHttpStatusAndHeaders(*client, statusCode, contentLength, ignoredSampleRate, kTurnHttpTimeoutMs)) {
+    setHttpDiag("voice_post: response header failed");
+    client->stop();
+    return false;
+  }
+  if (!readHttpResponseBody(*client, contentLength, response, 15000)) {
+    logf("[VOICE] raw post response body short status=%d body=%s", statusCode, response.c_str());
+  }
+  client->stop();
+  setHttpDiag("voice_post: http " + String(statusCode));
+  logf("[VOICE] raw post status=%d body=%u", statusCode, static_cast<unsigned>(response.length()));
+  return true;
 }
 
 bool requestAndPlayTts(const String& text) {
@@ -7356,8 +7572,8 @@ bool sendTextTurn(const String& text) {
   doc["firmware_version"] = kAppVersion;
   doc["conversation_key"] = currentConversationKey();
   doc["input_type"] = "text";
-  doc["reply_audio"] = true;
-  doc["save_reply_audio"] = true;
+  doc["reply_audio"] = false;
+  doc["save_reply_audio"] = false;
   doc["client_msg_id"] = turnId;
   doc["turn_id"] = turnId;
 
@@ -7434,7 +7650,8 @@ bool sendTextTurn(const String& text) {
     String audioTitle;
     String audioSha;
     uint32_t audioSize = 0;
-    if (resp["audio"].is<JsonObject>()) {
+    bool hasAudio = resp["audio"].is<JsonObject>();
+    if (hasAudio) {
       JsonObject audio = resp["audio"].as<JsonObject>();
       audioUrl = audio["url"] | "";
       audioPath = audio["path"] | "";
@@ -7442,7 +7659,9 @@ bool sendTextTurn(const String& text) {
       audioSha = audio["sha256"] | "";
       audioSize = audio["size"] | 0;
     }
-    if (!downloadAndPlayResponseAudio(audioUrl, audioPath, audioSha, audioSize, audioTitle, reply)) {
+    if (hasAudio) {
+      downloadAndPlayResponseAudio(audioUrl, audioPath, audioSha, audioSize, audioTitle, reply);
+    } else if (shouldSpeakAssistantTextReply(reply)) {
       requestAndPlayTts(reply);
     }
     logf("[TEXT] reply=%s", reply.c_str());
@@ -7519,8 +7738,8 @@ void textTurnTask(void* arg) {
       doc["firmware_version"] = kAppVersion;
       doc["conversation_key"] = payload->conversationKey;
       doc["input_type"] = "text";
-      doc["reply_audio"] = true;
-      doc["save_reply_audio"] = true;
+      doc["reply_audio"] = false;
+      doc["save_reply_audio"] = false;
       doc["client_msg_id"] = payload->clientMsgId;
       doc["turn_id"] = payload->turnId;
 
@@ -7565,6 +7784,7 @@ void textTurnTask(void* arg) {
             result->hasDeviceActions = !result->deviceActionsJson.isEmpty();
           }
           if (resp["audio"].is<JsonObject>()) {
+            result->hasAudio = true;
             JsonObject audio = resp["audio"].as<JsonObject>();
             result->audioUrl = audio["url"] | "";
             result->audioPath = audio["path"] | "";
@@ -7688,9 +7908,12 @@ void processCompletedTextTurn() {
     setStatus("Text turn failed", 2000);
   } else if (done->ok && done->hasReply) {
     appendAssistantReply(done->reply);
-    bool playedAudio = downloadAndPlayResponseAudio(done->audioUrl, done->audioPath, done->audioSha256,
-                                                    done->audioSize, done->audioTitle, done->reply);
-    if (!playedAudio) {
+    bool playedAudio = false;
+    if (done->hasAudio) {
+      playedAudio = downloadAndPlayResponseAudio(done->audioUrl, done->audioPath, done->audioSha256,
+                                                 done->audioSize, done->audioTitle, done->reply);
+    }
+    if (!playedAudio && shouldSpeakAssistantTextReply(done->reply)) {
       requestAndPlayTts(done->reply);
     }
     logf("[TEXT] async reply=%s", done->reply.c_str());
@@ -7751,6 +7974,23 @@ bool stopRecordingAndSend() {
     if (gActiveRecordFile) {
       gActiveRecordFile.flush();
       gActiveRecordFile.close();
+    }
+    fs::FS* fs = activeVoiceFs();
+    if (fs && !gActiveRecordPath.isEmpty() && fsExists(*fs, gActiveRecordPath)) {
+      File verifyFile = fs->open(gActiveRecordPath, "r");
+      if (verifyFile) {
+        size_t actualBytes = verifyFile.size();
+        verifyFile.close();
+        if (actualBytes != gActiveRecordBytes) {
+          appendRuntimeLog("VOICE", "record size adjusted counter=" +
+                                    String(static_cast<unsigned>(gActiveRecordBytes)) +
+                                    " file=" + String(static_cast<unsigned>(actualBytes)), true);
+          logf("[VOICE] record size adjusted counter=%u file=%u",
+               static_cast<unsigned>(gActiveRecordBytes),
+               static_cast<unsigned>(actualBytes));
+          gActiveRecordBytes = actualBytes;
+        }
+      }
     }
     gRecordedSamples = gActiveRecordBytes / sizeof(int16_t);
     dataSize = static_cast<uint32_t>(gActiveRecordBytes);
@@ -7841,79 +8081,29 @@ bool stopRecordingAndSend() {
   }
   logHeapStats("voice-upload");
 
-  HTTPClient http;
-  std::unique_ptr<WiFiClientSecure> secureClient;
-  String url = hubBaseUrl() + kDeviceAudioTurnRawPath;
   String turnId = makeClientTurnId("voice");
-  http.setTimeout(kTurnHttpTimeoutMs);
-  http.setReuse(false);
-  bool beginOk = false;
-  if (hubUsesTls()) {
-    secureClient.reset(new WiFiClientSecure());
-    secureClient->setInsecure();
-    secureClient->setHandshakeTimeout(12);
-    beginOk = http.begin(*secureClient, url);
-  } else {
-    beginOk = http.begin(url);
-  }
-  if (!beginOk) {
-    pushError("Voice upload connect failed.");
-    setFaceMode(FaceMode::Error);
-    setStatus("Voice upload failed", 2000);
-    setVoiceDiag("voice: upload connect failed");
-    logf("[VOICE] upload begin failed url=%s", url.c_str());
-    finishVoiceTurn();
-    if (gRecordingToFile) {
-      fs::FS* fs = activeVoiceFs();
-      if (fs) {
-        fsRemove(*fs, pcmUploadPath);
-      }
-      gRecordingToFile = false;
-      gActiveRecordPath = "";
-      gActiveRecordBytes = 0;
-      gActiveRecordCommittedBytes = 0;
-      gActiveRecordExpectedBytes = 0;
-    } else {
-      releaseRecordBuffer();
-    }
-    return false;
-  }
-
-  http.addHeader("Content-Type", "application/octet-stream");
-  http.addHeader("X-Audio-Sample-Rate", String(kMicSampleRate));
-  http.addHeader("X-Device-Id", gDeviceId);
-  http.addHeader("X-Firmware-Version", kAppVersion);
-  http.addHeader("X-Conversation-Key", currentConversationKey());
-  http.addHeader("X-Client-Msg-Id", turnId);
-  http.addHeader("X-Turn-Id", turnId);
-  http.addHeader("X-Reply-Audio", "true");
-  http.addHeader("X-Save-Reply-Audio", "true");
-  if (!gDeviceToken.isEmpty()) {
-    http.addHeader("Authorization", "Bearer " + gDeviceToken);
-    http.addHeader("X-Device-Token", gDeviceToken);
-  }
-
-  setStatus("Transcribing...");
+  setStatus("Uploading voice...");
   render();
   gLastRenderMs = millis();
   appendRuntimeLog("VOICE", "upload start bytes=" + String(static_cast<unsigned>(dataSize)) +
                             " ctx=" + currentConversationKey() +
                             " turn=" + turnId, true);
   int statusCode = -1;
+  String response;
+  bool transportOk = false;
+  bool prevRenderPump = gBlockingRenderPumpEnabled;
+  gBlockingRenderPumpEnabled = true;
+  gLastBlockingRenderPumpMs = 0;
+  pumpBlockingNetworkUi();
   if (gRecordingToFile) {
-    fs::FS* fs = activeVoiceFs();
-    File pcmFile = fs ? fs->open(pcmUploadPath, "r") : File();
-    if (pcmFile) {
-      setHttpDiag("voice_pcm: http stream " + String(static_cast<unsigned>(dataSize / 1024)) + "k");
-      statusCode = http.sendRequest("POST", &pcmFile, dataSize);
-      pcmFile.close();
-    }
+    setHttpDiag("voice_pcm: raw file " + String(static_cast<unsigned>(dataSize / 1024)) + "k");
+    transportOk = postRawVoiceTurn(nullptr, pcmUploadPath, dataSize, turnId, statusCode, response);
   } else {
-    setHttpDiag("voice_pcm: http ram " + String(static_cast<unsigned>(dataSize / 1024)) + "k");
-    statusCode = http.POST(reinterpret_cast<uint8_t*>(gRecordBuffer), dataSize);
+    setHttpDiag("voice_pcm: raw ram " + String(static_cast<unsigned>(dataSize / 1024)) + "k");
+    transportOk = postRawVoiceTurn(reinterpret_cast<const uint8_t*>(gRecordBuffer), "", dataSize,
+                                   turnId, statusCode, response);
   }
-  String response = statusCode > 0 ? http.getString() : "";
-  http.end();
+  gBlockingRenderPumpEnabled = prevRenderPump;
   finishVoiceTurn();
   if (gRecordingToFile) {
     fs::FS* fs = activeVoiceFs();
@@ -7929,14 +8119,16 @@ bool stopRecordingAndSend() {
     releaseRecordBuffer();
   }
 
-  if (statusCode <= 0) {
-    String transportError = HTTPClient::errorToString(statusCode);
+  if (!transportOk || statusCode <= 0) {
+    String transportError = gLastHttpDiag;
+    if (transportError.isEmpty()) {
+      transportError = statusCode <= 0 ? HTTPClient::errorToString(statusCode) : String("unknown");
+    }
     pushError("Voice transport failed: " + transportError);
     setFaceMode(FaceMode::Error);
     setStatus("Voice transport failed", 2200);
-    setVoiceDiag("voice: httpclient " + String(statusCode));
-    setHttpDiag("voice: " + transportError);
-    logf("[VOICE] HTTPClient upload failed code=%d err=%s bytes=%u",
+    setVoiceDiag("voice: transport " + String(statusCode));
+    logf("[VOICE] raw upload failed code=%d err=%s bytes=%u",
          statusCode,
          transportError.c_str(),
          static_cast<unsigned>(dataSize));
