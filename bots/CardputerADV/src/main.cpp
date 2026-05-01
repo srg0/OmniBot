@@ -40,7 +40,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.25-dev"
+#define APP_VERSION "0.2.26-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -3730,12 +3730,14 @@ bool applyOtaFromManifest() {
   }
 
   esp_ota_handle_t otaHandle = 0;
-  esp_err_t otaErr = esp_ota_begin(next, expectedSize, &otaHandle);
+  // Direct streaming is a fallback path. Use incremental erase so flash erase
+  // cannot stall the already-open HTTP response long enough to break TLS/TCP.
+  esp_err_t otaErr = esp_ota_begin(next, OTA_WITH_SEQUENTIAL_WRITES, &otaHandle);
   if (otaErr != ESP_OK) {
     http.end();
     setStatus("OTA begin err " + String(static_cast<int>(otaErr)), 1800);
     appendRuntimeLog("OTA", "begin failed err=" + String(static_cast<int>(otaErr)) +
-                              " size=" + String(static_cast<unsigned>(expectedSize)), true);
+                              " mode=sequential size=" + String(static_cast<unsigned>(expectedSize)), true);
     return false;
   }
 
