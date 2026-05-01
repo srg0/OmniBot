@@ -59,11 +59,9 @@ Baseline checked:
 - The bridge still has default caps around 4MB upload and 120s voice duration unless production config overrides them; this is not enough for reliable 5-10 minute voice.
 - Async turn protocol is not implemented: the desired `POST turn -> turn_id -> pending UI -> poll/WS result -> download audio` remains a planned reliability upgrade.
 - MP3 player repo was not embedded as a full MP3 backend. The accepted stable media path is WAV/PCM; MP3 remains separate/future.
-- Wake word / "Hey Pixel" is not implemented. Voice remains manual via double Ctrl / G0 / hotkeys.
 - Full OpenClaw bridge v1 topic contract is only partially used by firmware. The bridge has `/api/cardputer/v1/topics/...`, but core turns still go through compatibility endpoints `/api/device-text-turn` and `/api/device-audio-turn-raw`.
 - Secure token rotation/revocation and token hashing in bridge state are not implemented; existing protection is bearer/device token gating and not committing secrets.
 - TLS certificate pinning on the device is not implemented.
-- Full M5PORKCHOP-style settings/menu theme is not fully ported.
 - Premium chat compose/thread/reply screens are not fully ported.
 - Premium Focus variants `deep/break/metro/reflect` are not fully ported.
 - Full browser design gallery update is not done.
@@ -80,3 +78,7 @@ Baseline checked:
 4. Finish the visual pass on Chat, Launcher, Voice Notes, Focus, Settings, and update the 1x1 HTML review artifact to match firmware.
 5. Run hardware acceptance matrix: text, RU input, topic switch, topic history, voice record, voice reply, saved playback, `/audio` library, OTA, SD-missing banners, notes, pet persistence.
 
+## Explicitly Out Of Scope
+
+- Do not port the settings/menu screen to M5PORKCHOP style. Keep settings lightweight and consistent with the current Cardputer ADV UI.
+- Do not implement wake word / "Hey Pixel". Voice activation stays manual through double Ctrl, G0, and explicit hotkeys.
