@@ -40,7 +40,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.18-dev"
+#define APP_VERSION "0.2.19-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -185,6 +185,8 @@ constexpr uint32_t kRecordDrainTimeoutMs = 900;
 constexpr size_t kPlaybackChunkSamples = 2048;
 constexpr size_t kPlaybackChunkBytes = kPlaybackChunkSamples * sizeof(int16_t);
 constexpr size_t kPlaybackBufferCount = 2;
+constexpr uint8_t kPlaybackSpectrumBands = 16;
+constexpr uint8_t kPlaybackSpectrumMaxBar = 18;
 constexpr size_t kEmojiCacheCap = 10;
 constexpr size_t kEmojiMaxPngBytes = 64 * 1024;
 constexpr uint8_t kTca8418IntPin = 11;
@@ -912,11 +914,14 @@ size_t gPlaybackStreamTotalBytes = 0;
 uint8_t gPlaybackStreamNextBuffer = 0;
 bool gPlaybackStreamRawPcm = false;
 uint8_t gPlaybackStreamBuffers[kPlaybackBufferCount][kPlaybackChunkBytes];
+uint32_t gPlaybackStartedMs = 0;
+uint32_t gPlaybackDurationMs = 0;
 int16_t gVoiceTickerX = 90;
 uint8_t gVoiceGraphSpeed = 0;
 uint8_t gVoiceLevel8 = 28;
 uint32_t gAssistantPulsePressUntilMs = 0;
-int gVoiceEqBars[14] = {};
+uint8_t gVoiceEqBars[kPlaybackSpectrumBands] = {};
+uint8_t gVoiceEqPeaks[kPlaybackSpectrumBands] = {};
 BatterySnapshot gBatterySnapshot;
 FocusSettings gFocusSettings;
 DeviceSettings gDeviceSettings;
@@ -1750,6 +1755,117 @@ void updateVoiceLevelFromSamples(const int16_t* samples, size_t sampleCount) {
   uint32_t avg = acc / reads;
   uint8_t level = static_cast<uint8_t>(min<uint32_t>(255, avg >> 4));
   gVoiceLevel8 = static_cast<uint8_t>((static_cast<uint16_t>(gVoiceLevel8) * 3 + level) / 4);
+}
+
+uint32_t playbackDurationMsForBytes(size_t bytes, uint32_t sampleRate) {
+  if (bytes == 0 || sampleRate == 0) {
+    return 0;
+  }
+  return static_cast<uint32_t>((static_cast<uint64_t>(bytes / sizeof(int16_t)) * 1000ULL) / sampleRate);
+}
+
+uint32_t playbackElapsedMs() {
+  if (!gPlaybackActive || gPlaybackStartedMs == 0) {
+    return 0;
+  }
+  return min<uint32_t>(millis() - gPlaybackStartedMs, gPlaybackDurationMs);
+}
+
+uint32_t playbackRemainingMs() {
+  if (!gPlaybackActive || gPlaybackDurationMs == 0) {
+    return 0;
+  }
+  uint32_t elapsed = playbackElapsedMs();
+  return elapsed >= gPlaybackDurationMs ? 0 : gPlaybackDurationMs - elapsed;
+}
+
+uint8_t playbackProgressPct() {
+  if (!gPlaybackActive || gPlaybackDurationMs == 0) {
+    return 0;
+  }
+  return static_cast<uint8_t>(clampValue<uint32_t>((playbackElapsedMs() * 100ULL) / gPlaybackDurationMs, 0, 100));
+}
+
+String formatPlaybackMs(uint32_t ms) {
+  char buf[8];
+  uint32_t sec = ms / 1000U;
+  snprintf(buf, sizeof(buf), "%02u:%02u", static_cast<unsigned>(sec / 60U),
+           static_cast<unsigned>(sec % 60U));
+  return String(buf);
+}
+
+void resetPlaybackAnalyzer() {
+  gVoiceLevel8 = 28;
+  for (uint8_t i = 0; i < kPlaybackSpectrumBands; ++i) {
+    gVoiceEqBars[i] = 1;
+    gVoiceEqPeaks[i] = 1;
+  }
+}
+
+void updatePlaybackAnalyzerFromSamples(const int16_t* samples, size_t sampleCount, uint32_t sampleRate) {
+  if (!samples || sampleCount < 32 || sampleRate < 4000) {
+    return;
+  }
+  updateVoiceLevelFromSamples(samples, sampleCount);
+
+  // Lightweight real spectrum: Goertzel bands over the PCM chunk. It avoids a
+  // full FFT dependency while still reflecting the actual audio being played.
+  const size_t n = min<size_t>(sampleCount, 384);
+  int64_t dcAcc = 0;
+  for (size_t i = 0; i < n; ++i) {
+    dcAcc += samples[i];
+  }
+  const float dc = static_cast<float>(dcAcc) / static_cast<float>(n);
+  const float maxFreq = max<float>(420.0f, min<float>(static_cast<float>(sampleRate) * 0.46f, 7600.0f));
+  const float minFreq = 120.0f;
+  const float ratio = maxFreq / minFreq;
+
+  for (uint8_t band = 0; band < kPlaybackSpectrumBands; ++band) {
+    float norm = (static_cast<float>(band) + 0.5f) / static_cast<float>(kPlaybackSpectrumBands);
+    float freq = minFreq * powf(ratio, norm);
+    float omega = 2.0f * kPi * freq / static_cast<float>(sampleRate);
+    float coeff = 2.0f * cosf(omega);
+    float q0 = 0.0f;
+    float q1 = 0.0f;
+    float q2 = 0.0f;
+    for (size_t i = 0; i < n; i += 2) {
+      float sample = static_cast<float>(samples[i]) - dc;
+      q0 = coeff * q1 - q2 + sample;
+      q2 = q1;
+      q1 = q0;
+    }
+    float power = max<float>(0.0f, q1 * q1 + q2 * q2 - coeff * q1 * q2);
+    float magnitude = sqrtf(power) / static_cast<float>(n);
+    uint8_t target = static_cast<uint8_t>(clampValue<int>(
+        1 + static_cast<int>(sqrtf(magnitude) * 0.24f),
+        1,
+        kPlaybackSpectrumMaxBar));
+
+    uint8_t current = gVoiceEqBars[band];
+    if (target >= current) {
+      current = static_cast<uint8_t>((current + target * 3U) / 4U);
+    } else {
+      current = static_cast<uint8_t>(max<int>(1, static_cast<int>(current) - 1));
+    }
+    gVoiceEqBars[band] = current;
+    if (current >= gVoiceEqPeaks[band]) {
+      gVoiceEqPeaks[band] = current;
+    } else if ((millis() / 90U + band) % 2U == 0U) {
+      gVoiceEqPeaks[band] = static_cast<uint8_t>(max<int>(1, static_cast<int>(gVoiceEqPeaks[band]) - 1));
+    }
+  }
+}
+
+bool adjustSpeakerVolume(int delta, uint32_t ttlMs = 700) {
+  int next = clampValue<int>(static_cast<int>(gSpeakerVolume) + delta, 0, 255);
+  if (next == static_cast<int>(gSpeakerVolume)) {
+    setStatus(delta > 0 ? "Vol max" : "Vol min", ttlMs);
+    return false;
+  }
+  gSpeakerVolume = static_cast<uint8_t>(next);
+  M5Cardputer.Speaker.setVolume(gSpeakerVolume);
+  setStatus("Vol " + String(map(gSpeakerVolume, 0, 255, 0, 100)) + "%", ttlMs);
+  return true;
 }
 
 void setVoiceDiag(const String& text) {
@@ -4219,6 +4335,9 @@ void stopPlaybackStream() {
   gPlaybackStreamSampleRate = 0;
   gPlaybackStreamNextBuffer = 0;
   gPlaybackStreamRawPcm = false;
+  gPlaybackStartedMs = 0;
+  gPlaybackDurationMs = 0;
+  resetPlaybackAnalyzer();
   if (gDynamicPlaybackBuffer) {
     free(gDynamicPlaybackBuffer);
     gDynamicPlaybackBuffer = nullptr;
@@ -4244,6 +4363,9 @@ bool startPlaybackStreamFromRawPcmFile(const String& path, uint32_t sampleRate, 
   gPlaybackStreamSampleRate = sampleRate;
   gPlaybackStreamNextBuffer = 0;
   gPlaybackStreamRawPcm = true;
+  gPlaybackStartedMs = 0;
+  gPlaybackDurationMs = playbackDurationMsForBytes(audioLen, sampleRate);
+  resetPlaybackAnalyzer();
   gPlaybackStreaming = true;
   gPlaybackActive = true;
   pulseButtonPress();
@@ -4288,6 +4410,9 @@ bool startPlaybackStreamFromWavFile(const String& path, const String& diag) {
   gPlaybackStreamSampleRate = info.sampleRate;
   gPlaybackStreamNextBuffer = 0;
   gPlaybackStreamRawPcm = false;
+  gPlaybackStartedMs = 0;
+  gPlaybackDurationMs = playbackDurationMsForBytes(info.dataBytes, info.sampleRate);
+  resetPlaybackAnalyzer();
   gPlaybackStreaming = true;
   gPlaybackActive = true;
   pulseButtonPress();
@@ -4322,6 +4447,9 @@ void servicePlaybackStream() {
       gPlaybackStreamRemainingBytes = 0;
       break;
     }
+    updatePlaybackAnalyzerFromSamples(reinterpret_cast<const int16_t*>(buffer),
+                                      readBytes / sizeof(int16_t),
+                                      gPlaybackStreamSampleRate);
     bool firstChunk = M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0;
     bool queued = M5Cardputer.Speaker.playRaw(reinterpret_cast<const int16_t*>(buffer),
                                               readBytes / sizeof(int16_t),
@@ -4337,6 +4465,9 @@ void servicePlaybackStream() {
       stopPlaybackStream();
       gPlaybackActive = false;
       return;
+    }
+    if (gPlaybackStartedMs == 0) {
+      gPlaybackStartedMs = millis();
     }
     gPlaybackStreamRemainingBytes -= readBytes;
     gPlaybackStreamNextBuffer = (gPlaybackStreamNextBuffer + 1) % kPlaybackBufferCount;
@@ -8815,9 +8946,7 @@ void handleVoicePlayerKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (key == 'v' || key == 'V') {
-    gSpeakerVolume = gSpeakerVolume >= 224 ? 64 : gSpeakerVolume + 32;
-    M5Cardputer.Speaker.setVolume(gSpeakerVolume);
-    setStatus("Vol " + String(gSpeakerVolume), 600);
+    adjustSpeakerVolume(gSpeakerVolume >= 224 ? -160 : 32);
     return;
   }
   if (key == 'a' || key == 'A' || keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
@@ -8832,15 +8961,11 @@ void handleVoicePlayerKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (key == '-' && gSpeakerVolume >= 32) {
-    gSpeakerVolume -= 32;
-    M5Cardputer.Speaker.setVolume(gSpeakerVolume);
-    setStatus("Vol " + String(gSpeakerVolume), 600);
+    adjustSpeakerVolume(-32);
     return;
   }
   if ((key == '=' || key == '+') && gSpeakerVolume <= 223) {
-    gSpeakerVolume += 32;
-    M5Cardputer.Speaker.setVolume(gSpeakerVolume);
-    setStatus("Vol " + String(gSpeakerVolume), 600);
+    adjustSpeakerVolume(32);
   }
 }
 
@@ -8910,15 +9035,11 @@ bool handleFocusKey(char key, const Keyboard_Class::KeysState& keys) {
     return true;
   }
   if (key == '-' && gSpeakerVolume >= 32) {
-    gSpeakerVolume -= 32;
-    M5Cardputer.Speaker.setVolume(gSpeakerVolume);
-    setStatus("Vol " + String(gSpeakerVolume), 600);
+    adjustSpeakerVolume(-32);
     return true;
   }
   if ((key == '=' || key == '+') && gSpeakerVolume <= 223) {
-    gSpeakerVolume += 32;
-    M5Cardputer.Speaker.setVolume(gSpeakerVolume);
-    setStatus("Vol " + String(gSpeakerVolume), 600);
+    adjustSpeakerVolume(32);
     return true;
   }
   if (key == '?' || lowerKey == 'h') {
@@ -9534,6 +9655,14 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     }
     return;
   }
+  if (gPlaybackActive && (key == '-' || key == '_')) {
+    adjustSpeakerVolume(-24);
+    return;
+  }
+  if (gPlaybackActive && (key == '=' || key == '+')) {
+    adjustSpeakerVolume(24);
+    return;
+  }
   if (keys.ctrl && lowerKey == 'd') {
     gDebugOverlayVisible = !gDebugOverlayVisible;
     setStatus(gDebugOverlayVisible ? "Debug overlay on" : "Debug overlay off", 1000);
@@ -9733,6 +9862,12 @@ void pollTyping() {
     moveLauncherSelection(-1);
   } else if (gLauncherVisible && downDown) {
     moveLauncherSelection(1);
+  } else if (!gLauncherVisible && gPlaybackActive && upDown) {
+    adjustSpeakerVolume(24);
+    setKeyDiag("vol:up");
+  } else if (!gLauncherVisible && gPlaybackActive && downDown) {
+    adjustSpeakerVolume(-24);
+    setKeyDiag("vol:down");
   } else if (gUiMode == UiMode::Contexts && (leftDown || upDown)) {
     handleTypingKey(',', keys);
   } else if (gUiMode == UiMode::Contexts && (rightDown || downDown)) {
@@ -12036,8 +12171,20 @@ void renderAssistantPulseUi() {
       d.fillCircle(bx, dotY, (i % 3 == 0) ? 3 : 2, (i % 2) ? c1 : c2);
       continue;
     }
+    if (state == AssistantPulseState::Playback) {
+      uint8_t band = static_cast<uint8_t>(clampValue<int>(
+          (i * kPlaybackSpectrumBands) / max<int>(1, bars), 0, kPlaybackSpectrumBands - 1));
+      int16_t h = static_cast<int16_t>(4 + gVoiceEqBars[band] * 2);
+      h = clampValue<int16_t>(h, 5, 42);
+      uint16_t barColor = (i % 3 == 0) ? c2 : c1;
+      d.fillRoundRect(bx - 2, waveY - h / 2, 4, h, 2, barColor);
+      uint8_t peak = gVoiceEqPeaks[band];
+      int16_t py = waveY - static_cast<int16_t>(min<int>(42, 4 + peak * 2)) / 2 - 2;
+      d.drawFastHLine(bx - 2, py, 4, fg);
+      continue;
+    }
     float amp = state == AssistantPulseState::Recording ? 1.05f :
-                state == AssistantPulseState::Playback ? 0.90f : 0.68f;
+                0.68f;
     int16_t h = static_cast<int16_t>((8.0f + fabsf(sinf(t * 3.6f + i * 0.74f)) * 22.0f +
                                       fabsf(cosf(t * 1.7f + i * 0.31f)) * 7.0f) *
                                      amp * (0.65f + level * 0.75f));
@@ -12047,8 +12194,12 @@ void renderAssistantPulseUi() {
 
   if (state == AssistantPulseState::Playback) {
     d.fillRoundRect(117, 110, 88, 2, 1, rgb565_local(23, 61, 69));
-    int16_t progress = 117 + static_cast<int16_t>(88.0f * fmodf(t * 0.17f, 1.0f));
-    d.fillRoundRect(117, 110, max<int16_t>(1, progress - 117), 3, 1, c1);
+    int16_t progress = static_cast<int16_t>((playbackProgressPct() * 88U) / 100U);
+    d.fillRoundRect(117, 110, max<int16_t>(1, progress), 3, 1, c1);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(rgb565_local(150, 244, 211), bg);
+    d.setCursor(206, 107);
+    d.print(formatPlaybackMs(playbackRemainingMs()));
   }
   if (state == AssistantPulseState::Recording) {
     d.fillCircle(133, 112, 4 + static_cast<int16_t>(sinf(t * 8.0f)), c1);
@@ -12098,9 +12249,28 @@ void renderVoicePlayerUi() {
   d.setCursor(224 - d.textWidth(count), 14);
   d.print(count);
 
+  uint32_t now = millis();
+  const int spectrumBaseY = 112;
+  const int spectrumX = 16;
+  const int spectrumGap = 13;
+  for (uint8_t i = 0; i < kPlaybackSpectrumBands; ++i) {
+    int h = gPlaybackActive ? (6 + gVoiceEqBars[i] * 3) : (7 + ((i * 3 + now / 180) % 12));
+    h = clampValue<int>(h, 5, 56);
+    int x = spectrumX + i * spectrumGap;
+    uint16_t fill = gPlaybackActive
+                        ? (i < 5 ? rgb565_local(68, 255, 178)
+                                 : (i < 11 ? rgb565_local(47, 227, 255) : rgb565_local(255, 194, 74)))
+                        : rgb565_local(17, 57, 72);
+    d.fillRoundRect(x, spectrumBaseY - h, 7, h, 3, rgb565_local(4, 20, 28));
+    d.fillRoundRect(x + 1, spectrumBaseY - h + 1, 5, h - 1, 2, fill);
+    if (gPlaybackActive) {
+      int peakY = spectrumBaseY - clampValue<int>(6 + gVoiceEqPeaks[i] * 3, 5, 56) - 3;
+      d.drawFastHLine(x + 1, peakY, 5, rgb565_local(236, 255, 246));
+    }
+  }
+
   int cx = 52;
   int cy = 68;
-  uint32_t now = millis();
   for (int i = 0; i < 18; ++i) {
     float a = i * 0.349f + now * 0.004f;
     int r = 18 + (i % 3) * 4;
@@ -12143,31 +12313,25 @@ void renderVoicePlayerUi() {
     d.print(String(gSelectedVoiceNote + 1) + "/" + String(gVoiceNotes.size()));
 
     String timeText = "--:--";
-    if (gPlaybackActive && gPlaybackStreamSampleRate > 0) {
-      uint32_t leftMs = static_cast<uint32_t>((gPlaybackStreamRemainingBytes / 2ULL) * 1000ULL / gPlaybackStreamSampleRate);
-      char buf[6];
-      snprintf(buf, sizeof(buf), "%02u:%02u", static_cast<unsigned>(leftMs / 60000U),
-               static_cast<unsigned>((leftMs / 1000U) % 60U));
-      timeText = buf;
+    if (gPlaybackActive) {
+      timeText = formatPlaybackMs(playbackRemainingMs());
+    }
+    int progressW = gPlaybackActive ? static_cast<int>((playbackProgressPct() * 112U) / 100U) : 0;
+    d.fillRoundRect(98, 87, 114, 3, 2, rgb565_local(26, 43, 55));
+    if (progressW > 0) {
+      d.fillRoundRect(98, 87, progressW, 3, 2, green);
     }
     d.setTextColor(gPlaybackActive ? green : amber, panel);
     d.setCursor(184, 96);
     d.print(timeText);
   }
 
-  for (int i = 0; i < 16; ++i) {
-    if (gPlaybackActive && (gVoiceGraphSpeed % 3 == 0)) {
-      gVoiceEqBars[i % 14] = random(1, 8);
-    }
-    int h = gPlaybackActive ? gVoiceEqBars[i % 14] : (2 + ((i + now / 160) % 5));
-    d.fillRoundRect(18 + i * 7, 108 - h * 3, 4, h * 3, 2, gPlaybackActive ? green : cyan);
-  }
   gVoiceGraphSpeed++;
 
   int volW = map(gSpeakerVolume, 0, 255, 0, 58);
   d.fillRoundRect(88, 99, 64, 7, 4, rgb565_local(21, 35, 46));
   d.fillRoundRect(91, 101, volW, 3, 2, amber);
-  drawTinyFooter(panel, muted, "< > note  Ent play  V vol", 15, 120, 210);
+  drawTinyFooter(panel, muted, "< > note  Ent play  +/- vol", 15, 120, 210);
 
   renderLauncherOverlay();
   renderDebugOverlay();
