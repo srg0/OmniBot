@@ -18,6 +18,7 @@
 #include <Update.h>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -39,7 +40,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.14-dev"
+#define APP_VERSION "0.2.16-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -85,6 +86,7 @@ constexpr uint32_t kWsReconnectIntervalMs = 3000;
 constexpr uint32_t kRenderIntervalMs = 20;
 constexpr uint32_t kBusyRenderIntervalMs = 60;
 constexpr uint32_t kHttpReconnectTimeoutMs = 9000;
+constexpr uint16_t kTurnHttpTimeoutMs = 65000;
 constexpr uint8_t kHttpConnectRetries = 3;
 constexpr bool kUseHubWebSocket = false;
 constexpr size_t kMaxChatLines = 24;
@@ -615,6 +617,8 @@ struct TextTurnTaskPayload {
   String deviceId;
   String deviceToken;
   String conversationKey;
+  String clientMsgId;
+  String turnId;
 };
 
 struct TextTurnTaskResult {
@@ -849,6 +853,7 @@ uint32_t gLastTimeSyncMs = 0;
 uint32_t gLastLauncherToggleMs = 0;
 uint32_t gLedFlashUntilMs = 0;
 uint32_t gLastBatterySampleMs = 0;
+uint32_t gClientTurnSeq = 0;
 
 FaceMode gFaceMode = FaceMode::Idle;
 KeyboardLayout gKeyboardLayout = KeyboardLayout::En;
@@ -900,6 +905,7 @@ File gPlaybackStreamFile;
 String gPlaybackStreamPath;
 uint32_t gPlaybackStreamSampleRate = 0;
 size_t gPlaybackStreamRemainingBytes = 0;
+size_t gPlaybackStreamTotalBytes = 0;
 uint8_t gPlaybackStreamNextBuffer = 0;
 bool gPlaybackStreamRawPcm = false;
 uint8_t gPlaybackStreamBuffers[kPlaybackBufferCount][kPlaybackChunkBytes];
@@ -1753,6 +1759,16 @@ void setHttpDiag(const String& text) {
 
 void setKeyDiag(const String& text) {
   gLastKeyDiag = text;
+}
+
+String makeClientTurnId(const char* prefix) {
+  uint32_t seq = ++gClientTurnSeq;
+  char buf[48];
+  snprintf(buf, sizeof(buf), "%s-%08lx-%04lx",
+           prefix && prefix[0] ? prefix : "turn",
+           static_cast<unsigned long>(millis()),
+           static_cast<unsigned long>(seq & 0xFFFF));
+  return String(buf);
 }
 
 void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs) {
@@ -3297,7 +3313,33 @@ bool applyOtaFromManifest() {
     return false;
   }
   size_t size = firmware.size();
-  if (!Update.begin(size)) {
+  auto describePartition = [](const esp_partition_t* partition) -> String {
+    if (!partition) {
+      return "none";
+    }
+    return String(partition->label) + "@0x" + String(static_cast<uint32_t>(partition->address), HEX) +
+           "/" + String(static_cast<unsigned>(partition->size));
+  };
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  const esp_partition_t* boot = esp_ota_get_boot_partition();
+  const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+  appendRuntimeLog("OTA", "partition running=" + describePartition(running) +
+                            " boot=" + describePartition(boot) +
+                            " next=" + describePartition(next), true);
+  if (!next) {
+    firmware.close();
+    setStatus("OTA slot missing", 2200);
+    appendRuntimeLog("OTA", "no inactive OTA partition", true);
+    return false;
+  }
+  if (size == 0 || size > next->size) {
+    firmware.close();
+    setStatus("OTA image too large", 2200);
+    appendRuntimeLog("OTA", "image too large size=" + String(static_cast<unsigned>(size)) +
+                              " slot=" + String(static_cast<unsigned>(next->size)), true);
+    return false;
+  }
+  if (!Update.begin(size, U_FLASH)) {
     uint8_t updateError = Update.getError();
     firmware.close();
     setStatus("OTA begin err " + String(updateError), 1800);
@@ -3340,15 +3382,31 @@ bool applyOtaFromManifest() {
                               " size=" + String(static_cast<unsigned>(size)), true);
     return false;
   }
-  recordOtaApplyIntent();
-  if (!Update.end(true)) {
+  if (!Update.isFinished()) {
+    uint8_t updateError = Update.getError();
+    Update.abort();
+    finishTransferUi("flash incomplete", false);
+    setStatus("OTA incomplete " + String(updateError), 1800);
+    appendRuntimeLog("OTA", "not finished err=" + String(updateError), true);
+    return false;
+  }
+  if (!Update.end(false)) {
     uint8_t updateError = Update.getError();
     finishTransferUi("finalize failed", false);
     setStatus("OTA end err " + String(updateError), 1800);
     appendRuntimeLog("OTA", "end failed err=" + String(updateError), true);
     return false;
   }
-  appendRuntimeLog("OTA", "apply ok reboot pending verify", true);
+  const esp_partition_t* newBoot = esp_ota_get_boot_partition();
+  if (!newBoot || (next && strcmp(newBoot->label, next->label) != 0)) {
+    finishTransferUi("boot slot not set", false);
+    setStatus("OTA boot slot failed", 2200);
+    appendRuntimeLog("OTA", "boot slot mismatch expected=" + describePartition(next) +
+                              " actual=" + describePartition(newBoot), true);
+    return false;
+  }
+  recordOtaApplyIntent();
+  appendRuntimeLog("OTA", "apply ok boot=" + describePartition(newBoot) + " reboot pending verify", true);
   finishTransferUi("rebooting", true);
   setStatus("OTA staged; rebooting", 900);
   delay(500);
@@ -3911,42 +3969,137 @@ void rememberVoiceNoteFromPcmFile(const String& title, const String& preview, co
   gSelectedVoiceNote = 0;
 }
 
+uint16_t readLe16(const uint8_t* p) {
+  return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+}
+
+uint32_t readLe32(const uint8_t* p) {
+  return static_cast<uint32_t>(p[0]) |
+         (static_cast<uint32_t>(p[1]) << 8) |
+         (static_cast<uint32_t>(p[2]) << 16) |
+         (static_cast<uint32_t>(p[3]) << 24);
+}
+
+struct WavInfo {
+  uint32_t dataOffset = 0;
+  uint32_t dataBytes = 0;
+  uint32_t sampleRate = 0;
+  uint16_t channels = 0;
+  uint16_t bitsPerSample = 0;
+  uint16_t blockAlign = 0;
+  uint16_t audioFormat = 0;
+  String error;
+};
+
+bool readWavBytes(File& file, uint8_t* out, size_t len) {
+  return static_cast<size_t>(file.read(out, len)) == len;
+}
+
+bool parseWavInfo(File& file, WavInfo& info) {
+  info = WavInfo();
+  if (!file || file.size() < 12) {
+    info.error = "small file";
+    return false;
+  }
+  if (!file.seek(0)) {
+    info.error = "seek failed";
+    return false;
+  }
+  uint8_t riff[12];
+  if (!readWavBytes(file, riff, sizeof(riff)) ||
+      memcmp(riff, "RIFF", 4) != 0 ||
+      memcmp(riff + 8, "WAVE", 4) != 0) {
+    info.error = "not RIFF/WAVE";
+    return false;
+  }
+
+  bool haveFmt = false;
+  const uint32_t fileSize = static_cast<uint32_t>(file.size());
+  while (file.position() + 8 <= fileSize) {
+    uint8_t chunkHeader[8];
+    if (!readWavBytes(file, chunkHeader, sizeof(chunkHeader))) {
+      info.error = "chunk read";
+      return false;
+    }
+    char id[5] = {
+        static_cast<char>(chunkHeader[0]),
+        static_cast<char>(chunkHeader[1]),
+        static_cast<char>(chunkHeader[2]),
+        static_cast<char>(chunkHeader[3]),
+        0};
+    uint32_t chunkSize = readLe32(chunkHeader + 4);
+    uint32_t chunkStart = static_cast<uint32_t>(file.position());
+    uint32_t nextChunk = chunkStart + chunkSize + (chunkSize & 1U);
+    if (chunkStart > fileSize || chunkSize > fileSize - chunkStart) {
+      info.error = String(id) + " size";
+      return false;
+    }
+
+    if (memcmp(chunkHeader, "fmt ", 4) == 0) {
+      if (chunkSize < 16) {
+        info.error = "fmt small";
+        return false;
+      }
+      uint8_t fmt[16];
+      if (!readWavBytes(file, fmt, sizeof(fmt))) {
+        info.error = "fmt read";
+        return false;
+      }
+      info.audioFormat = readLe16(fmt);
+      info.channels = readLe16(fmt + 2);
+      info.sampleRate = readLe32(fmt + 4);
+      info.blockAlign = readLe16(fmt + 12);
+      info.bitsPerSample = readLe16(fmt + 14);
+      haveFmt = true;
+    } else if (memcmp(chunkHeader, "data", 4) == 0) {
+      info.dataOffset = chunkStart;
+      info.dataBytes = chunkSize;
+      break;
+    }
+
+    if (!file.seek(nextChunk)) {
+      info.error = String(id) + " seek";
+      return false;
+    }
+  }
+
+  if (!haveFmt) {
+    info.error = "fmt missing";
+    return false;
+  }
+  if (info.dataBytes == 0) {
+    info.error = "data missing";
+    return false;
+  }
+  if (info.audioFormat != 1 || info.bitsPerSample != 16 || info.channels != 1 || info.sampleRate < 8000) {
+    info.error = "unsupported wav";
+    return false;
+  }
+  if (info.blockAlign == 0) {
+    info.blockAlign = static_cast<uint16_t>((info.bitsPerSample / 8U) * info.channels);
+  }
+  return true;
+}
+
 uint32_t wavDurationMs(const String& path, uint32_t* sampleRateOut = nullptr) {
   fs::FS* fs = activeVoiceFs();
   if (!fs || !fsExists(*fs, path)) {
     return 0;
   }
   File file = fs->open(path, "r");
-  if (!file || file.size() < 44) {
-    return 0;
-  }
-  uint8_t header[44];
-  if (file.read(header, sizeof(header)) != sizeof(header)) {
-    file.close();
-    return 0;
-  }
+  WavInfo info;
+  bool ok = parseWavInfo(file, info);
   file.close();
-  uint32_t sampleRate = static_cast<uint32_t>(header[24]) |
-                        (static_cast<uint32_t>(header[25]) << 8) |
-                        (static_cast<uint32_t>(header[26]) << 16) |
-                        (static_cast<uint32_t>(header[27]) << 24);
-  uint16_t bitsPerSample = static_cast<uint16_t>(header[34]) |
-                           (static_cast<uint16_t>(header[35]) << 8);
-  uint16_t channels = static_cast<uint16_t>(header[22]) |
-                      (static_cast<uint16_t>(header[23]) << 8);
-  uint32_t dataBytes = static_cast<uint32_t>(header[40]) |
-                       (static_cast<uint32_t>(header[41]) << 8) |
-                       (static_cast<uint32_t>(header[42]) << 16) |
-                       (static_cast<uint32_t>(header[43]) << 24);
-  if (sampleRateOut) {
-    *sampleRateOut = sampleRate;
-  }
-  uint32_t bytesPerSampleFrame = max<uint32_t>(1, (bitsPerSample / 8U) * max<uint16_t>(1, channels));
-  if (sampleRate == 0 || dataBytes == 0) {
+  if (!ok) {
+    appendRuntimeLog("AUDIO", "wav duration failed " + path + ": " + info.error, false);
     return 0;
   }
-  return static_cast<uint32_t>((static_cast<uint64_t>(dataBytes) * 1000ULL) /
-                               (static_cast<uint64_t>(sampleRate) * bytesPerSampleFrame));
+  if (sampleRateOut) {
+    *sampleRateOut = info.sampleRate;
+  }
+  uint32_t bytesPerSampleFrame = max<uint32_t>(1, info.blockAlign);
+  return static_cast<uint32_t>((static_cast<uint64_t>(info.dataBytes) * 1000ULL) /
+                               (static_cast<uint64_t>(info.sampleRate) * bytesPerSampleFrame));
 }
 
 bool registerDownloadedVoiceNote(const String& wavPath, const String& titleHint, const String& preview, bool assistant) {
@@ -4022,6 +4175,7 @@ void stopPlaybackStream() {
   gPlaybackStreamPath = "";
   gPlaybackStreaming = false;
   gPlaybackStreamRemainingBytes = 0;
+  gPlaybackStreamTotalBytes = 0;
   gPlaybackStreamSampleRate = 0;
   gPlaybackStreamNextBuffer = 0;
   gPlaybackStreamRawPcm = false;
@@ -4046,6 +4200,7 @@ bool startPlaybackStreamFromRawPcmFile(const String& path, uint32_t sampleRate, 
   }
   gPlaybackStreamPath = path;
   gPlaybackStreamRemainingBytes = audioLen;
+  gPlaybackStreamTotalBytes = audioLen;
   gPlaybackStreamSampleRate = sampleRate;
   gPlaybackStreamNextBuffer = 0;
   gPlaybackStreamRawPcm = true;
@@ -4070,29 +4225,27 @@ bool startPlaybackStreamFromWavFile(const String& path, const String& diag) {
     setStatus("Voice file missing", 1200);
     return false;
   }
-  uint8_t header[44];
-  if (file.read(header, sizeof(header)) != sizeof(header)) {
+  WavInfo info;
+  if (!parseWavInfo(file, info)) {
+    String err = info.error.isEmpty() ? String("invalid wav") : info.error;
     file.close();
-    setStatus("Voice file invalid", 1200);
+    setStatus("WAV " + err, 1600);
+    setVoiceDiag("playback: " + err);
+    appendRuntimeLog("AUDIO", "wav parse failed " + path + ": " + err, true);
     return false;
   }
-  if (!(header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F')) {
+  if (!file.seek(info.dataOffset)) {
     file.close();
-    setStatus("Voice file invalid", 1200);
+    setStatus("WAV seek failed", 1400);
+    setVoiceDiag("playback: seek failed");
+    appendRuntimeLog("AUDIO", "wav data seek failed " + path, true);
     return false;
   }
-  uint32_t sampleRate = static_cast<uint32_t>(header[24]) |
-                        (static_cast<uint32_t>(header[25]) << 8) |
-                        (static_cast<uint32_t>(header[26]) << 16) |
-                        (static_cast<uint32_t>(header[27]) << 24);
-  uint32_t audioLen = static_cast<uint32_t>(header[40]) |
-                      (static_cast<uint32_t>(header[41]) << 8) |
-                      (static_cast<uint32_t>(header[42]) << 16) |
-                      (static_cast<uint32_t>(header[43]) << 24);
   gPlaybackStreamFile = file;
   gPlaybackStreamPath = path;
-  gPlaybackStreamRemainingBytes = audioLen;
-  gPlaybackStreamSampleRate = sampleRate;
+  gPlaybackStreamRemainingBytes = info.dataBytes;
+  gPlaybackStreamTotalBytes = info.dataBytes;
+  gPlaybackStreamSampleRate = info.sampleRate;
   gPlaybackStreamNextBuffer = 0;
   gPlaybackStreamRawPcm = false;
   gPlaybackStreaming = true;
@@ -4101,6 +4254,8 @@ bool startPlaybackStreamFromWavFile(const String& path, const String& diag) {
   setFaceMode(FaceMode::Speaking);
   setStatus("Playing voice...", 1200);
   setVoiceDiag(diag);
+  appendRuntimeLog("AUDIO", "play " + path + " " + String(info.sampleRate) + "Hz " +
+                            String(static_cast<unsigned>(info.dataBytes / 1024)) + "k", false);
   return true;
 }
 
@@ -4113,6 +4268,13 @@ void servicePlaybackStream() {
     size_t chunk = gPlaybackStreamRemainingBytes;
     if (chunk > kPlaybackChunkBytes) {
       chunk = kPlaybackChunkBytes;
+    }
+    if (chunk > 1 && (chunk & 1U)) {
+      --chunk;
+    }
+    if (chunk < sizeof(int16_t)) {
+      gPlaybackStreamRemainingBytes = 0;
+      break;
     }
     uint8_t* buffer = gPlaybackStreamBuffers[gPlaybackStreamNextBuffer];
     size_t readBytes = gPlaybackStreamFile.read(buffer, chunk);
@@ -7171,7 +7333,8 @@ bool sendTextTurn(const String& text) {
 
   HTTPClient http;
   String url = hubBaseUrl() + kDeviceTextTurnPath;
-  http.setTimeout(60000);
+  String turnId = makeClientTurnId("txt");
+  http.setTimeout(kTurnHttpTimeoutMs);
   std::unique_ptr<WiFiClientSecure> secureClient;
   bool beginOk = false;
   if (hubUsesTls()) {
@@ -7195,10 +7358,15 @@ bool sendTextTurn(const String& text) {
   doc["input_type"] = "text";
   doc["reply_audio"] = true;
   doc["save_reply_audio"] = true;
+  doc["client_msg_id"] = turnId;
+  doc["turn_id"] = turnId;
 
   String body;
   serializeJson(doc, body);
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Client-Msg-Id", turnId);
+  http.addHeader("X-Turn-Id", turnId);
+  http.addHeader("X-Conversation-Key", currentConversationKey());
   if (!gDeviceToken.isEmpty()) {
     http.addHeader("Authorization", "Bearer " + gDeviceToken);
   }
@@ -7222,7 +7390,17 @@ bool sendTextTurn(const String& text) {
 
   if (code < 200 || code >= 300) {
     logf("[TEXT] hub error code=%d body=%s", code, response.c_str());
-    pushError("Hub HTTP error: " + String(code));
+    if (code <= 0) {
+      String transportError = HTTPClient::errorToString(code);
+      pushError("Hub transport failed: " + transportError);
+      setHttpDiag("text: " + transportError);
+    } else if (code == 504) {
+      pushError("Assistant reply timeout.");
+      setHttpDiag("text: assistant timeout");
+    } else {
+      pushError("Hub HTTP error: " + String(code));
+      setHttpDiag("text: http " + String(code));
+    }
     if (!response.isEmpty()) {
       pushError(response);
     }
@@ -7322,7 +7500,7 @@ void textTurnTask(void* arg) {
   } else {
     HTTPClient http;
     std::unique_ptr<WiFiClientSecure> secureClient;
-    http.setTimeout(60000);
+    http.setTimeout(kTurnHttpTimeoutMs);
     bool beginOk = false;
     if (hubUsesTls()) {
       secureClient.reset(new WiFiClientSecure());
@@ -7343,11 +7521,15 @@ void textTurnTask(void* arg) {
       doc["input_type"] = "text";
       doc["reply_audio"] = true;
       doc["save_reply_audio"] = true;
+      doc["client_msg_id"] = payload->clientMsgId;
+      doc["turn_id"] = payload->turnId;
 
       String body;
       serializeJson(doc, body);
       http.addHeader("Content-Type", "application/json");
       http.addHeader("X-Conversation-Key", payload->conversationKey);
+      http.addHeader("X-Client-Msg-Id", payload->clientMsgId);
+      http.addHeader("X-Turn-Id", payload->turnId);
       if (!payload->deviceToken.isEmpty()) {
         http.addHeader("Authorization", "Bearer " + payload->deviceToken);
       }
@@ -7357,7 +7539,13 @@ void textTurnTask(void* arg) {
       http.end();
 
       if (code < 200 || code >= 300) {
-        result->error = code <= 0 ? "Hub request failed." : "Hub HTTP error: " + String(code);
+        if (code <= 0) {
+          result->error = "Hub transport failed: " + HTTPClient::errorToString(code);
+        } else if (code == 504) {
+          result->error = "Assistant reply timeout.";
+        } else {
+          result->error = "Hub HTTP error: " + String(code);
+        }
       } else {
         DynamicJsonDocument resp(4096);
         auto err = deserializeJson(resp, result->response);
@@ -7441,6 +7629,8 @@ void maybeStartNextTextTurn() {
   payload->deviceId = gDeviceId;
   payload->deviceToken = gDeviceToken;
   payload->conversationKey = currentConversationKey();
+  payload->clientMsgId = makeClientTurnId("txt");
+  payload->turnId = payload->clientMsgId;
 
   gActiveTextTurn = payload->text;
   gSubmitting = true;
@@ -7486,6 +7676,11 @@ void processCompletedTextTurn() {
   if (!done->error.isEmpty()) {
     logf("[TEXT] async error code=%d body=%s", done->statusCode, done->response.c_str());
     pushError(done->error);
+    if (done->statusCode <= 0) {
+      setHttpDiag("text: " + done->error);
+    } else {
+      setHttpDiag("text: http " + String(done->statusCode));
+    }
     if (!done->response.isEmpty()) {
       pushError(done->response);
     }
@@ -7649,7 +7844,8 @@ bool stopRecordingAndSend() {
   HTTPClient http;
   std::unique_ptr<WiFiClientSecure> secureClient;
   String url = hubBaseUrl() + kDeviceAudioTurnRawPath;
-  http.setTimeout(60000);
+  String turnId = makeClientTurnId("voice");
+  http.setTimeout(kTurnHttpTimeoutMs);
   http.setReuse(false);
   bool beginOk = false;
   if (hubUsesTls()) {
@@ -7688,6 +7884,8 @@ bool stopRecordingAndSend() {
   http.addHeader("X-Device-Id", gDeviceId);
   http.addHeader("X-Firmware-Version", kAppVersion);
   http.addHeader("X-Conversation-Key", currentConversationKey());
+  http.addHeader("X-Client-Msg-Id", turnId);
+  http.addHeader("X-Turn-Id", turnId);
   http.addHeader("X-Reply-Audio", "true");
   http.addHeader("X-Save-Reply-Audio", "true");
   if (!gDeviceToken.isEmpty()) {
@@ -7698,6 +7896,9 @@ bool stopRecordingAndSend() {
   setStatus("Transcribing...");
   render();
   gLastRenderMs = millis();
+  appendRuntimeLog("VOICE", "upload start bytes=" + String(static_cast<unsigned>(dataSize)) +
+                            " ctx=" + currentConversationKey() +
+                            " turn=" + turnId, true);
   int statusCode = -1;
   if (gRecordingToFile) {
     fs::FS* fs = activeVoiceFs();
@@ -7729,27 +7930,35 @@ bool stopRecordingAndSend() {
   }
 
   if (statusCode <= 0) {
-    pushError("Voice upload body failed.");
+    String transportError = HTTPClient::errorToString(statusCode);
+    pushError("Voice transport failed: " + transportError);
     setFaceMode(FaceMode::Error);
-    setStatus("Voice upload failed", 2000);
+    setStatus("Voice transport failed", 2200);
     setVoiceDiag("voice: httpclient " + String(statusCode));
-    setHttpDiag(HTTPClient::errorToString(statusCode));
+    setHttpDiag("voice: " + transportError);
     logf("[VOICE] HTTPClient upload failed code=%d err=%s bytes=%u",
          statusCode,
-         HTTPClient::errorToString(statusCode).c_str(),
+         transportError.c_str(),
          static_cast<unsigned>(dataSize));
     return false;
   }
 
   if (statusCode < 200 || statusCode >= 300) {
     logf("[VOICE] HTTP error status=%d body=%s", statusCode, response.c_str());
-    pushError("Voice HTTP error: " + String(statusCode));
+    if (statusCode == 504) {
+      pushError("Assistant reply timeout.");
+      setStatus("Assistant timeout", 2200);
+      setVoiceDiag("voice: assistant timeout");
+    } else {
+      pushError("Voice HTTP error: " + String(statusCode));
+      setStatus("Voice turn failed", 2000);
+      setVoiceDiag("voice: http " + String(statusCode));
+    }
     if (!response.isEmpty()) {
       pushError(response);
     }
     setFaceMode(FaceMode::Error);
-    setStatus("Voice turn failed", 2000);
-    setVoiceDiag("voice: http " + String(statusCode));
+    setHttpDiag("voice: http " + String(statusCode));
     return false;
   }
 
@@ -8157,13 +8366,16 @@ bool handleLocalCommand(const String& input) {
   cmd.trim();
   cmd.toLowerCase();
 
-  if (cmd == "/help") {
+  if (cmd == "/help" || cmd == "help" || cmd == "commands" || cmd == "actions" ||
+      cmd == "команды" || cmd == "помощь") {
     pushSystem("Ctrl+Space = EN/RU");
     pushSystem("Voice: Ctrl x2, Ctrl+V, or hold G0");
     pushSystem("Tab = next screen, Tab+Down/Right = next app");
     pushSystem("Ctrl+L = launcher map, arrows = group/item");
-    pushSystem("Ctrl+D = debug, /voice /focus /topics /pet");
+    pushSystem("Ctrl+D = debug; type: voice focus topics pet notes");
     pushSystem("Pet: F food P play C clean S sleep H hunt");
+    pushSystem("Agent actions: focus, ui.open, audio/voice, topics, pet, settings");
+    pushSystem("Examples: start pomodoro 25; open library; next topic");
     return true;
   }
 
@@ -10580,7 +10792,16 @@ void renderLibraryUi() {
     d.print(countText);
 
     d.drawRoundRect(92, 64, 132, 8, 4, line);
-    int progress = gPlaybackActive ? 10 + ((millis() / 140) % 100) : 18;
+    int progress = 18;
+    if (gPlaybackActive && gPlaybackStreamPath == asset.path && gPlaybackStreamTotalBytes > 0) {
+      size_t played = gPlaybackStreamTotalBytes > gPlaybackStreamRemainingBytes
+                          ? gPlaybackStreamTotalBytes - gPlaybackStreamRemainingBytes
+                          : 0;
+      progress = static_cast<int>((played * 126ULL) / gPlaybackStreamTotalBytes);
+      progress = max<int>(4, min<int>(126, progress));
+    } else if (gPlaybackActive) {
+      progress = 10 + ((millis() / 180) % 28);
+    }
     d.fillRoundRect(95, 67, min<int>(126, progress), 3, 2, gPlaybackActive ? accent : muted);
 
     d.fillRoundRect(92, 82, 33, 22, 6, bg);
@@ -11040,7 +11261,7 @@ void renderOtaUi() {
   } else {
     drawActionChip(17, 112, 58, "F", "fetch", cyan, panel2);
     drawActionChip(81, 112, 58, "A", "apply", red, panel2);
-    drawActionChip(145, 112, 58, "R", "load", amber, panel2);
+    drawActionChip(145, 112, 58, "R", "check", amber, panel2);
   }
   renderLauncherOverlay();
   renderDebugOverlay();

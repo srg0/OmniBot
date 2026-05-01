@@ -44,6 +44,19 @@ Purpose: single active task list for the current Cardputer ADV firmware iteratio
 
 ## P1 - Voice / Audio Reliability
 
+## P0 - Reliability Pass 2026-05-01
+
+- [done] Reviewed `/Users/s1z0v/Downloads/cardputer_adv_codex_handoff_2026_05_01_0715_39874ba9_5396_419d.md`; treat OTA apply, voice turn, WAV playback, assistant audio lifecycle, and action visibility as the active reliability block before new UX work.
+- [done] Version target bumped to `0.2.16-dev` for the next clean source build; do not repack older binaries as a fake source release.
+- [done] OTA apply path now logs running/boot/next partitions, rejects missing/too-small inactive OTA slot, requires `Update.isFinished()`, uses strict `Update.end(false)`, and verifies that boot partition changed to the expected inactive slot before reboot.
+- [done] OTA screen action label changed from ambiguous `R load` to `R check`; full historical firmware revert remains a separate real feature, not a fake button.
+- [done] Voice/text turns now include `X-Client-Msg-Id` and `X-Turn-Id`; user-visible errors distinguish transport failure, HTTP status, and assistant timeout instead of collapsing into `voice upload body failed` / `Hub request failed`.
+- [done] Bridge default turn wait is aligned below firmware HTTPClient's 16-bit timeout cap: bridge waits 60s, firmware waits 65s. Longer 5-10 minute interactions require the planned async `POST turn -> turn_id -> poll/WS result` protocol, not one long synchronous HTTP request.
+- [done] WAV playback now parses RIFF chunks (`fmt `, `data`) instead of assuming a fixed 44-byte header, records exact decoder errors, and Library progress is driven by real playback bytes.
+- [done] Non-slash help aliases (`help`, `commands`, `actions`, `команды`, `помощь`) show the available action groups and examples without reintroducing slash-command UX.
+- [next] Hardware QA after flashing: OTA fetch/apply must show partition logs and boot into `0.2.16-dev`; Library must audibly play `/audio/take15-day-01.wav` and a bridge `ai_answers` WAV; voice turn must show exact `504/413/422/transport` if it fails.
+- [next] Implement the async turn protocol for truly long voice and slow assistant replies: upload audio to SD/cache, send turn metadata, return immediately with `turn_id`, show pending UI, poll/WS for transcript/reply/audio, then download/play saved WAV.
+
 - [current baseline] Voice recording and response worked in previous checks, but long voice/audio and playback truncation still need hardware validation after this merge.
 - [done] Audio library scan now supports direct SD user library at `/audio` in addition to managed `/pomodoro/audio`.
 - [flashed] Verify `/audio/take15-day-01.wav` ... `/audio/take15-day-15.wav` appear in Library/Folders after `R scan`.
