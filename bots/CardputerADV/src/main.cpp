@@ -40,7 +40,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.22-dev"
+#define APP_VERSION "0.2.23-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -3335,42 +3335,65 @@ bool syncAssetsFromManifest() {
 }
 
 bool uploadRuntimeLogs() {
-  if ((!gWifiReady && !ensureWifiForHttp("logs", 3000)) || gHubHost.isEmpty()) {
+  gWifiReady = WiFi.status() == WL_CONNECTED;
+  if (!ensureWifiForHttp("logs", 7000) || gHubHost.isEmpty()) {
+    setStatus("Logs no Wi-Fi", 1200);
+    setHttpDiag("logs: wifi/hub unavailable");
+    appendRuntimeLog("LOG", "upload skipped wifi/hub", true);
     return false;
   }
-  DynamicJsonDocument doc(8192);
-  doc["device_id"] = gDeviceId;
-  doc["firmware_version"] = kAppVersion;
-  doc["git"] = kBuildGitSha;
-  JsonArray events = doc.createNestedArray("events");
-  for (const auto& line : gRuntimeLogs) {
-    JsonObject ev = events.createNestedObject();
-    ev["ts"] = millis();
-    ev["level"] = "info";
-    ev["message"] = line;
-    ev["free_heap"] = ESP.getFreeHeap();
-    ev["rssi"] = WiFi.isConnected() ? WiFi.RSSI() : 0;
-    ev["storage"] = gStorageLabel;
-  }
+
   String body;
-  serializeJson(doc, body);
+  body.reserve(1024 + gRuntimeLogs.size() * 180);
+  body += "{\"device_id\":\"";
+  body += jsonEscapeLine(gDeviceId);
+  body += "\",\"firmware_version\":\"";
+  body += jsonEscapeLine(kAppVersion);
+  body += "\",\"git\":\"";
+  body += jsonEscapeLine(kBuildGitSha);
+  body += "\",\"events\":[";
+  bool first = true;
+  for (const auto& line : gRuntimeLogs) {
+    if (!first) {
+      body += ",";
+    }
+    first = false;
+    body += "{\"ts\":";
+    body += String(millis());
+    body += ",\"level\":\"info\",\"message\":\"";
+    body += jsonEscapeLine(line);
+    body += "\",\"free_heap\":";
+    body += String(static_cast<unsigned>(ESP.getFreeHeap()));
+    body += ",\"rssi\":";
+    body += String(WiFi.isConnected() ? WiFi.RSSI() : 0);
+    body += ",\"storage\":\"";
+    body += jsonEscapeLine(gStorageLabel);
+    body += "\"}";
+  }
+  body += "]}";
 
   HTTPClient http;
   std::unique_ptr<WiFiClientSecure> secureClient;
   String url = hubBaseUrl() + kCardputerLogsPath;
   if (!configureHttpClient(http, secureClient, url, 30000)) {
+    setStatus("Logs connect failed", 1200);
+    setHttpDiag("logs: begin failed");
+    appendRuntimeLog("LOG", "upload begin failed", true);
     return false;
   }
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Id", gDeviceId);
   http.addHeader("X-Conversation-Key", currentConversationKey());
   if (!gDeviceToken.isEmpty()) {
     http.addHeader("Authorization", "Bearer " + gDeviceToken);
   }
-  int code = http.POST(body);
+  int code = http.POST(reinterpret_cast<uint8_t*>(const_cast<char*>(body.c_str())), body.length());
   http.end();
   bool ok = code >= 200 && code < 300;
-  setStatus(ok ? "Logs uploaded" : ("Logs HTTP " + String(code)), 1400);
-  appendRuntimeLog("LOG", ok ? "upload ok" : ("upload failed " + String(code)), true);
+  String detail = code <= 0 ? HTTPClient::errorToString(code) : String(code);
+  setStatus(ok ? "Logs uploaded" : (code <= 0 ? "Logs transport fail" : ("Logs HTTP " + String(code))), 1400);
+  setHttpDiag(ok ? "logs: ok" : ("logs: " + detail));
+  appendRuntimeLog("LOG", ok ? "upload ok" : ("upload failed " + detail), true);
   return ok;
 }
 
