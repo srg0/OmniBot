@@ -40,7 +40,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.23-dev"
+#define APP_VERSION "0.2.24-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -3492,7 +3492,7 @@ bool applyOtaFromManifest() {
   }
   appendRuntimeLog("OTA", "apply start version=" + gOtaManifest.version +
                             " size=" + String(gOtaManifest.size), true);
-  setStatus("OTA downloading...", 0);
+  setStatus("OTA preparing...", 0);
   render();
   updateBatterySnapshot(true);
   int level = gBatterySnapshot.level < 0 ? 100 : gBatterySnapshot.level;
@@ -3502,27 +3502,6 @@ bool applyOtaFromManifest() {
     appendRuntimeLog("OTA", "battery too low", true);
     return false;
   }
-  if (!gSdReady) {
-    pushError("SD card required for OTA.");
-    setStatus("Insert SD card", 2500);
-    appendRuntimeLog("OTA", "sd required", true);
-    return false;
-  }
-  if (!downloadUrlToFile(gOtaManifest.url, kOtaTempPath, gOtaManifest.sha256, gOtaManifest.size,
-                         "Firmware OTA", rgb565_local(255, 93, 88))) {
-    appendRuntimeLog("OTA", "firmware download failed", true);
-    return false;
-  }
-  setStatus("OTA applying...", 0);
-  render();
-  fs::FS* fs = activeVoiceFs();
-  File firmware = fs ? fs->open(kOtaTempPath, "r") : File();
-  if (!firmware) {
-    setStatus("OTA file missing", 1200);
-    appendRuntimeLog("OTA", "file missing after download", true);
-    return false;
-  }
-  size_t size = firmware.size();
   auto describePartition = [](const esp_partition_t* partition) -> String {
     if (!partition) {
       return "none";
@@ -3537,59 +3516,157 @@ bool applyOtaFromManifest() {
                             " boot=" + describePartition(boot) +
                             " next=" + describePartition(next), true);
   if (!next) {
-    firmware.close();
     setStatus("OTA slot missing", 2200);
     appendRuntimeLog("OTA", "no inactive OTA partition", true);
     return false;
   }
-  if (size == 0 || size > next->size) {
-    firmware.close();
+
+  uint32_t expectedSize = gOtaManifest.size;
+  if (expectedSize == 0) {
+    setStatus("OTA size missing", 1800);
+    appendRuntimeLog("OTA", "manifest size missing", true);
+    return false;
+  }
+  if (expectedSize > next->size) {
     setStatus("OTA image too large", 2200);
-    appendRuntimeLog("OTA", "image too large size=" + String(static_cast<unsigned>(size)) +
+    appendRuntimeLog("OTA", "image too large size=" + String(static_cast<unsigned>(expectedSize)) +
                               " slot=" + String(static_cast<unsigned>(next->size)), true);
     return false;
   }
-  esp_ota_handle_t otaHandle = 0;
-  esp_err_t otaErr = esp_ota_begin(next, size, &otaHandle);
-  if (otaErr != ESP_OK) {
-    firmware.close();
-    setStatus("OTA begin err " + String(static_cast<int>(otaErr)), 1800);
-    appendRuntimeLog("OTA", "begin failed err=" + String(static_cast<int>(otaErr)) +
-                              " size=" + String(static_cast<unsigned>(size)), true);
+
+  if (!ensureWifiForHttp("ota", 7000)) {
+    setStatus("OTA no Wi-Fi", 1800);
+    setHttpDiag("ota: wifi unavailable");
+    appendRuntimeLog("OTA", "wifi unavailable before download", true);
     return false;
   }
-  beginTransferUi("Flashing OTA", "writing flash", static_cast<uint32_t>(size), rgb565_local(255, 93, 88));
+
+  beginTransferUi("Firmware OTA", "connecting", expectedSize, rgb565_local(255, 93, 88));
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  if (!configureHttpClient(http, secureClient, gOtaManifest.url, 120000)) {
+    finishTransferUi("connect failed", false);
+    setStatus("OTA connect failed", 1800);
+    setHttpDiag("ota: begin failed");
+    appendRuntimeLog("OTA", "http begin failed", true);
+    return false;
+  }
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  int code = http.GET();
+  if (code < 200 || code >= 300) {
+    String detail = code <= 0 ? HTTPClient::errorToString(code) : String(code);
+    http.end();
+    finishTransferUi("HTTP " + detail, false);
+    setStatus(code <= 0 ? "OTA transport fail" : ("OTA HTTP " + String(code)), 2000);
+    setHttpDiag("ota: " + detail);
+    appendRuntimeLog("OTA", "download http failed " + detail, true);
+    return false;
+  }
+
+  int contentLength = http.getSize();
+  if (contentLength > 0 && static_cast<uint32_t>(contentLength) != expectedSize) {
+    http.end();
+    finishTransferUi("size mismatch", false);
+    setStatus("OTA size mismatch", 2000);
+    appendRuntimeLog("OTA", "size mismatch manifest=" + String(static_cast<unsigned>(expectedSize)) +
+                              " http=" + String(contentLength), true);
+    return false;
+  }
+
+  esp_ota_handle_t otaHandle = 0;
+  esp_err_t otaErr = esp_ota_begin(next, expectedSize, &otaHandle);
+  if (otaErr != ESP_OK) {
+    http.end();
+    setStatus("OTA begin err " + String(static_cast<int>(otaErr)), 1800);
+    appendRuntimeLog("OTA", "begin failed err=" + String(static_cast<int>(otaErr)) +
+                              " size=" + String(static_cast<unsigned>(expectedSize)), true);
+    return false;
+  }
+
+  mbedtls_sha256_context shaCtx;
+  mbedtls_sha256_init(&shaCtx);
+  mbedtls_sha256_starts(&shaCtx, 0);
+  WiFiClient* stream = http.getStreamPtr();
   uint8_t otaBuffer[4096];
-  size_t written = 0;
-  while (firmware.available() && written < size) {
-    size_t toRead = min(sizeof(otaBuffer), size - written);
-    int readBytes = firmware.read(otaBuffer, toRead);
-    if (readBytes <= 0) {
-      break;
+  uint32_t written = 0;
+  uint32_t lastByteMs = millis();
+  while (written < expectedSize) {
+    size_t available = stream ? stream->available() : 0;
+    if (!available) {
+      if (!http.connected()) {
+        break;
+      }
+      if (millis() - lastByteMs > 20000) {
+        esp_ota_abort(otaHandle);
+        mbedtls_sha256_free(&shaCtx);
+        http.end();
+        finishTransferUi("download stalled", false);
+        setStatus("OTA stalled", 2000);
+        setHttpDiag("ota: stalled");
+        appendRuntimeLog("OTA", "stream stalled written=" + String(static_cast<unsigned>(written)), true);
+        return false;
+      }
+      updateTransferUi(written, expectedSize, "receiving");
+      delay(2);
+      continue;
     }
+
+    size_t toRead = min(available, sizeof(otaBuffer));
+    toRead = min<uint32_t>(static_cast<uint32_t>(toRead), expectedSize - written);
+    int readBytes = stream->readBytes(otaBuffer, toRead);
+    if (readBytes <= 0) {
+      delay(1);
+      continue;
+    }
+
     otaErr = esp_ota_write(otaHandle, otaBuffer, static_cast<size_t>(readBytes));
     if (otaErr != ESP_OK) {
       esp_ota_abort(otaHandle);
-      firmware.close();
+      mbedtls_sha256_free(&shaCtx);
+      http.end();
       finishTransferUi("flash write failed", false);
       setStatus("OTA write err " + String(static_cast<int>(otaErr)), 1800);
       appendRuntimeLog("OTA", "flash write failed err=" + String(static_cast<int>(otaErr)) +
                                 " written=" + String(static_cast<unsigned>(written)), true);
       return false;
     }
-    written += static_cast<size_t>(readBytes);
-    updateTransferUi(static_cast<uint32_t>(written), static_cast<uint32_t>(size), "writing flash");
+    mbedtls_sha256_update(&shaCtx, otaBuffer, static_cast<size_t>(readBytes));
+    written += static_cast<uint32_t>(readBytes);
+    lastByteMs = millis();
+    updateTransferUi(written, expectedSize, "receiving + flashing");
     delay(1);
   }
-  firmware.close();
-  if (written != size) {
+
+  uint8_t hash[32];
+  mbedtls_sha256_finish(&shaCtx, hash);
+  mbedtls_sha256_free(&shaCtx);
+  http.end();
+
+  if (written != expectedSize) {
     esp_ota_abort(otaHandle);
     finishTransferUi("flash short", false);
     setStatus("OTA short write", 1800);
     appendRuntimeLog("OTA", "short write written=" + String(static_cast<unsigned>(written)) +
-                              " size=" + String(static_cast<unsigned>(size)), true);
+                              " size=" + String(static_cast<unsigned>(expectedSize)), true);
     return false;
   }
+
+  String actualSha = bytesToHex(hash, sizeof(hash));
+  actualSha.toLowerCase();
+  String expectedSha = gOtaManifest.sha256;
+  expectedSha.toLowerCase();
+  if (actualSha != expectedSha) {
+    esp_ota_abort(otaHandle);
+    finishTransferUi("SHA mismatch", false);
+    setStatus("OTA SHA mismatch", 2200);
+    appendRuntimeLog("OTA", "sha mismatch expected=" + expectedSha.substring(0, 12) +
+                              " actual=" + actualSha.substring(0, 12), true);
+    return false;
+  }
+
+  updateTransferUi(written, expectedSize, "finalizing");
   otaErr = esp_ota_end(otaHandle);
   otaHandle = 0;
   if (otaErr != ESP_OK) {
@@ -3597,7 +3674,7 @@ bool applyOtaFromManifest() {
     setStatus("OTA end err " + String(static_cast<int>(otaErr)), 1800);
     appendRuntimeLog("OTA", "end failed err=" + String(static_cast<int>(otaErr)) +
                               " written=" + String(static_cast<unsigned>(written)) +
-                              " size=" + String(static_cast<unsigned>(size)), true);
+                              " size=" + String(static_cast<unsigned>(expectedSize)), true);
     return false;
   }
   recordOtaApplyIntent();
