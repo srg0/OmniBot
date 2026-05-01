@@ -40,7 +40,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.19-dev"
+#define APP_VERSION "0.2.20-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -647,12 +647,16 @@ struct TopicTaskPayload {
   bool syncCatalog = false;
   bool selectCurrent = false;
   bool loadHistory = false;
+  bool createTopic = false;
+  String createTitle;
 };
 
 struct TopicTaskResult {
   bool catalogOk = false;
   bool selectOk = false;
   bool historyOk = false;
+  bool createOk = false;
+  String createdTopicKey;
   String label;
 };
 
@@ -832,11 +836,13 @@ String gSavedContextKey;
 String gContextHistoryKey;
 String gContextError;
 bool gContextsRemoteLoaded = false;
+bool gTopicCreateArmed = false;
 uint32_t gContextsFetchedAtMs = 0;
 uint32_t gContextHistoryFetchedAtMs = 0;
 uint32_t gContextAnimStartMs = 0;
 uint32_t gTopicOverlayUntilMs = 0;
 uint32_t gTopicOverlayActionMs = 0;
+uint32_t gTopicCreateArmedUntilMs = 0;
 int8_t gContextAnimDir = 0;
 int gLogScrollOffset = 0;
 int gSelectedSetting = 0;
@@ -1013,14 +1019,20 @@ String currentConversationKey();
 bool fetchRemoteTopicCatalog();
 bool fetchSelectedTopicHistory();
 bool selectRemoteCurrentTopic();
+bool createRemoteTopic(const String& title, String& createdTopicKey);
 bool switchTopicRelative(int delta, bool selectAndLoad);
-bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, const char* statusText = nullptr);
+bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, const char* statusText = nullptr,
+                    bool createTopic = false, const String& createTitle = String());
 void processCompletedTopicTask();
 void showTopicOverlay(int8_t direction = 0, uint32_t ttlMs = 1600);
+void armTopicCreate();
+String defaultNewTopicTitle();
+void togglePulseChatDisplay();
 bool isEmojiAssetCodepoint(uint32_t codepoint);
 bool decodeUtf8At(const String& value, int index, uint32_t& codepoint, int& consumed);
 String normalizeEmojiDisplayText(const String& raw);
 bool emojiAssetAvailable(uint32_t codepoint);
+const EmojiCacheEntry* emojiCacheLookup(uint32_t codepoint);
 String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji = true);
 String makeTopicShortName(const String& title, int32_t threadId);
 bool fetchRemoteAssetManifest();
@@ -2057,7 +2069,10 @@ String topicDisplayIcon(const ConversationContext& ctx) {
     uint32_t codepoint = 0;
     int consumed = 1;
     if (decodeUtf8At(emoji, 0, codepoint, consumed) && emojiAssetAvailable(codepoint)) {
-      return emoji.substring(0, consumed);
+      const EmojiCacheEntry* entry = emojiCacheLookup(codepoint);
+      if (entry && entry->data && entry->width > 0 && entry->height > 0) {
+        return emoji.substring(0, consumed);
+      }
     }
   }
   return ctx.shortName.isEmpty() ? makeTopicShortName(ctx.label, ctx.threadId) : ctx.shortName;
@@ -3742,7 +3757,7 @@ bool fetchRemoteTopicCatalog() {
 
   HTTPClient http;
   std::unique_ptr<WiFiClientSecure> secureClient;
-  String url = hubBaseUrl() + "/api/cardputer/v1/topics";
+  String url = hubBaseUrl() + "/api/cardputer/v1/topics?recent_days=7&limit=32";
   if (!configureHttpClient(http, secureClient, url, 15000)) {
     gContextError = "Connect failed";
     setStatus("Topics connect failed", 1200);
@@ -3840,8 +3855,80 @@ bool selectRemoteCurrentTopic() {
   int code = http.POST("{}");
   http.end();
   bool ok = code >= 200 && code < 300;
-  appendRuntimeLog("CTX", ok ? "remote selected" : ("select http " + String(code)), true);
-  return ok;
+	  appendRuntimeLog("CTX", ok ? "remote selected" : ("select http " + String(code)), true);
+	  return ok;
+	}
+
+String defaultNewTopicTitle() {
+  String title = gInputBuffer;
+  title.trim();
+  if (!title.isEmpty()) {
+    title = normalizeEmojiDisplayText(title);
+    if (title.length() > 42) {
+      title = title.substring(0, 42);
+      title.trim();
+    }
+    return title;
+  }
+  ensureBangkokTimezone();
+  time_t now = time(nullptr);
+  if (now > 100000) {
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    char buf[32];
+    strftime(buf, sizeof(buf), "Cardputer %d %b %H:%M", &timeinfo);
+    return String(buf);
+  }
+  return "Cardputer topic";
+}
+
+bool createRemoteTopic(const String& title, String& createdTopicKey) {
+  if ((!gWifiReady && !ensureWifiForHttp("topic-create", 3000)) || gHubHost.isEmpty()) {
+    gContextError = "Bridge offline";
+    setStatus("Create offline", 1200);
+    return false;
+  }
+
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  String url = hubBaseUrl() + "/api/cardputer/v1/topics/create";
+  if (!configureHttpClient(http, secureClient, url, 15000)) {
+    gContextError = "Create connect";
+    setStatus("Create connect failed", 1200);
+    return false;
+  }
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  http.addHeader("Content-Type", "application/json");
+  DynamicJsonDocument req(512);
+  req["title"] = title;
+  String payload;
+  serializeJson(req, payload);
+  int code = http.POST(payload);
+  String body = code > 0 ? http.getString() : "";
+  http.end();
+  if (code < 200 || code >= 300) {
+    gContextError = "Create HTTP " + String(code);
+    setStatus(gContextError, 1400);
+    appendRuntimeLog("CTX", "create http " + String(code), true);
+    return false;
+  }
+  DynamicJsonDocument doc(4096);
+  auto err = deserializeJson(doc, body);
+  if (err) {
+    gContextError = "Create parse";
+    setStatus("Create parse failed", 1400);
+    return false;
+  }
+  createdTopicKey = doc["topic"]["topic_key"] | doc["topic_key"] | "";
+  if (createdTopicKey.isEmpty()) {
+    gContextError = "Create bad response";
+    setStatus(gContextError, 1400);
+    return false;
+  }
+  appendRuntimeLog("CTX", "created topic", true);
+  return true;
 }
 
 bool fetchSelectedTopicHistory() {
@@ -5015,6 +5102,21 @@ void cycleCurrentAppScreen(int delta) {
   gLauncherSubSelection = (gLauncherSubSelection + delta + count) % count;
   gLauncherLastSub[gLauncherSelection] = gLauncherSubSelection;
   applyLauncherSelection();
+}
+
+void togglePulseChatDisplay() {
+  gLauncherVisible = false;
+  if (gUiMode == UiMode::Home) {
+    setUiMode(UiMode::ChatFull);
+    setStatus("View: full chat", 900);
+  } else if (gUiMode == UiMode::ChatFull || gUiMode == UiMode::ChatFace) {
+    setUiMode(UiMode::Home);
+    setStatus("View: pulse", 900);
+  } else {
+    setUiMode(UiMode::Home);
+    setStatus("View: pulse", 900);
+  }
+  showTopicOverlay(0, 1200);
 }
 
 void switchLauncherGroupAndApply(int delta) {
@@ -9305,8 +9407,29 @@ bool switchTopicRelative(int delta, bool selectAndLoad) {
     setStatus("No topics", 900);
     return false;
   }
-  gSelectedContext = (gSelectedContext + delta + static_cast<int>(gContexts.size())) %
-                     static_cast<int>(gContexts.size());
+  uint32_t now = millis();
+  if (gTopicCreateArmed && now > gTopicCreateArmedUntilMs) {
+    gTopicCreateArmed = false;
+  }
+  if (delta < 0 && gSelectedContext <= 0) {
+    if (!gTopicCreateArmed) {
+      armTopicCreate();
+      return true;
+    }
+    String title = defaultNewTopicTitle();
+    gTopicCreateArmed = false;
+    return startTopicTask(false, false, false, "Creating topic...", true, title);
+  }
+  if (delta > 0 && gTopicCreateArmed) {
+    gTopicCreateArmed = false;
+  }
+  int next = gSelectedContext + delta;
+  if (next < 0 || next >= static_cast<int>(gContexts.size())) {
+    showTopicOverlay(delta < 0 ? -1 : 1, 900);
+    setStatus(delta < 0 ? "New topic: Alt+Left" : "Last topic", 900);
+    return false;
+  }
+  gSelectedContext = next;
   showTopicOverlay(delta < 0 ? -1 : 1, 1800);
   clearContextPreviewIfSelectionChanged();
   if (selectAndLoad) {
@@ -9319,6 +9442,16 @@ bool switchTopicRelative(int delta, bool selectAndLoad) {
   return true;
 }
 
+void armTopicCreate() {
+  uint32_t now = millis();
+  gTopicCreateArmed = true;
+  gTopicCreateArmedUntilMs = now + 3200;
+  gContextAnimDir = -1;
+  gContextAnimStartMs = now;
+  showTopicOverlay(-1, 3200);
+  setStatus("Alt+Left again creates topic", 1600);
+}
+
 void topicTask(void* arg) {
   std::unique_ptr<TopicTaskPayload> payload(static_cast<TopicTaskPayload*>(arg));
   std::unique_ptr<TopicTaskResult> result(new TopicTaskResult());
@@ -9327,7 +9460,17 @@ void topicTask(void* arg) {
     vTaskDelete(nullptr);
     return;
   }
-  if (payload->syncCatalog) {
+  if (payload->createTopic) {
+    result->createOk = createRemoteTopic(payload->createTitle, result->createdTopicKey);
+    if (result->createOk && !result->createdTopicKey.isEmpty()) {
+      gSavedContextKey = result->createdTopicKey;
+      result->catalogOk = fetchRemoteTopicCatalog();
+      selectSavedContextOrDefault(result->createdTopicKey);
+      saveCurrentContext();
+      result->selectOk = selectRemoteCurrentTopic();
+      result->historyOk = fetchSelectedTopicHistory();
+    }
+  } else if (payload->syncCatalog) {
     result->catalogOk = fetchRemoteTopicCatalog();
   }
   if (payload->selectCurrent) {
@@ -9351,7 +9494,8 @@ void topicTask(void* arg) {
   vTaskDelete(nullptr);
 }
 
-bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, const char* statusText) {
+bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, const char* statusText,
+                    bool createTopic, const String& createTitle) {
   if (gTopicTaskHandle != nullptr || gCompletedTopicTask != nullptr) {
     setStatus("Topic busy", 500);
     return false;
@@ -9364,6 +9508,8 @@ bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, cons
   payload->syncCatalog = syncCatalog;
   payload->selectCurrent = selectCurrent;
   payload->loadHistory = loadHistory;
+  payload->createTopic = createTopic;
+  payload->createTitle = createTitle;
   setStatus(statusText ? statusText : "Topic sync...");
   BaseType_t ok = xTaskCreate(topicTask, "topic-sync", kTopicTaskStackSize, payload.release(), 1, &gTopicTaskHandle);
   if (ok != pdPASS) {
@@ -9385,7 +9531,10 @@ void processCompletedTopicTask() {
   }
   std::unique_ptr<TopicTaskResult> done(result);
   gTopicTaskHandle = nullptr;
-  if (done->historyOk) {
+  if (done->createOk) {
+    setStatus("Topic created", 1000);
+    showTopicOverlay(0, 2200);
+  } else if (done->historyOk) {
     setStatus(done->label.isEmpty() ? "History loaded" : ("Topic " + done->label), 900);
   } else if (done->catalogOk) {
     setStatus("Topics synced", 900);
@@ -9791,9 +9940,10 @@ void pollTyping() {
   static bool pUp = false;
   static bool pDown = false;
   static bool pLeft = false;
-  static bool pRight = false;
-  static bool pEsc = false;
-  static String pWordSignature;
+	  static bool pRight = false;
+	  static bool pEsc = false;
+  static bool pOpt = false;
+	  static String pWordSignature;
 
   bool enterDown = keys.enter && !pEnter;
   bool delDown = keys.del && !pDel;
@@ -9807,7 +9957,8 @@ void pollTyping() {
   bool upDown = upHeld && !pUp;
   bool downDown = downHeld && !pDown;
   bool leftDown = leftHeld && !pLeft;
-  bool rightDown = rightHeld && !pRight;
+	  bool rightDown = rightHeld && !pRight;
+  bool optDown = keys.opt && !pOpt;
   String wordSignature;
   wordSignature.reserve(keys.word.size());
   for (char c : keys.word) {
@@ -9823,9 +9974,13 @@ void pollTyping() {
   bool topicPrevCombo = (keys.alt || keys.opt) &&
                         (leftDown || (charDown && (curWordChar == ',' || curWordChar == ';' ||
                                                    curWordChar == '<' || curWordChar == '[')));
-  bool topicNextCombo = (keys.alt || keys.opt) &&
-                        (rightDown || (charDown && (curWordChar == '.' || curWordChar == '/' ||
-                                                    curWordChar == '>' || curWordChar == ']')));
+	  bool topicNextCombo = (keys.alt || keys.opt) &&
+	                        (rightDown || (charDown && (curWordChar == '.' || curWordChar == '/' ||
+	                                                    curWordChar == '>' || curWordChar == ']')));
+  bool optionViewToggle = optDown && !keys.alt && !keys.ctrl && !keys.fn && !keys.shift &&
+                          !keys.tab && !keys.enter && !keys.del && !keys.space &&
+                          !upHeld && !downHeld && !leftHeld && !rightHeld &&
+                          wordSignature.isEmpty();
 
   if (escDown) {
     handleGlobalEscape();
@@ -9834,13 +9989,15 @@ void pollTyping() {
     if (ok && gUiMode != UiMode::Contexts) {
       setStatus("Topic " + gContexts[gSelectedContext].shortName, 900);
     }
-  } else if (topicNextCombo) {
-    bool ok = switchTopicRelative(1, true);
-    if (ok && gUiMode != UiMode::Contexts) {
-      setStatus("Topic " + gContexts[gSelectedContext].shortName, 900);
-    }
-  } else if (tabPrevCombo) {
-    switchLauncherGroupAndApply(-1);
+	  } else if (topicNextCombo) {
+	    bool ok = switchTopicRelative(1, true);
+	    if (ok && gUiMode != UiMode::Contexts) {
+	      setStatus("Topic " + gContexts[gSelectedContext].shortName, 900);
+	    }
+  } else if (optionViewToggle) {
+    togglePulseChatDisplay();
+	  } else if (tabPrevCombo) {
+	    switchLauncherGroupAndApply(-1);
   } else if (tabNextCombo) {
     switchLauncherGroupAndApply(1);
   } else if (tabDown) {
@@ -9895,10 +10052,11 @@ void pollTyping() {
   pUp = upHeld;
   pDown = downHeld;
   pLeft = leftHeld;
-  pRight = rightHeld;
-  pEsc = escHeld;
-  pWordSignature = wordSignature;
-}
+	  pRight = rightHeld;
+	  pEsc = escHeld;
+  pOpt = keys.opt;
+	  pWordSignature = wordSignature;
+	}
 
 bool ctrlAlonePressedNow() {
   return gKeyboardState.ctrl && !gKeyboardState.fn && !gKeyboardState.shift &&
@@ -11842,12 +12000,10 @@ void renderLogsUi() {
 }
 
 void renderTopicOverlayIfVisible() {
-  if (millis() > gTopicOverlayUntilMs || gContexts.empty()) {
+  if (millis() > gTopicOverlayUntilMs) {
     return;
   }
   auto& d = gCanvas;
-  gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
-  const ConversationContext& ctx = gContexts[gSelectedContext];
 
   const uint16_t bg = rgb565_local(2, 7, 10);
   const uint16_t panel = rgb565_local(5, 13, 18);
@@ -11857,6 +12013,38 @@ void renderTopicOverlayIfVisible() {
   const uint16_t amber = rgb565_local(246, 194, 74);
 
   uint32_t now = millis();
+  if (gTopicCreateArmed && now > gTopicCreateArmedUntilMs) {
+    gTopicCreateArmed = false;
+  }
+  if (gTopicCreateArmed) {
+    float hold = 1.0f - min<float>(1.0f, static_cast<float>(gTopicCreateArmedUntilMs - now) / 3200.0f);
+    d.fillRoundRect(6, 5, 228, 39, 10, rgb565_local(5, 12, 18));
+    d.drawRoundRect(6, 5, 228, 39, 10, amber);
+    d.fillRoundRect(10, 10, 42, 24, 8, rgb565_local(34, 22, 8));
+    d.setFont(&fonts::Font2);
+    d.setTextColor(amber, rgb565_local(34, 22, 8));
+    d.setCursor(18, 17);
+    d.print("NEW");
+    d.setFont(&fonts::efontCN_12);
+    d.setTextColor(TFT_WHITE, rgb565_local(5, 12, 18));
+    d.setCursor(60, 9);
+    d.print(fitCurrentFontToWidth(defaultNewTopicTitle(), 144));
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, rgb565_local(5, 12, 18));
+    d.setCursor(61, 27);
+    d.print("Alt+Left again creates");
+    d.fillRoundRect(10, 39, 216, 2, 1, rgb565_local(52, 38, 16));
+    d.fillRoundRect(10, 39, max<int16_t>(4, static_cast<int16_t>(216 * hold)), 2, 1, amber);
+    d.setFont(&fonts::Font2);
+    return;
+  }
+
+  if (gContexts.empty()) {
+    return;
+  }
+  gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
+  const ConversationContext& ctx = gContexts[gSelectedContext];
+
   float animT = min<float>(1.0f, (now - gContextAnimStartMs) / 220.0f);
   float ease = 1.0f - (1.0f - animT) * (1.0f - animT);
   int16_t dx = (gContextAnimDir == 0 || animT >= 1.0f)
@@ -12147,19 +12335,34 @@ void renderAssistantPulseUi() {
     strftime(buf, sizeof(buf), "%H:%M", &timeinfo);
     hhmm = buf;
   }
-  if (state == AssistantPulseState::Recording) {
-    uint32_t elapsed = (millis() - gRecordStartMs) / 1000;
-    char rec[6];
-    snprintf(rec, sizeof(rec), "%02u:%02u", static_cast<unsigned>(elapsed / 60),
-             static_cast<unsigned>(elapsed % 60));
-    hhmm = rec;
-  }
+	  if (state == AssistantPulseState::Recording) {
+	    uint32_t elapsed = (millis() - gRecordStartMs) / 1000;
+	    char rec[6];
+	    snprintf(rec, sizeof(rec), "%02u:%02u", static_cast<unsigned>(elapsed / 60),
+	             static_cast<unsigned>(elapsed % 60));
+	    hhmm = rec;
+	  }
 
-  d.setFont(&fonts::Font7);
-  d.setTextColor(fg, bg);
-  int tw = d.textWidth(hhmm);
-  d.setCursor(171 - tw / 2, state == AssistantPulseState::Recording ? 18 : 20);
-  d.print(hhmm);
+  const uint16_t clockPanel = state == AssistantPulseState::Recording
+                                  ? rgb565_local(32, 13, 19)
+                                  : state == AssistantPulseState::Thinking
+                                        ? rgb565_local(28, 22, 11)
+                                        : state == AssistantPulseState::Playback
+                                              ? rgb565_local(5, 27, 24)
+                                              : rgb565_local(3, 21, 38);
+  d.fillRoundRect(119, 13, 103, 57, 14, clockPanel);
+  d.drawRoundRect(119, 13, 103, 57, 14, rgb565_local(14, 58, 82));
+  for (int i = 0; i < 5; ++i) {
+    int16_t yy = 21 + i * 9 + static_cast<int16_t>(sinf(t * 0.9f + i * 0.8f) * 2.0f);
+    d.drawFastHLine(126, yy, 89, rgb565_local(5, 35, 58));
+  }
+  d.fillRoundRect(128, 61, 82, 2, 1, rgb565_local(16, 83, 112));
+
+	  d.setFont(&fonts::Font7);
+  d.setTextColor(fg, clockPanel);
+	  int tw = d.textWidth(hhmm);
+	  d.setCursor(171 - tw / 2, state == AssistantPulseState::Recording ? 18 : 20);
+	  d.print(hhmm);
 
   int16_t waveX = state == AssistantPulseState::Ready ? 121 : 117;
   int16_t waveY = state == AssistantPulseState::Ready ? 88 : 86;
