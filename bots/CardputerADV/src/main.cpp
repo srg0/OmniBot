@@ -40,7 +40,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.20-dev"
+#define APP_VERSION "0.2.21-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -969,6 +969,7 @@ void resumeHubWebSocketAfterVoice();
 void render();
 void setStatus(const String& text, uint32_t ttlMs);
 void pushSystem(const String& text);
+void pushError(const String& text);
 void beginTransferUi(const String& title, const String& detail, uint32_t total, uint16_t accent);
 void updateTransferUi(uint32_t done, uint32_t total = 0, const String& detail = "");
 void finishTransferUi(const String& statusText, bool ok);
@@ -1238,6 +1239,21 @@ void beginOtaBootGuard() {
   gOtaConfirmedThisBoot = false;
   gOtaVerifyStartMs = millis();
   gOtaLastHealthProbeMs = 0;
+
+  gPrefs.begin(kPrefsOtaGuardNs, false);
+  String intendedTarget = gPrefs.getString("target", "");
+  String intendedFrom = gPrefs.getString("from", "");
+  gPrefs.end();
+  if (!intendedTarget.isEmpty() && intendedTarget != kAppVersion && !gOtaPendingVerify) {
+    appendRuntimeLog("OTA", "boot returned to " + String(kAppVersion) +
+                              " after target=" + intendedTarget +
+                              " from=" + intendedFrom +
+                              " slot=" + gOtaRunningSlot +
+                              " state=" + gOtaBootState, true);
+    pushError("OTA did not switch to " + intendedTarget);
+    setStatus("OTA stayed on " + String(kAppVersion), 1800);
+    clearOtaGuardPrefs();
+  }
 
   if (gOtaPendingVerify) {
     gPrefs.begin(kPrefsOtaGuardNs, false);
@@ -3510,11 +3526,12 @@ bool applyOtaFromManifest() {
                               " slot=" + String(static_cast<unsigned>(next->size)), true);
     return false;
   }
-  if (!Update.begin(size, U_FLASH)) {
-    uint8_t updateError = Update.getError();
+  esp_ota_handle_t otaHandle = 0;
+  esp_err_t otaErr = esp_ota_begin(next, size, &otaHandle);
+  if (otaErr != ESP_OK) {
     firmware.close();
-    setStatus("OTA begin err " + String(updateError), 1800);
-    appendRuntimeLog("OTA", "begin failed err=" + String(updateError) +
+    setStatus("OTA begin err " + String(static_cast<int>(otaErr)), 1800);
+    appendRuntimeLog("OTA", "begin failed err=" + String(static_cast<int>(otaErr)) +
                               " size=" + String(static_cast<unsigned>(size)), true);
     return false;
   }
@@ -3527,45 +3544,46 @@ bool applyOtaFromManifest() {
     if (readBytes <= 0) {
       break;
     }
-    size_t updateWritten = Update.write(otaBuffer, static_cast<size_t>(readBytes));
-    if (updateWritten != static_cast<size_t>(readBytes)) {
-      uint8_t updateError = Update.getError();
-      Update.abort();
+    otaErr = esp_ota_write(otaHandle, otaBuffer, static_cast<size_t>(readBytes));
+    if (otaErr != ESP_OK) {
+      esp_ota_abort(otaHandle);
       firmware.close();
       finishTransferUi("flash write failed", false);
-      setStatus("OTA write err " + String(updateError), 1800);
-      appendRuntimeLog("OTA", "flash write failed err=" + String(updateError) +
+      setStatus("OTA write err " + String(static_cast<int>(otaErr)), 1800);
+      appendRuntimeLog("OTA", "flash write failed err=" + String(static_cast<int>(otaErr)) +
                                 " written=" + String(static_cast<unsigned>(written)), true);
       return false;
     }
-    written += updateWritten;
+    written += static_cast<size_t>(readBytes);
     updateTransferUi(static_cast<uint32_t>(written), static_cast<uint32_t>(size), "writing flash");
     delay(1);
   }
   firmware.close();
   if (written != size) {
-    uint8_t updateError = Update.getError();
-    Update.abort();
+    esp_ota_abort(otaHandle);
     finishTransferUi("flash short", false);
-    setStatus("OTA short err " + String(updateError), 1800);
-    appendRuntimeLog("OTA", "short write err=" + String(updateError) +
+    setStatus("OTA short write", 1800);
+    appendRuntimeLog("OTA", "short write written=" + String(static_cast<unsigned>(written)) +
+                              " size=" + String(static_cast<unsigned>(size)), true);
+    return false;
+  }
+  otaErr = esp_ota_end(otaHandle);
+  otaHandle = 0;
+  if (otaErr != ESP_OK) {
+    finishTransferUi("finalize failed", false);
+    setStatus("OTA end err " + String(static_cast<int>(otaErr)), 1800);
+    appendRuntimeLog("OTA", "end failed err=" + String(static_cast<int>(otaErr)) +
                               " written=" + String(static_cast<unsigned>(written)) +
                               " size=" + String(static_cast<unsigned>(size)), true);
     return false;
   }
-  if (!Update.isFinished()) {
-    uint8_t updateError = Update.getError();
-    Update.abort();
-    finishTransferUi("flash incomplete", false);
-    setStatus("OTA incomplete " + String(updateError), 1800);
-    appendRuntimeLog("OTA", "not finished err=" + String(updateError), true);
-    return false;
-  }
-  if (!Update.end(false)) {
-    uint8_t updateError = Update.getError();
-    finishTransferUi("finalize failed", false);
-    setStatus("OTA end err " + String(updateError), 1800);
-    appendRuntimeLog("OTA", "end failed err=" + String(updateError), true);
+  recordOtaApplyIntent();
+  otaErr = esp_ota_set_boot_partition(next);
+  if (otaErr != ESP_OK) {
+    finishTransferUi("boot select failed", false);
+    setStatus("OTA boot err " + String(static_cast<int>(otaErr)), 2200);
+    appendRuntimeLog("OTA", "set boot failed err=" + String(static_cast<int>(otaErr)) +
+                              " next=" + describePartition(next), true);
     return false;
   }
   const esp_partition_t* newBoot = esp_ota_get_boot_partition();
@@ -3576,7 +3594,6 @@ bool applyOtaFromManifest() {
                               " actual=" + describePartition(newBoot), true);
     return false;
   }
-  recordOtaApplyIntent();
   appendRuntimeLog("OTA", "apply ok boot=" + describePartition(newBoot) + " reboot pending verify", true);
   finishTransferUi("rebooting", true);
   setStatus("OTA staged; rebooting", 900);
