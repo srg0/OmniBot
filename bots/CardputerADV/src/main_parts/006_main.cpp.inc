@@ -57,6 +57,21 @@ void logf(const char* fmt, ...) {
   appendRuntimeLog("SER", String(buf), false);
 }
 
+void prepareNetworkMemory(const char* reason, bool forceTtsBuffer) {
+  if (!gRecording && gRecordBuffer) {
+    releaseRecordBuffer();
+  }
+  if (gTtsBuffer && (forceTtsBuffer || !gPlaybackActive)) {
+    releaseTtsBuffer();
+  }
+  yield();
+  delay(1);
+  logf("[MEM] net prep reason=%s free=%u largest=%u",
+       reason ? reason : "http",
+       static_cast<unsigned>(ESP.getFreeHeap()),
+       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+}
+
 String chipIdSuffix() {
   uint64_t chip = ESP.getEfuseMac();
   char buf[13];

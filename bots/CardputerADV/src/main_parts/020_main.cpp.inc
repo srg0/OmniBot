@@ -78,6 +78,178 @@
   return true;
 }
 
+bool playLastInboxMessage() {
+  if (gInboxLastKind == "voice" && !gInboxLastVoiceUrl.isEmpty()) {
+    String url = gInboxLastVoiceUrl;
+    if (url.startsWith("/")) {
+      url = hubBaseUrl() + url;
+    }
+    return downloadAndPlayResponseAudio(url, "", gInboxLastVoiceSha256, gInboxLastVoiceSize,
+                                        gInboxLastVoiceTitle, gInboxLastText);
+  }
+  if (!gInboxLastText.isEmpty()) {
+    return requestAndPlayTts(gInboxLastText);
+  }
+  return false;
+}
+
+bool handleInboxHistoryItem(JsonObject item, bool forcePlay) {
+  uint32_t seq = item["seq"] | 0;
+  JsonObject sender = item["sender"].as<JsonObject>();
+  JsonObject content = item["content"].as<JsonObject>();
+  String senderKind = sender["kind"] | "";
+  String senderName = sender["display_name"] | "";
+  String kind = content["kind"] | "";
+  String text = kind == "voice" ? String(content["transcript"] | content["text"] | "")
+                                : String(content["text"] | "");
+  if (senderKind == "device") {
+    return false;
+  }
+  if (!forcePlay && seq != 0 && seq <= gInboxLastSeq) {
+    return false;
+  }
+
+  gInboxLastSeq = seq;
+  gInboxLastText = text;
+  gInboxLastKind = kind;
+  gInboxLastSender = senderName.isEmpty() ? senderKind : senderName;
+  gInboxLastVoiceUrl = "";
+  gInboxLastVoiceTitle = "";
+  gInboxLastVoiceSha256 = "";
+  gInboxLastVoiceSize = 0;
+
+  String prefix = senderKind == "assistant" ? "AI" : "IN";
+  LineKind lineKind = senderKind == "assistant" ? LineKind::Assistant : LineKind::User;
+  if (kind == "voice") {
+    JsonObject voice = content["voice"].as<JsonObject>();
+    gInboxLastVoiceUrl = voice["url"] | "";
+    gInboxLastVoiceSha256 = voice["sha256"] | "";
+    gInboxLastVoiceSize = voice["bytes"] | voice["size"] | 0;
+    String mediaId = voice["media_id"] | "";
+    gInboxLastVoiceTitle = mediaId.isEmpty() ? "inbox voice" : ("inbox " + mediaId);
+    if (text.isEmpty()) {
+      text = "Voice message";
+      gInboxLastText = text;
+    }
+    pushVoiceHistoryLine(prefix, text, lineKind, gInboxLastVoiceUrl, gInboxLastVoiceTitle,
+                         gInboxLastVoiceSha256, gInboxLastVoiceSize);
+  } else {
+    if (text.isEmpty()) {
+      return false;
+    }
+    pushLine(prefix, text, lineKind);
+  }
+
+  setStatus("Inbox message", 1200);
+  appendRuntimeLog("INBOX", "seq=" + String(seq) + " kind=" + kind + " sender=" + gInboxLastSender, true);
+  logf("[INBOX] received seq=%u kind=%s sender=%s text=%s",
+       static_cast<unsigned>(seq), kind.c_str(), gInboxLastSender.c_str(), text.c_str());
+  return true;
+}
+
+bool fetchLatestInboxMessage(bool forcePlay, bool speak) {
+  if ((!gWifiReady && !ensureWifiForHttp("inbox", 3000)) || gHubHost.isEmpty()) {
+    setStatus("Inbox offline", 1200);
+    logf("[INBOX] offline");
+    return false;
+  }
+  String topicKey = currentConversationKey();
+  String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) +
+               "/inbox/latest?text_chars=4096";
+  if (!forcePlay && gInboxLastSeq > 0) {
+    url += "&after_seq=" + String(gInboxLastSeq);
+  }
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  if (!configureHttpClient(http, secureClient, url, 15000)) {
+    setStatus("Inbox connect failed", 1200);
+    logf("[INBOX] connect failed");
+    return false;
+  }
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  int code = http.GET();
+  String body = code > 0 ? http.getString() : "";
+  http.end();
+  if (code < 200 || code >= 300) {
+    setStatus("Inbox HTTP " + String(code), 1400);
+    logf("[INBOX] http=%d body=%s", code, body.c_str());
+    return false;
+  }
+  DynamicJsonDocument doc(8192);
+  auto err = deserializeJson(doc, body);
+  if (err) {
+    setStatus("Inbox parse failed", 1400);
+    logf("[INBOX] parse failed err=%s body_len=%u", err.c_str(), static_cast<unsigned>(body.length()));
+    return false;
+  }
+
+  bool found = false;
+  if (doc["item"].is<JsonObject>()) {
+    JsonObject item = doc["item"].as<JsonObject>();
+    if (handleInboxHistoryItem(item, forcePlay)) {
+      found = true;
+    }
+  }
+  doc.clear();
+  body = "";
+  if (found) {
+    if (speak) {
+      bool played = playLastInboxMessage();
+      logf("[INBOX] playback ok=%d seq=%u", static_cast<int>(played), static_cast<unsigned>(gInboxLastSeq));
+    }
+    return true;
+  }
+  setStatus("No new inbox", 900);
+  logf("[INBOX] no new message last_seq=%u", static_cast<unsigned>(gInboxLastSeq));
+  return false;
+}
+
+bool injectInboxText(const String& text, bool speakAfter) {
+  String bodyText = text;
+  bodyText.trim();
+  if (bodyText.isEmpty()) {
+    logf("[INBOX] inject empty");
+    return false;
+  }
+  if ((!gWifiReady && !ensureWifiForHttp("inbox-inject", 3000)) || gHubHost.isEmpty()) {
+    setStatus("Inject offline", 1200);
+    logf("[INBOX] inject offline");
+    return false;
+  }
+  String topicKey = currentConversationKey();
+  String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) + "/inbox/inject";
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  if (!configureHttpClient(http, secureClient, url, 15000)) {
+    setStatus("Inject connect failed", 1200);
+    logf("[INBOX] inject connect failed");
+    return false;
+  }
+  DynamicJsonDocument doc(1024);
+  doc["text"] = bodyText;
+  doc["sender_kind"] = "human";
+  doc["sender_name"] = "Serial smoke";
+  doc["source"] = "cardputer_serial_inject";
+  String payload;
+  serializeJson(doc, payload);
+  http.addHeader("Content-Type", "application/json");
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  int code = http.POST(payload);
+  String response = code > 0 ? http.getString() : "";
+  http.end();
+  if (code < 200 || code >= 300) {
+    setStatus("Inject HTTP " + String(code), 1400);
+    logf("[INBOX] inject http=%d body=%s", code, response.c_str());
+    return false;
+  }
+  logf("[INBOX] inject ok chars=%d", bodyText.length());
+  return fetchLatestInboxMessage(true, speakAfter);
+}
+
 bool saveVoiceNoteMetadata(const VoiceNote& note) {
   fs::FS* fs = activeVoiceFs();
   if (!fs) {

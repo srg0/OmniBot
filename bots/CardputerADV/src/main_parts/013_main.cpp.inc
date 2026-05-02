@@ -104,6 +104,7 @@ String sha256File(fs::FS& fs, const String& path) {
 
 bool configureHttpClient(HTTPClient& http, std::unique_ptr<WiFiClientSecure>& secureClient, const String& url,
                          uint32_t timeoutMs = 60000) {
+  prepareNetworkMemory("http", false);
   http.setTimeout(timeoutMs);
   http.setReuse(false);
   bool tls = url.startsWith("https://");

@@ -723,6 +723,21 @@ bool handleHostSerialCommand(String line) {
     logf("[SMOKE] realtime closed by host");
     return true;
   }
+  if (cmd == "inbox.poll" || cmd == "/inbox.poll" || cmd == "inbox.play" || cmd == "/inbox.play") {
+    bool forcePlay = cmd == "inbox.play" || cmd == "/inbox.play";
+    bool ok = fetchLatestInboxMessage(forcePlay, true);
+    logf("[HOST] inbox.%s ok=%d seq=%u", forcePlay ? "play" : "poll", static_cast<int>(ok),
+         static_cast<unsigned>(gInboxLastSeq));
+    return true;
+  }
+  if (cmd.startsWith("inbox.inject ") || cmd.startsWith("/inbox.inject ")) {
+    int spaceIndex = line.indexOf(' ');
+    String text = spaceIndex >= 0 ? line.substring(spaceIndex + 1) : "";
+    text.trim();
+    bool ok = injectInboxText(text, true);
+    logf("[HOST] inbox.inject ok=%d chars=%d", static_cast<int>(ok), text.length());
+    return true;
+  }
   if (cmd.startsWith("topic.create ") || cmd.startsWith("/topic.create ")) {
     int spaceIndex = line.indexOf(' ');
     String title = spaceIndex >= 0 ? line.substring(spaceIndex + 1) : "";

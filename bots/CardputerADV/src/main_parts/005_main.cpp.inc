@@ -147,6 +147,7 @@ void finishTransferUi(const String& statusText, bool ok);
 std::vector<String> wrapText(const String& raw, int32_t pixelLimit);
 String keyboardSignatureFromState();
 bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs = kHttpReconnectTimeoutMs);
+void prepareNetworkMemory(const char* reason, bool forceTtsBuffer = false);
 bool connectHubClient(WiFiClient& client, const char* reason, uint32_t readTimeoutSec = 45);
 void synthesizeTcaKeyboardState();
 void pollTcaKeyboardEvents();
@@ -155,6 +156,9 @@ void submitInput();
 bool playVisibleVoiceHistoryLine();
 bool downloadAndPlayResponseAudio(const String& url, const String& localPath, const String& sha256,
                                   uint32_t expectedSize, const String& title, const String& preview);
+bool requestAndPlayTts(const String& text);
+bool fetchLatestInboxMessage(bool forcePlay = false, bool speak = true);
+bool injectInboxText(const String& text, bool speakAfter = true);
 void saveHubEndpoint(const String& host, uint16_t port);
 void syncClockFromNtp(bool force = false);
 void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs = 180);

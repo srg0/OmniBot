@@ -186,12 +186,7 @@ bool requestAndPlayTts(const String& text) {
     return false;
   }
 
-  if (!gRecording && gRecordBuffer) {
-    releaseRecordBuffer();
-  }
-  if (gTtsBuffer) {
-    releaseTtsBuffer();
-  }
+  prepareNetworkMemory("tts", true);
 
   bool pausedWsForTts = false;
   if (gWsReady) {
