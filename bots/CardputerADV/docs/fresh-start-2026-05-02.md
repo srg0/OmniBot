@@ -51,6 +51,7 @@ Never print or commit Wi-Fi passwords, device tokens, OpenAI/OpenRouter keys, Te
 Primary guardrail document:
 
 - `bots/CardputerADV/docs/ota-clean-boot-baseline.md`
+- `bots/CardputerADV/docs/cardputer-ops-recipes.md`
 
 ## OTA Architecture
 
@@ -79,6 +80,8 @@ Known residual:
 - Full runtime can still log TLS allocation failures during non-critical boot-time asset/manifest fetch. OTA apply is isolated from that path.
 
 ## Build, Bump, Publish
+
+Detailed operational recipes are in `bots/CardputerADV/docs/cardputer-ops-recipes.md`.
 
 Build:
 
