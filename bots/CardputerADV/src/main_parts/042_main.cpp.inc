@@ -257,6 +257,7 @@ void realtimeWsEvent(WStype_t type, uint8_t* payload, size_t length) {
           gRealtimeSmokeActive = false;
           gRealtimeSmokeTextPending = false;
           closeRealtimeReplyFile();
+          resumeHubWebSocketAfterVoice();
           if (wasSmoke) {
             logf("[SMOKE] realtime fail stage=connect_disconnect verify=%s",
                  gRealtimeTlsVerify ? "ca" : "insecure");
@@ -328,6 +329,7 @@ void startRealtimeSession(bool startAfterReady) {
     setFaceMode(FaceMode::Error);
     return;
   }
+  pauseHubWebSocketForVoice();
   resetRealtimeTurnState();
   gRealtimeActive = true;
   gRealtimeConnected = false;

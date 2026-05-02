@@ -410,6 +410,8 @@ Realtime cable smoke after flashing `d484c6c`:
 - Pre-fix result: all transports returned ok, but one longer text response logged `[RT] audio decode oom chars=4096`, matching the live symptom where audio could cut off.
 - Fix: realtime `audio.delta` decoding no longer mallocs one contiguous decoded buffer per WebSocket frame. It streams base64 decode through a small stack buffer and writes PCM incrementally to `/voice/__realtime_reply.pcm`.
 - Post-fix result: 5/5 serial realtime smokes passed with CA-verified WSS: 3 text-response runs returned `audio=1`, and 2 synthetic audio runs verified `audio.append`/`audio.commit` without protocol errors or decode OOM.
+- Follow-up live monitor caught repeated `SSL - Memory allocation failed` on manual `Ctrl+R` after the hub WebSocket had been running. Fix: realtime now pauses the normal hub WebSocket before opening its own WSS/TLS connection and resumes it when realtime closes or connect fails.
+- Post-fix cable smoke reproduced the low-contiguous-heap condition (`largest=22516`) and still reached `realtime.ready`; the old TLS allocation failure did not repeat in three serial realtime starts.
 
 Known remaining issue:
 
