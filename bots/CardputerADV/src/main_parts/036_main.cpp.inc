@@ -142,8 +142,7 @@ bool sendTextTurn(const String& text) {
   bool beginOk = false;
   if (hubUsesTls()) {
     secureClient.reset(new WiFiClientSecure());
-    secureClient->setInsecure();
-    secureClient->setHandshakeTimeout(12);
+    configureSecureClient(*secureClient);
     beginOk = http.begin(*secureClient, url);
   } else {
     beginOk = http.begin(url);
@@ -220,4 +219,3 @@ bool sendTextTurn(const String& text) {
     setStatus("Bad response", 2000);
     return false;
   }
-

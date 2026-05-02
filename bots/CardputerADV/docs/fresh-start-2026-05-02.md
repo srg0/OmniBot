@@ -260,6 +260,155 @@ Acceptance criteria for the closed loop:
 - Cardputer sees the version, applies it, and reboots into it.
 - Logs confirm success or automatically preserve enough failure evidence for rollback/debug.
 
+## MVP Iteration Plan
+
+Principle: fix one narrow path per iteration, keep OTA clean-boot invariants stable, and make every hardware test reproducible from cable/serial before expanding UX.
+
+Iteration 0: repo and live-state baseline.
+
+- Verify firmware, bridge, and `Homio/openclaw-config` are clean.
+- Record exact firmware SHA, version, bridge SHA, live bridge health, OTA manifest version/SHA, and current serial port.
+- Run bridge debug once and preserve the voice/realtime evidence window.
+- Stop if repo state is dirty in an unexplained way.
+
+Acceptance:
+
+- A single baseline note has commit IDs, manifest, serial port, and bridge health.
+
+Iteration 1: observe the current standard voice failure without changing OTA.
+
+- Start serial monitor and bridge journal tail at the same time.
+- Trigger exactly one standard voice attempt.
+- Classify failure as device pre-connect, TLS/connect, upload body, response header/body, bridge STT/OpenClaw, TTS/audio download, or device action execution.
+- Use firmware logs around `VOICE`, `HTTP`, `WIFI`, heap, and the bridge `[voice-raw]` lines.
+
+Acceptance:
+
+- The failure has one primary owner: firmware network/TLS, bridge endpoint, upstream STT/OpenClaw/TTS, or UI/playback.
+- If no `[voice-raw] uploaded` exists, focus stays on device-side connect/upload path.
+
+Iteration 2: add a serial diagnostic harness if the current firmware cannot be driven from cable.
+
+- Add newline-delimited serial commands without printing secrets.
+- Minimum commands: `diag`, `voice.start`, `voice.stop`, `rt.start`, `rt.stop`, `rt.commit`, `ota.fetch`, `ota.apply`, `logs.send`, `reboot`, `topic.list`, `topic.current`.
+- Add stable `DBG ...` output lines for machine parsing: version, heap, Wi-Fi status, hub, topic, last HTTP diag, last voice diag, realtime state, OTA manifest, and boot slot.
+- Keep serial commands as wrappers around existing firmware functions, not a parallel business-logic path.
+
+Acceptance:
+
+- A host script can open serial, run `diag`, trigger a voice/realtime/OTA operation, and collect a bounded log without touching the keyboard.
+
+Iteration 3: standard voice repair.
+
+- Patch the smallest proven cause from Iteration 1.
+- Preferred order of suspects: Wi-Fi reconnect freshness, TLS heap/handshake, raw upload chunking/timeout, bridge auth/path, response wait timeout, TTS follow-up.
+- Build with the wrapper and flash by cable.
+- Run three standard voice attempts through serial/keyboard with bridge tail.
+
+Acceptance:
+
+- Each run reaches `[voice-raw] uploaded`, returns transcript/reply, and either plays audio or reports a text-only fallback explicitly.
+- The selected topic receives the transcript and assistant reply.
+
+Iteration 4: realtime voice repair.
+
+- First run bridge-side `scripts/smoke-realtime.mjs` to separate bridge/OpenAI issues from firmware issues.
+- Then test device `Ctrl+R`/serial realtime: connect, ready, record, commit, transcript, text, audio, device actions.
+- Add missing realtime diagnostics only if logs do not isolate the failure.
+
+Acceptance:
+
+- Realtime reaches `realtime.ready`, sends audio/text, gets `response.done`, and either plays reply PCM or logs a precise audio failure.
+
+Iteration 5: cable-controlled regression loop.
+
+- Create or update a host-side loop script that can build, cable flash, monitor boot, run `diag`, run standard voice smoke, run realtime smoke, and save artifacts.
+- Artifacts should include serial log, bridge journal slice, manifest snapshot, git diff/status, and pass/fail JSON.
+- Do not auto-commit from this loop yet.
+
+Acceptance:
+
+- Codex can run one full hardware smoke cycle without asking the user to press keys unless the board must enter download mode.
+
+Iteration 6: OTA-controlled regression loop.
+
+- Build and publish a small version bump candidate.
+- Use serial command or existing UI path to fetch manifest and request OTA apply.
+- Verify clean boot updater logs: high heap, SD stage, SHA/size match, inactive slot flash, reboot into new version, bridge health confirmation.
+- Preserve the previous version as rollback context.
+
+Acceptance:
+
+- Codex can publish a candidate, device can install it, and serial logs prove the booted version.
+
+Iteration 7: firmware request route MVP.
+
+- Pick one dedicated Cardputer development topic.
+- Bridge classifies firmware-development intent separately from normal assistant chat and device actions.
+- The first MVP can create a local Codex task/manual handoff; fully automatic patching can come after guardrails pass.
+- Device receives a compact “candidate ready” message with version, summary, and install prompt/action.
+
+Acceptance:
+
+- A typed or spoken request such as “add calculator stub” reaches the development topic, creates a firmware work item, and returns an actionable status to the device.
+
+Iteration 8: commit/publish discipline.
+
+- Enforce version bump before OTA publish.
+- Require clean build before publish.
+- Require commit before non-dirty release candidate unless explicitly marked dirty.
+- Keep bridge and firmware commits separate.
+
+Acceptance:
+
+- A release candidate can be traced from device version -> manifest SHA -> firmware commit -> build log.
+
+Iteration 9: closed-loop demo.
+
+- Use a tiny safe feature, for example a calculator placeholder screen or diagnostic command.
+- Request it from Cardputer voice/text.
+- Patch, build, commit, publish OTA, install, reboot, and verify on device.
+
+Acceptance:
+
+- One end-to-end feature request completes without manual repo commands from the user.
+
+## Open Questions For Sergey
+
+1. Which topic should be the canonical Cardputer development topic for firmware-building requests?
+2. For MVP, should firmware-development requests require explicit confirmation before Codex edits code, or is confirmation only required before OTA publish/install?
+3. Should the device auto-check OTA every 10 seconds, every minute, or only while the OTA/development screen is open?
+4. Should OTA install be fully automatic for dev builds, or always ask on the device before rebooting?
+5. What is the preferred spoken confirmation phrase: Russian-only, English-only, or both?
+6. Should standard voice remain the primary UX and realtime stay as an optional live mode until it is proven stable?
+7. Is it acceptable to add a serial command harness to production dev firmware, or should it be compiled behind a `DEV_SERIAL_COMMANDS` flag?
+8. Should Codex be allowed to deploy bridge code to `cnt-openclaw` automatically after tests, or only prepare a commit and ask first?
+9. What minimum evidence should every iteration save: serial log only, or serial log plus bridge journal plus manifest plus screenshot/photo when relevant?
+10. For the first closed-loop demo feature, should we use a calculator stub, a diagnostic screen, or a voice command/action because it exercises the full route?
+
+## Realtime VAD Baseline 2026-05-02
+
+Baseline evidence:
+
+- Firmware branch: `codex/cardputer-ota-baseline-0.2.53-clean`.
+- Live serial log: `/Users/s1z0v/kd-projects/adv_cardputer/tmp/runtime-monitor/realtime-live-vad-20260502-142203.log`.
+- One-touch realtime path reached `realtime.ready`, started microphone capture, received `speech.stopped`, stopped local recording through VAD, received transcript, received `response.done`, and played a correct assistant answer.
+- User confirmed the system answered correctly.
+
+Working facts:
+
+- `Ctrl+R` now means enter hands-free realtime session, not manual commit.
+- Bridge realtime is configured with server VAD and `create_response: true`.
+- Firmware now treats `speech.stopped` as the automatic turn boundary and releases the microphone before response playback.
+- `rt.smoke` still passes with `audio=1`.
+- `rt.smoke.audio` verifies the `audio.append` path without `protocol_error invalid json`.
+
+Known remaining issue:
+
+- Long realtime replies can still overrun the loop: the first live answer worked, but sound cut off and the next turn did not complete reliably.
+- The likely next fixes are shorter realtime replies, stronger playback-to-listening cooldown, and echo/feedback prevention before treating realtime as production-stable.
+- Standard voice remains the safer fallback path while realtime is hardened.
+
 ## Next Session First Steps
 
 1. Start from commit `29bb7d5` / tag `cardputer-ota-baseline-0.2.53`.

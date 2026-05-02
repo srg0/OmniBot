@@ -157,8 +157,8 @@ void initStorage() {
   }
   Serial.println("[BOOT] storage: load voice notes");
   loadVoiceNotes();
-  Serial.println("[BOOT] storage: scan audio");
-  scanAudioAssets();
+  Serial.println("[BOOT] storage: defer audio scan");
+  appendRuntimeLog("LIB", "audio scan deferred", false);
   Serial.println("[BOOT] storage: load manifests");
   loadAssetManifestSummary();
   loadOtaManifestSummary();
@@ -225,11 +225,16 @@ void flushCompletedRecordChunksToFile(size_t completedCount) {
       gActiveRecordBytes += written;
       gActiveRecordCommittedBytes += written;
       if (written != kRecordChunkBytes) {
+        gRecordFileWriteFailed = true;
+        gRecording = false;
         setHttpDiag("record fs short " + String(static_cast<unsigned>(written)) + "/" +
                     String(static_cast<unsigned>(kRecordChunkBytes)));
         logf("[VOICE] record fs short write=%u expected=%u",
              static_cast<unsigned>(written),
              static_cast<unsigned>(kRecordChunkBytes));
+        setStatus("Record FS failed", 1400);
+        setFaceMode(FaceMode::Error);
+        return;
       }
     }
   }

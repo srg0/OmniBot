@@ -10,6 +10,12 @@
   uint16_t c3 = rgb565_local(23, 77, 90);
   uint16_t fg = white;
   const char* label = "LISTEN";
+  const bool realtime = state == AssistantPulseState::Realtime;
+  const char* rtPhase = gRealtimeRecording ? "LIVE"
+                        : gRealtimeAwaiting ? "WAIT"
+                        : gPlaybackActive ? "PLAY"
+                        : gRealtimeConnected ? "RDY"
+                        : "LINK";
 
   if (state == AssistantPulseState::Recording) {
     c1 = red;
@@ -29,12 +35,18 @@
     c3 = rgb565_local(22, 73, 46);
     fg = rgb565_local(241, 255, 246);
     label = "PLAY";
+  } else if (realtime) {
+    c1 = rgb565_local(255, 143, 36);
+    c2 = rgb565_local(255, 213, 98);
+    c3 = rgb565_local(90, 45, 11);
+    fg = rgb565_local(255, 246, 226);
+    label = "RT";
   }
 
   d.fillScreen(bg);
   d.fillRoundRect(0, 0, 240, 135, 6, bg);
-  d.fillCircle(70, 58, 86, rgb565_local(4, 16, 20));
-  d.drawRoundRect(0, 0, 240, 135, 6, rgb565_local(48, 54, 61));
+  d.fillCircle(70, 58, 86, realtime ? rgb565_local(20, 10, 4) : rgb565_local(4, 16, 20));
+  d.drawRoundRect(0, 0, 240, 135, 6, realtime ? rgb565_local(86, 52, 24) : rgb565_local(48, 54, 61));
 
   uint32_t nowMs = millis();
   float t = nowMs / 1000.0f;
@@ -44,27 +56,29 @@
     spin = t * 1.9f;
   } else if (state == AssistantPulseState::Recording) {
     spin = t * 1.25f;
+  } else if (realtime) {
+    spin = t * (gRealtimeRecording ? 1.45f : gRealtimeAwaiting ? 1.95f : 0.82f);
   }
   float level = max<uint8_t>(18, gVoiceLevel8) / 255.0f;
-  if (!gRecording && gVoiceLevel8 > 28) {
+  if (!gRecording && !gRealtimeRecording && gVoiceLevel8 > 28) {
     gVoiceLevel8 = static_cast<uint8_t>(max<int>(28, static_cast<int>(gVoiceLevel8) - 2));
   }
 
   const int16_t cx = 58;
   const int16_t cy = 68;
-  d.fillCircle(cx, cy, 50 + static_cast<int16_t>(breathe), rgb565_local(4, 16, 21));
-  d.drawCircle(cx, cy, 51 + static_cast<int16_t>(breathe), rgb565_local(8, 34, 43));
+  d.fillCircle(cx, cy, 50 + static_cast<int16_t>(breathe), realtime ? rgb565_local(24, 12, 5) : rgb565_local(4, 16, 21));
+  d.drawCircle(cx, cy, 51 + static_cast<int16_t>(breathe), realtime ? rgb565_local(95, 49, 17) : rgb565_local(8, 34, 43));
   d.drawCircle(cx, cy, 49 + static_cast<int16_t>(breathe), c3);
-  drawAssistantPulseArc(cx, cy, 45, 36, -2.25f, 1.00f, rgb565_local(10, 38, 48));
-  drawAssistantPulseArc(cx, cy, 31, 23, 0.58f, 4.54f, rgb565_local(11, 35, 48));
+  drawAssistantPulseArc(cx, cy, 45, 36, -2.25f, 1.00f, realtime ? rgb565_local(58, 29, 10) : rgb565_local(10, 38, 48));
+  drawAssistantPulseArc(cx, cy, 31, 23, 0.58f, 4.54f, realtime ? rgb565_local(50, 27, 11) : rgb565_local(11, 35, 48));
   drawAssistantPulseArc(cx, cy, 45, 36, -2.25f + spin, 1.00f + spin, c1);
   drawAssistantPulseArc(cx, cy, 31, 23, 0.58f - spin * 1.08f, 4.54f - spin * 1.08f, c2);
 
-  if (state == AssistantPulseState::Recording) {
+  if (state == AssistantPulseState::Recording || (realtime && gRealtimeRecording)) {
     int16_t pulseR = 18 + static_cast<int16_t>(level * 14.0f + sinf(t * 12.0f));
     d.fillCircle(cx, cy, pulseR, c1);
     d.fillCircle(cx, cy, 9, fg);
-  } else if (state == AssistantPulseState::Thinking) {
+  } else if (state == AssistantPulseState::Thinking || (realtime && gRealtimeAwaiting)) {
     for (int i = 0; i < 4; ++i) {
       float a = spin * 1.9f + i * 1.55f;
       drawAssistantPulseArc(cx, cy, 22, 16, a, a + 0.72f, (i % 2) ? c2 : c1);
@@ -73,9 +87,14 @@
                  cy + static_cast<int16_t>(sinf(spin * 2.4f) * 21.0f), 4, c1);
     d.fillCircle(cx + static_cast<int16_t>(cosf(spin * 2.0f + 2.1f) * 26.0f),
                  cy + static_cast<int16_t>(sinf(spin * 2.0f + 2.1f) * 23.0f), 3, c2);
-  } else if (state == AssistantPulseState::Playback) {
+  } else if (state == AssistantPulseState::Playback || (realtime && gPlaybackActive)) {
     d.fillCircle(cx, cy, 16, fg);
     d.fillTriangle(cx - 4, cy - 8, cx - 4, cy + 8, cx + 9, cy, bg);
+  } else if (realtime) {
+    int16_t coreR = 11 + static_cast<int16_t>(sinf(t * 4.4f) * 2.0f);
+    d.fillCircle(cx, cy, 21, rgb565_local(83, 42, 13));
+    d.fillCircle(cx, cy, coreR, fg);
+    d.drawCircle(cx, cy, 26 + static_cast<int16_t>(sinf(t * 3.0f) * 3.0f), c1);
   } else {
     d.fillCircle(cx, cy, 14 + static_cast<int16_t>(sinf(t * 2.2f) * 1.4f), fg);
   }
@@ -95,6 +114,8 @@
 	    snprintf(rec, sizeof(rec), "%02u:%02u", static_cast<unsigned>(elapsed / 60),
 	             static_cast<unsigned>(elapsed % 60));
 	    hhmm = rec;
+	  } else if (realtime) {
+	    hhmm = rtPhase;
 	  }
 
   const uint16_t clockPanel = state == AssistantPulseState::Recording
@@ -103,14 +124,16 @@
                                         ? rgb565_local(28, 22, 11)
                                         : state == AssistantPulseState::Playback
                                               ? rgb565_local(5, 27, 24)
-                                              : rgb565_local(3, 21, 38);
+                                              : realtime
+                                                    ? rgb565_local(31, 17, 7)
+                                                    : rgb565_local(3, 21, 38);
   d.fillRoundRect(119, 13, 103, 57, 14, clockPanel);
-  d.drawRoundRect(119, 13, 103, 57, 14, rgb565_local(14, 58, 82));
+  d.drawRoundRect(119, 13, 103, 57, 14, realtime ? rgb565_local(125, 67, 22) : rgb565_local(14, 58, 82));
   for (int i = 0; i < 5; ++i) {
     int16_t yy = 21 + i * 9 + static_cast<int16_t>(sinf(t * 0.9f + i * 0.8f) * 2.0f);
-    d.drawFastHLine(126, yy, 89, rgb565_local(5, 35, 58));
+    d.drawFastHLine(126, yy, 89, realtime ? rgb565_local(54, 31, 12) : rgb565_local(5, 35, 58));
   }
-  d.fillRoundRect(128, 61, 82, 2, 1, rgb565_local(16, 83, 112));
+  d.fillRoundRect(128, 61, 82, 2, 1, realtime ? rgb565_local(189, 91, 24) : rgb565_local(16, 83, 112));
 
 	  d.setFont(&fonts::Font7);
   d.setTextColor(fg, clockPanel);
@@ -123,12 +146,12 @@
   int bars = state == AssistantPulseState::Ready ? 15 : 16;
   for (int i = 0; i < bars; ++i) {
     int16_t bx = waveX + i * 7;
-    if (state == AssistantPulseState::Thinking) {
+    if (state == AssistantPulseState::Thinking || (realtime && gRealtimeAwaiting)) {
       int16_t dotY = waveY + static_cast<int16_t>(sinf(t * 5.0f + i * 0.7f) * 6.0f);
       d.fillCircle(bx, dotY, (i % 3 == 0) ? 3 : 2, (i % 2) ? c1 : c2);
       continue;
     }
-    if (state == AssistantPulseState::Playback) {
+    if (state == AssistantPulseState::Playback || (realtime && gPlaybackActive)) {
       uint8_t band = static_cast<uint8_t>(clampValue<int>(
           (i * kPlaybackSpectrumBands) / max<int>(1, bars), 0, kPlaybackSpectrumBands - 1));
       int16_t h = static_cast<int16_t>(4 + gVoiceEqBars[band] * 2);
@@ -140,8 +163,8 @@
       d.drawFastHLine(bx - 2, py, 4, fg);
       continue;
     }
-    float amp = state == AssistantPulseState::Recording ? 1.05f :
-                0.68f;
+    float amp = (state == AssistantPulseState::Recording || (realtime && gRealtimeRecording)) ? 1.05f :
+                realtime ? 0.82f : 0.68f;
     int16_t h = static_cast<int16_t>((8.0f + fabsf(sinf(t * 3.6f + i * 0.74f)) * 22.0f +
                                       fabsf(cosf(t * 1.7f + i * 0.31f)) * 7.0f) *
                                      amp * (0.65f + level * 0.75f));
@@ -149,19 +172,25 @@
     d.fillRoundRect(bx - 1, waveY - h / 2, 3, h, 2, (i % 2) ? c1 : c2);
   }
 
-  if (state == AssistantPulseState::Playback) {
-    d.fillRoundRect(117, 110, 88, 2, 1, rgb565_local(23, 61, 69));
+  if (state == AssistantPulseState::Playback || (realtime && gPlaybackActive)) {
+    d.fillRoundRect(117, 110, 88, 2, 1, realtime ? rgb565_local(75, 40, 15) : rgb565_local(23, 61, 69));
     int16_t progress = static_cast<int16_t>((playbackProgressPct() * 88U) / 100U);
     d.fillRoundRect(117, 110, max<int16_t>(1, progress), 3, 1, c1);
     d.setFont(&fonts::Font0);
-    d.setTextColor(rgb565_local(150, 244, 211), bg);
+    d.setTextColor(realtime ? rgb565_local(255, 214, 130) : rgb565_local(150, 244, 211), bg);
     d.setCursor(206, 107);
     d.print(formatPlaybackMs(playbackRemainingMs()));
   }
-  if (state == AssistantPulseState::Recording) {
+  if (state == AssistantPulseState::Recording || (realtime && gRealtimeRecording)) {
     d.fillCircle(133, 112, 4 + static_cast<int16_t>(sinf(t * 8.0f)), c1);
   }
   drawAssistantPulseButton(154, 105, 62, 21, label, c1, millis() < gAssistantPulsePressUntilMs);
+  if (realtime) {
+    d.setFont(&fonts::Font2);
+    d.setTextColor(rgb565_local(255, 189, 88), bg);
+    d.setCursor(123, 13);
+    d.print("realtime");
+  }
   if (gAssistantPendingVisible && state == AssistantPulseState::Thinking) {
     d.setFont(&fonts::Font2);
     d.setTextColor(amber, bg);
@@ -225,4 +254,3 @@ void renderVoicePlayerUi() {
       d.drawFastHLine(x + 1, peakY, 5, rgb565_local(236, 255, 246));
     }
   }
-

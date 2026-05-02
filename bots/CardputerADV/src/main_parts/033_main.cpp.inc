@@ -34,7 +34,11 @@ void startRecording() {
   gVoiceLevel8 = 36;
   pulseButtonPress();
 
-  gRecordingToFile = gStorageReady && ensureVoiceStorage();
+  gRecordingToFile = !gRecordFileWriteFailed && gStorageReady && ensureVoiceStorage();
+  if (!gRecordingToFile && gRecordFileWriteFailed) {
+    appendRuntimeLog("VOICE", "record fs disabled; using ram", true);
+    logf("[VOICE] record fs disabled; using ram");
+  }
   if (gRecordingToFile) {
     fs::FS* fs = activeVoiceFs();
     fsRemove(*fs, kActiveRecordPcmPath);
@@ -237,4 +241,3 @@ bool writeClientAll(WiFiClient& client, const uint8_t* data, size_t length, cons
   setHttpDiag(String(label) + ": ok");
   return true;
 }
-

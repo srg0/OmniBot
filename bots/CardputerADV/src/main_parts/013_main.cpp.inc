@@ -107,13 +107,32 @@ bool configureHttpClient(HTTPClient& http, std::unique_ptr<WiFiClientSecure>& se
   http.setTimeout(timeoutMs);
   http.setReuse(false);
   bool tls = url.startsWith("https://");
+  logf("[HTTP] begin tls=%d free=%u largest=%u url=%s",
+       static_cast<int>(tls),
+       static_cast<unsigned>(ESP.getFreeHeap()),
+       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+       url.c_str());
   if (tls) {
     secureClient.reset(new WiFiClientSecure());
-    secureClient->setInsecure();
-    secureClient->setHandshakeTimeout(12);
-    return http.begin(*secureClient, url);
+    configureSecureClient(*secureClient);
+    bool ok = http.begin(*secureClient, url);
+    if (!ok) {
+      setHttpDiag("https begin failed largest=" +
+                  String(static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT))));
+      logf("[HTTP] begin failed tls=1 free=%u largest=%u",
+           static_cast<unsigned>(ESP.getFreeHeap()),
+           static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    }
+    return ok;
   }
-  return http.begin(url);
+  bool ok = http.begin(url);
+  if (!ok) {
+    setHttpDiag("http begin failed");
+    logf("[HTTP] begin failed tls=0 free=%u largest=%u",
+         static_cast<unsigned>(ESP.getFreeHeap()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+  }
+  return ok;
 }
 
 bool downloadUrlToFile(const String& url, const String& path, const String& expectedSha = "",

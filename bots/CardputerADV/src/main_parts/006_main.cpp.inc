@@ -113,6 +113,23 @@ String hubBaseUrl() {
   return String(hubUsesTls() ? "https://" : "http://") + gHubHost + ":" + String(gHubPort);
 }
 
+void configureSecureClient(WiFiClientSecure& client) {
+#if OPENCLAW_TLS_VERIFY
+  client.setCACert(kTlsRootCaPem);
+#else
+  client.setInsecure();
+#endif
+  client.setHandshakeTimeout(12);
+}
+
+const char* tlsVerifyMode() {
+#if OPENCLAW_TLS_VERIFY
+  return "ca";
+#else
+  return "insecure";
+#endif
+}
+
 const char* otaImageStateName(esp_ota_img_states_t state) {
   switch (state) {
     case ESP_OTA_IMG_NEW:

@@ -69,8 +69,7 @@ bool postRawVoiceTurn(const uint8_t* ramPayload, const String& filePath, size_t 
   WiFiClientSecure secureClient;
   WiFiClient* client = nullptr;
   if (hubUsesTls()) {
-    secureClient.setInsecure();
-    secureClient.setHandshakeTimeout(12);
+    configureSecureClient(secureClient);
     secureClient.setTimeout((kTurnHttpTimeoutMs + 999) / 1000);
     client = &secureClient;
   } else {
@@ -79,10 +78,23 @@ bool postRawVoiceTurn(const uint8_t* ramPayload, const String& filePath, size_t 
     client = &plainClient;
   }
 
+  logf("[VOICE] raw post preconnect free=%u largest=%u host=%s port=%u",
+       static_cast<unsigned>(ESP.getFreeHeap()),
+       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+       gHubHost.c_str(),
+       gHubPort);
+  if (hubUsesTls()) {
+    logf("[VOICE] raw post tls_verify=%s", tlsVerifyMode());
+  }
   setHttpDiag("voice_post: connect");
   if (!client->connect(gHubHost.c_str(), gHubPort)) {
-    setHttpDiag("voice_post: connect failed");
-    logf("[VOICE] raw post connect failed host=%s port=%u", gHubHost.c_str(), gHubPort);
+    setHttpDiag("voice_post: connect failed largest=" +
+                String(static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT))));
+    logf("[VOICE] raw post connect failed host=%s port=%u free=%u largest=%u",
+         gHubHost.c_str(),
+         gHubPort,
+         static_cast<unsigned>(ESP.getFreeHeap()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
     return false;
   }
 
@@ -198,8 +210,7 @@ bool requestAndPlayTts(const String& text) {
   bool beginOk = false;
   if (hubUsesTls()) {
     secureClient.reset(new WiFiClientSecure());
-    secureClient->setInsecure();
-    secureClient->setHandshakeTimeout(12);
+    configureSecureClient(*secureClient);
     beginOk = http.begin(*secureClient, url);
   } else {
     beginOk = http.begin(url);
@@ -236,4 +247,3 @@ bool requestAndPlayTts(const String& text) {
     }
     return false;
   }
-

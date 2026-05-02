@@ -85,16 +85,23 @@ void textTurnTask(void* arg) {
     std::unique_ptr<WiFiClientSecure> secureClient;
     http.setTimeout(kTurnHttpTimeoutMs);
     bool beginOk = false;
+    logf("[TEXT] preconnect free=%u largest=%u url=%s",
+         static_cast<unsigned>(ESP.getFreeHeap()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+         payload->url.c_str());
     if (hubUsesTls()) {
       secureClient.reset(new WiFiClientSecure());
-      secureClient->setInsecure();
-      secureClient->setHandshakeTimeout(12);
+      configureSecureClient(*secureClient);
       beginOk = http.begin(*secureClient, payload->url);
     } else {
       beginOk = http.begin(payload->url);
     }
     if (!beginOk) {
-      result->error = "Failed to open HTTP connection.";
+      result->error = "Failed to open HTTP connection. largest=" +
+                      String(static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+      logf("[TEXT] begin failed free=%u largest=%u",
+           static_cast<unsigned>(ESP.getFreeHeap()),
+           static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
     } else {
       DynamicJsonDocument doc(768);
       doc["message"] = payload->text;
@@ -120,6 +127,13 @@ void textTurnTask(void* arg) {
       result->statusCode = code;
       result->response = http.getString();
       http.end();
+      if (code <= 0) {
+        logf("[TEXT] post transport code=%d err=%s free=%u largest=%u",
+             code,
+             HTTPClient::errorToString(code).c_str(),
+             static_cast<unsigned>(ESP.getFreeHeap()),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+      }
 
       if (code < 200 || code >= 300) {
         if (code <= 0) {
@@ -230,4 +244,3 @@ void maybeStartNextTextTurn() {
       payload.release(),
       1,
       &gTextTurnTaskHandle);
-

@@ -210,23 +210,26 @@ void drawAssistantPulseButton(int16_t x, int16_t y, int16_t w, int16_t h,
 
 void renderAssistantPulseChatHint() {
   const bool hasInput = !gInputBuffer.isEmpty();
-  if (!hasInput && assistantPulseState() != AssistantPulseState::Ready) {
+  AssistantPulseState state = assistantPulseState();
+  if (!hasInput && state != AssistantPulseState::Ready && state != AssistantPulseState::Realtime) {
     return;
   }
   auto& d = gCanvas;
-  const uint16_t bg = rgb565_local(6, 16, 22);
-  const uint16_t edge = hasInput ? rgb565_local(47, 227, 255) : rgb565_local(42, 78, 88);
-  const uint16_t text = hasInput ? TFT_YELLOW : rgb565_local(128, 145, 155);
+  const bool realtime = state == AssistantPulseState::Realtime;
+  const uint16_t bg = realtime ? rgb565_local(19, 11, 4) : rgb565_local(6, 16, 22);
+  const uint16_t edge = hasInput ? (realtime ? rgb565_local(255, 159, 42) : rgb565_local(47, 227, 255))
+                                 : (realtime ? rgb565_local(96, 54, 18) : rgb565_local(42, 78, 88));
+  const uint16_t text = hasInput ? TFT_YELLOW
+                                 : (realtime ? rgb565_local(204, 151, 86) : rgb565_local(128, 145, 155));
   d.fillRoundRect(10, 107, 132, 19, 7, bg);
   d.drawRoundRect(10, 107, 132, 19, 7, edge);
   d.setFont(&fonts::efontCN_12);
   d.setTextColor(text, bg);
   d.setCursor(17, 112);
-  d.print(hasInput ? tailUtf8ToFit("> " + gInputBuffer, 116) : "> type to chat");
+  d.print(hasInput ? tailUtf8ToFit("> " + gInputBuffer, 116) : (realtime ? "> realtime" : "> type to chat"));
 }
 
 void renderAssistantPulseUi() {
   auto& d = gCanvas;
   ensureBangkokTimezone();
   AssistantPulseState state = assistantPulseState();
-

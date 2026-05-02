@@ -195,6 +195,7 @@ void setup() {
   M5Cardputer.Display.setFont(&fonts::Font2);
   M5Cardputer.Display.setTextSize(1);
   renderBootSplash("Display");
+  gCanvas.setColorDepth(8);
   gCanvas.createSprite(240, 135);
   gCanvas.setTextWrap(false);
   gCanvas.setFont(&fonts::Font2);
@@ -250,6 +251,7 @@ void setup() {
   pushSystem(String("FW ") + kAppVersion + " " + String(kBuildGitSha).substring(0, 10));
   logf("[BOOT] device_id=%s", gDeviceId.c_str());
   logf("[BOOT] version=%s git=%s build=%s", kAppVersion, kBuildGitSha, kBuildTime);
+  logHeapStats("boot-before-wifi");
 
   renderBootSplash("Wi-Fi");
   if (ensureWifi()) {
@@ -259,22 +261,21 @@ void setup() {
       confirmOtaBootIfPending("bridge health");
     }
     if (gDeviceSettings.checkUpdatesOnBoot) {
-      setStatus("Checking updates...", 900);
-      render();
-      fetchRemoteOtaManifest();
-      fetchRemoteAssetManifest();
+      appendRuntimeLog("OTA", "boot remote check deferred", true);
+      setStatus("Update check deferred", 900);
     }
     if (gDeviceSettings.autoUpdateFirmware && gOtaManifest.parsed &&
         !gOtaManifest.url.isEmpty() && gOtaManifest.version != kAppVersion) {
       applyOtaFromManifest();
     }
-    startTopicTask(true, false, false, "Topics preload...");
+    appendRuntimeLog("CTX", "boot topic preload deferred", false);
   }
 
   render();
 }
 
 void loop() {
+  handleHostSerialInput();
   M5Cardputer.update();
   refreshKeyboardState();
   updateImuMotion();
@@ -309,6 +310,9 @@ void loop() {
 
   if (gPlaybackActive && !gPlaybackStreaming && !M5Cardputer.Speaker.isPlaying()) {
     gPlaybackActive = false;
+    if (gRealtimeRestartAfterPlayback && gRealtimeHandsFreeActive) {
+      gRealtimeNextListenMs = millis() + 1800;
+    }
     if (gDynamicPlaybackBuffer) {
       free(gDynamicPlaybackBuffer);
       gDynamicPlaybackBuffer = nullptr;

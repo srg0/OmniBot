@@ -17,6 +17,9 @@ void setFaceMode(FaceMode mode) {
 }
 
 AssistantPulseState assistantPulseState() {
+  if (gRealtimeActive || gRealtimeRecording || gRealtimeAwaiting) {
+    return AssistantPulseState::Realtime;
+  }
   if (gRecording) {
     return AssistantPulseState::Recording;
   }
@@ -231,4 +234,3 @@ bool shouldSpeakAssistantTextReply(const String& reply) {
   }
   return false;
 }
-

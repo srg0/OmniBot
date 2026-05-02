@@ -17,6 +17,7 @@ enum class AssistantPulseState : uint8_t {
   Recording,
   Thinking,
   Playback,
+  Realtime,
 };
 
 enum class NotesMode : uint8_t {
@@ -225,4 +226,3 @@ struct DeviceSettings {
   String updateChannel = "dev";
   String audioLanguage = "ru";
 };
-

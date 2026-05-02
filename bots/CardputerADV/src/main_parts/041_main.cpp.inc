@@ -58,6 +58,26 @@ void drainRealtimeRecording() {
   serviceRealtimeRecording(false);
 }
 
+void stopRealtimeRecordingForVad() {
+  if (!gRealtimeRecording) {
+    return;
+  }
+  gRealtimeRecording = false;
+  drainRealtimeRecording();
+  stopMic();
+  gRealtimeInflightChunks.clear();
+  gRealtimeAwaiting = true;
+  gRealtimeAwaitingStartedMs = millis();
+  gRealtimeRestartAfterPlayback = false;
+  setFaceMode(FaceMode::Thinking);
+  setStatus("Realtime thinking...");
+  setVoiceDiag("realtime: vad stopped");
+  appendRuntimeLog("RT", "vad stop record", false);
+  logf("[RT] vad stop record free=%u largest=%u",
+       static_cast<unsigned>(ESP.getFreeHeap()),
+       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+}
+
 void closeRealtimeReplyFile() {
   if (gRealtimeReplyFile) {
     gRealtimeReplyFile.flush();
@@ -119,9 +139,15 @@ void closeRealtimeSession(const String& reason) {
   gRealtimeActive = false;
   gRealtimeConnected = false;
   gRealtimeStartAfterReady = false;
+  gRealtimeHandsFreeActive = false;
+  gRealtimeRestartAfterPlayback = false;
+  gRealtimeNextListenMs = 0;
+  gRealtimeSmokeAudioPending = false;
+  gRealtimeSmokeAudioStreaming = false;
+  gRealtimeSmokeAudioChunkIndex = 0;
+  gRealtimeSmokeAudioNextMs = 0;
   gRealtimeAwaiting = false;
   gRealtimeGotAudio = false;
   gRealtimeSessionId = "";
   setVoiceDiag("realtime: " + reason);
 }
-

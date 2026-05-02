@@ -252,10 +252,141 @@ bool sendRealtimeAudioChunk(const int16_t* samples, size_t sampleCount) {
                                   sampleCount * sizeof(int16_t));
   encoded.replace("\n", "");
   encoded.replace("\r", "");
-  DynamicJsonDocument doc(768 + encoded.length());
-  doc["type"] = "audio.append";
-  doc["audio"] = encoded;
+  if (encoded.isEmpty() || encoded == "-FAIL-") {
+    logf("[RT] audio encode failed samples=%u bytes=%u free=%u largest=%u",
+         static_cast<unsigned>(sampleCount),
+         static_cast<unsigned>(sampleCount * sizeof(int16_t)),
+         static_cast<unsigned>(ESP.getFreeHeap()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    return false;
+  }
+
+  static constexpr const char* kAudioPrefix = "{\"type\":\"audio.append\",\"audio\":\"";
+  static constexpr const char* kAudioSuffix = "\"}";
+  static constexpr size_t kWsHeaderReserve = 14;
+  const size_t prefixLen = strlen(kAudioPrefix);
+  const size_t suffixLen = strlen(kAudioSuffix);
+  const size_t payloadLen = prefixLen + encoded.length() + suffixLen;
+  uint8_t* frame = static_cast<uint8_t*>(malloc(kWsHeaderReserve + payloadLen + 1));
+  if (!frame) {
+    logf("[RT] audio frame oom payload=%u b64=%u free=%u largest=%u",
+         static_cast<unsigned>(payloadLen),
+         static_cast<unsigned>(encoded.length()),
+         static_cast<unsigned>(ESP.getFreeHeap()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    return false;
+  }
+
+  char* payload = reinterpret_cast<char*>(frame + kWsHeaderReserve);
+  memcpy(payload, kAudioPrefix, prefixLen);
+  memcpy(payload + prefixLen, encoded.c_str(), encoded.length());
+  memcpy(payload + prefixLen + encoded.length(), kAudioSuffix, suffixLen);
+  payload[payloadLen] = '\0';
+
+  bool sent = gRealtimeWs.sendTXT(frame, payloadLen, true);
+  static uint32_t audioChunkLogCounter = 0;
+  ++audioChunkLogCounter;
+  if (!sent || audioChunkLogCounter <= 2 || audioChunkLogCounter % 25 == 0) {
+    logf("[RT] audio chunk sent=%d payload=%u b64=%u free=%u largest=%u",
+         static_cast<int>(sent),
+         static_cast<unsigned>(payloadLen),
+         static_cast<unsigned>(encoded.length()),
+         static_cast<unsigned>(ESP.getFreeHeap()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+  }
+  free(frame);
+  return sent;
+}
+
+bool commitRealtimeAudioBuffer(const char* logPrefix) {
+  DynamicJsonDocument doc(128);
+  doc["type"] = "audio.commit";
   String payload;
   serializeJson(doc, payload);
-  return gRealtimeWs.sendTXT(payload);
+  bool sent = gRealtimeConnected && gRealtimeWs.sendTXT(payload);
+  if (!sent) {
+    logf("[%s] audio commit send failed connected=%d",
+         logPrefix ? logPrefix : "RT",
+         static_cast<int>(gRealtimeConnected));
+    return false;
+  }
+  gRealtimeAwaiting = true;
+  gRealtimeAwaitingStartedMs = millis();
+  setFaceMode(FaceMode::Thinking);
+  setStatus("Realtime thinking...");
+  setVoiceDiag("realtime: committed");
+  return true;
+}
+
+void beginRealtimeSyntheticAudioSmoke() {
+  gRealtimeSmokeAudioStreaming = true;
+  gRealtimeSmokeAudioChunkIndex = 0;
+  gRealtimeSmokeAudioNextMs = millis();
+  setFaceMode(FaceMode::Listening);
+  setStatus("Realtime audio smoke...");
+  logf("[SMOKE] realtime audio streaming start");
+}
+
+void stopRealtimeAudioSmoke(bool ok) {
+  gRealtimeSmokeAudioPending = false;
+  gRealtimeSmokeAudioStreaming = false;
+  gRealtimeSmokeAudioChunkIndex = 0;
+  gRealtimeSmokeAudioNextMs = 0;
+  if (!ok) {
+    gRealtimeSmokeActive = false;
+  }
+}
+
+void serviceRealtimeAudioSmoke() {
+  constexpr size_t kSmokeChunks = 24;
+  constexpr uint32_t kSmokeChunkGapMs = 45;
+  if (!gRealtimeSmokeAudioStreaming || !gRealtimeConnected || gRealtimeAwaiting) {
+    return;
+  }
+  uint32_t now = millis();
+  if (gRealtimeSmokeAudioNextMs != 0 && now < gRealtimeSmokeAudioNextMs) {
+    return;
+  }
+  if (gRealtimeSmokeAudioChunkIndex >= kSmokeChunks) {
+    logf("[SMOKE] realtime audio chunks=%u samples=%u",
+         static_cast<unsigned>(gRealtimeSmokeAudioChunkIndex),
+         static_cast<unsigned>(gRealtimeSmokeAudioChunkIndex * kRealtimeInputChunkSamples));
+    stopRealtimeAudioSmoke(true);
+    if (!commitRealtimeAudioBuffer("SMOKE")) {
+      gRealtimeSmokeActive = false;
+      setStatus("Realtime audio smoke failed", 1600);
+      setFaceMode(FaceMode::Error);
+      return;
+    }
+    logf("[SMOKE] realtime audio commit sent");
+    return;
+  }
+
+  const size_t chunk = gRealtimeSmokeAudioChunkIndex;
+  const size_t totalSamples = kSmokeChunks * kRealtimeInputChunkSamples;
+  for (size_t i = 0; i < kRealtimeInputChunkSamples; ++i) {
+    const size_t sampleIndex = chunk * kRealtimeInputChunkSamples + i;
+    int period = (sampleIndex / 1200) % 2 == 0 ? 17 : 29;
+    int16_t amp = static_cast<int16_t>((sampleIndex % period) < (period / 2) ? 1800 : -1800);
+    if (sampleIndex < 600) {
+      amp = static_cast<int16_t>((static_cast<int32_t>(amp) *
+                                  static_cast<int32_t>(sampleIndex)) / 600);
+    }
+    if (totalSamples - sampleIndex < 600) {
+      amp = static_cast<int16_t>((static_cast<int32_t>(amp) *
+                                  static_cast<int32_t>(totalSamples - sampleIndex)) / 600);
+    }
+    gRealtimeInputBuffers[0][i] = amp;
+  }
+  updateVoiceLevelFromSamples(gRealtimeInputBuffers[0], kRealtimeInputChunkSamples);
+  upsampleRealtimeChunk(gRealtimeInputBuffers[0]);
+  if (!sendRealtimeAudioChunk(gRealtimeUpsampleBuffer, kRealtimeOutputChunkSamples)) {
+    logf("[SMOKE] realtime audio send failed chunk=%u", static_cast<unsigned>(chunk));
+    stopRealtimeAudioSmoke(false);
+    setStatus("Realtime audio smoke failed", 1600);
+    setFaceMode(FaceMode::Error);
+    return;
+  }
+  ++gRealtimeSmokeAudioChunkIndex;
+  gRealtimeSmokeAudioNextMs = now + kSmokeChunkGapMs;
 }
