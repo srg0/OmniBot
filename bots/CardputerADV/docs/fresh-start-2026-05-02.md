@@ -391,6 +391,7 @@ Acceptance:
 Baseline evidence:
 
 - Firmware branch: `codex/cardputer-ota-baseline-0.2.53-clean`.
+- Firmware commit: `d484c6c Stabilize Cardputer voice realtime baseline`.
 - Live serial log: `/Users/s1z0v/kd-projects/adv_cardputer/tmp/runtime-monitor/realtime-live-vad-20260502-142203.log`.
 - One-touch realtime path reached `realtime.ready`, started microphone capture, received `speech.stopped`, stopped local recording through VAD, received transcript, received `response.done`, and played a correct assistant answer.
 - User confirmed the system answered correctly.
@@ -403,10 +404,17 @@ Working facts:
 - `rt.smoke` still passes with `audio=1`.
 - `rt.smoke.audio` verifies the `audio.append` path without `protocol_error invalid json`.
 
+Realtime cable smoke after flashing `d484c6c`:
+
+- 5 serial-driven iterations were run from `/Users/s1z0v/kd-projects/adv_cardputer/scripts/openclaw_device_realtime_smoke.py`.
+- Pre-fix result: all transports returned ok, but one longer text response logged `[RT] audio decode oom chars=4096`, matching the live symptom where audio could cut off.
+- Fix: realtime `audio.delta` decoding no longer mallocs one contiguous decoded buffer per WebSocket frame. It streams base64 decode through a small stack buffer and writes PCM incrementally to `/voice/__realtime_reply.pcm`.
+- Post-fix result: 5/5 serial realtime smokes passed with CA-verified WSS: 3 text-response runs returned `audio=1`, and 2 synthetic audio runs verified `audio.append`/`audio.commit` without protocol errors or decode OOM.
+
 Known remaining issue:
 
-- Long realtime replies can still overrun the loop: the first live answer worked, but sound cut off and the next turn did not complete reliably.
-- The likely next fixes are shorter realtime replies, stronger playback-to-listening cooldown, and echo/feedback prevention before treating realtime as production-stable.
+- Long realtime replies no longer hit the known contiguous-heap audio decode OOM in serial smoke, but the live hands-free second-turn path still needs manual QA after this fix.
+- The likely next fixes are shorter realtime replies, stronger playback-to-listening cooldown, and echo/feedback prevention if live QA still shows cut-off audio or dropped second turns.
 - Standard voice remains the safer fallback path while realtime is hardened.
 
 ## Next Session First Steps

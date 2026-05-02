@@ -61,27 +61,32 @@ void handleRealtimeAudioDeltaPayload(uint8_t* payload, size_t length) {
     appendRuntimeLog("RT", "reply file unavailable", true);
     return;
   }
-  const int maxDecoded = static_cast<int>((audioLen * 3U) / 4U + 8U);
-  uint8_t* decoded = static_cast<uint8_t*>(malloc(maxDecoded));
-  if (!decoded) {
-    appendRuntimeLog("RT", "audio decode oom", true);
-    logf("[RT] audio decode oom chars=%u free=%u largest=%u",
-         static_cast<unsigned>(audioLen),
-         static_cast<unsigned>(ESP.getFreeHeap()),
-         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
-    setStatus("Realtime OOM", 1200);
-    return;
+  base64_decodestate state;
+  base64_init_decodestate(&state);
+
+  uint8_t decoded[768];
+  bool wroteAudio = false;
+  size_t offset = 0;
+  while (offset < audioLen) {
+    const size_t remaining = audioLen - offset;
+    const size_t inputLen = min<size_t>(1024, remaining);
+    int decodedLen = base64_decode_block(audioStart + offset,
+                                         static_cast<int>(inputLen),
+                                         reinterpret_cast<char*>(decoded),
+                                         &state);
+    if (decodedLen > 0) {
+      size_t written = gRealtimeReplyFile.write(decoded, decodedLen);
+      gRealtimeReplyBytes += written;
+      wroteAudio = wroteAudio || written > 0;
+    }
+    offset += inputLen;
   }
-  int decodedLen = base64_decode_chars(audioStart, static_cast<int>(audioLen),
-                                       reinterpret_cast<char*>(decoded));
-  if (decodedLen > 0) {
-    size_t written = gRealtimeReplyFile.write(decoded, decodedLen);
-    gRealtimeReplyBytes += written;
+
+  if (wroteAudio) {
     gRealtimeGotAudio = true;
     setFaceMode(FaceMode::Speaking);
     setStatus("Realtime audio...", 700);
   }
-  free(decoded);
 }
 
 void handleRealtimeJson(const JsonDocument& doc) {
