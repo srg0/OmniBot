@@ -101,7 +101,4 @@ namespace {
 #include "main_parts/056_pulse_chat_and_clock.cpp.inc"
 #include "main_parts/057_voice_chat_ble_ui.cpp.inc"
 #include "main_parts/058_render_and_boot_splash.cpp.inc"
-
-}  // namespace
-
 #include "main_parts/059_entrypoints.cpp.inc"
