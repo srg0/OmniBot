@@ -71,11 +71,35 @@ struct ChatLine {
   String prefix;
   String text;
   LineKind kind;
+  bool voicePlayable = false;
+  String voiceUrl;
+  String voiceTitle;
+  String voiceSha256;
+  uint32_t voiceSize = 0;
+
+  ChatLine() = default;
+  ChatLine(const String& linePrefix, const String& lineText, LineKind lineKind)
+      : prefix(linePrefix), text(lineText), kind(lineKind) {}
+  ChatLine(const String& linePrefix, const String& lineText, LineKind lineKind, bool playable,
+           const String& url, const String& title, const String& sha256, uint32_t size)
+      : prefix(linePrefix),
+        text(lineText),
+        kind(lineKind),
+        voicePlayable(playable),
+        voiceUrl(url),
+        voiceTitle(title),
+        voiceSha256(sha256),
+        voiceSize(size) {}
 };
 
 struct VisualLine {
   String text;
   LineKind kind;
+  int16_t chatIndex = -1;
+
+  VisualLine() = default;
+  VisualLine(const String& lineText, LineKind lineKind, int16_t lineChatIndex)
+      : text(lineText), kind(lineKind), chatIndex(lineChatIndex) {}
 };
 
 struct VoiceNote {
@@ -151,6 +175,11 @@ struct ContextPreviewLine {
   String role;
   String text;
   bool voice = false;
+  bool voicePlayable = false;
+  String voiceUrl;
+  String voiceTitle;
+  String voiceSha256;
+  uint32_t voiceSize = 0;
 };
 
 struct BatterySnapshot {

@@ -1,4 +1,4 @@
-  DynamicJsonDocument doc(8192);
+  DynamicJsonDocument doc(32768);
   auto err = deserializeJson(doc, body);
   if (err || !doc["items"].is<JsonArray>()) {
     gContextError = err ? String(err.c_str()) : "Bad history";
@@ -44,16 +44,27 @@
         uint32_t durationMs = content["voice"]["duration_ms"] | 0;
         line.text = "Voice " + String(durationMs / 1000) + "s";
       }
+      JsonObject voice = content["voice"].as<JsonObject>();
+      line.voiceUrl = voice["url"] | "";
+      line.voiceSha256 = voice["sha256"] | "";
+      line.voiceSize = voice["bytes"] | voice["size"] | 0;
+      String mediaId = voice["media_id"] | "";
+      line.voicePlayable = !line.voiceUrl.isEmpty();
+      line.voiceTitle = mediaId.isEmpty() ? "history voice" : ("voice " + mediaId);
     } else {
       line.text = content["text"] | "";
     }
-    line.text = trimPreview(line.text, 92);
     if (!line.text.isEmpty()) {
       gContextPreview.push_back(line);
       historyChatLines.push_back({
           topicHistoryPrefix(line.role, line.voice),
-          trimPreview(line.text, 180),
+          line.text,
           topicHistoryLineKind(line.role),
+          line.voicePlayable,
+          line.voiceUrl,
+          line.voiceTitle,
+          line.voiceSha256,
+          line.voiceSize,
       });
     }
   }
@@ -235,4 +246,3 @@ void rememberVoiceNoteFromPcmFile(const String& title, const String& preview, co
 uint16_t readLe16(const uint8_t* p) {
   return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
 }
-

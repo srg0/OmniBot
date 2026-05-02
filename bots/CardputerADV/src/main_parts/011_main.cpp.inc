@@ -27,12 +27,14 @@
 
 std::vector<VisualLine> buildVisualLines(int32_t pixelLimit) {
   std::vector<VisualLine> lines;
+  int16_t chatIndex = 0;
   for (const auto& entry : gChatLines) {
     String full = entry.prefix + ": " + normalizeEmojiDisplayText(entry.text);
     auto wrapped = wrapText(full, pixelLimit);
     for (const auto& part : wrapped) {
-      lines.push_back({part, entry.kind});
+      lines.push_back({part, entry.kind, chatIndex});
     }
+    chatIndex++;
   }
   if (gAssistantPendingVisible) {
     String dots = ".";
@@ -42,10 +44,49 @@ std::vector<VisualLine> buildVisualLines(int32_t pixelLimit) {
     }
     auto pendingWrapped = wrapText("AI: " + dots, pixelLimit);
     for (const auto& part : pendingWrapped) {
-      lines.push_back({part, LineKind::Assistant});
+      lines.push_back({part, LineKind::Assistant, -1});
     }
   }
   return lines;
+}
+
+int visibleChatRows(bool showFace, bool showStatus) {
+  if (showFace) {
+    return showStatus ? 3 : 4;
+  }
+  return showStatus ? 7 : 8;
+}
+
+bool playVisibleVoiceHistoryLine() {
+  if (!gInputBuffer.isEmpty() || gChatLines.empty()) {
+    return false;
+  }
+  bool showFace = gUiMode == UiMode::ChatFace;
+  bool showStatus = !gStatusText.isEmpty() && gStatusText != "Ready";
+  int visibleRows = visibleChatRows(showFace, showStatus);
+  auto lines = buildVisualLines(showFace ? 216 : 228);
+  int maxOffset = max<int>(0, static_cast<int>(lines.size()) - visibleRows);
+  gChatScrollOffset = clampValue(gChatScrollOffset, 0, maxOffset);
+  int startIndex = max<int>(0, static_cast<int>(lines.size()) - visibleRows - gChatScrollOffset);
+  int endIndex = min<int>(static_cast<int>(lines.size()), startIndex + visibleRows);
+  for (int i = startIndex; i < endIndex; ++i) {
+    int16_t chatIndex = lines[i].chatIndex;
+    if (chatIndex < 0 || chatIndex >= static_cast<int>(gChatLines.size())) {
+      continue;
+    }
+    ChatLine& line = gChatLines[chatIndex];
+    if (!line.voicePlayable || line.voiceUrl.isEmpty()) {
+      continue;
+    }
+    String url = line.voiceUrl;
+    if (url.startsWith("/")) {
+      url = hubBaseUrl() + url;
+    }
+    String title = line.voiceTitle.isEmpty() ? "history voice" : line.voiceTitle;
+    setStatus("Playing voice...", 900);
+    return downloadAndPlayResponseAudio(url, "", line.voiceSha256, line.voiceSize, title, line.text);
+  }
+  return false;
 }
 
 void scrollChatBy(int delta) {
@@ -225,4 +266,3 @@ String basenameOfPath(const String& path) {
   int slash = path.lastIndexOf('/');
   return slash >= 0 ? path.substring(slash + 1) : path;
 }
-

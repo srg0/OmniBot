@@ -128,6 +128,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (keys.enter || key == '\r' || key == '\n') {
+    if ((gUiMode == UiMode::ChatFull || gUiMode == UiMode::ChatFace) && playVisibleVoiceHistoryLine()) {
+      return;
+    }
     submitInput();
     return;
   }
@@ -205,4 +208,3 @@ void pollTyping() {
                           !keys.tab && !keys.enter && !keys.del && !keys.space &&
                           !upHeld && !downHeld && !leftHeld && !rightHeld &&
                           wordSignature.isEmpty();
-

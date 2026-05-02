@@ -43,11 +43,7 @@ void appendAssistantReply(const String& reply) {
     return;
   }
   flashActivityLed(0, 180, 0);
-  if (replyVisualLineCount(displayReply) > kVoicePreviewLineThreshold) {
-    pushAssistant(trimPreview(displayReply) + " [voice]");
-  } else {
-    pushAssistant(displayReply);
-  }
+  pushAssistant(displayReply);
 }
 
 bool setupKeyboardInput() {
@@ -228,4 +224,3 @@ void refreshKeyboardState() {
     }
   }
 }
-

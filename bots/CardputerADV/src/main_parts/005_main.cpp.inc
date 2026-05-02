@@ -152,6 +152,9 @@ void synthesizeTcaKeyboardState();
 void pollTcaKeyboardEvents();
 bool hasHidKey(const Keyboard_Class::KeysState& keys, uint8_t keyCode);
 void submitInput();
+bool playVisibleVoiceHistoryLine();
+bool downloadAndPlayResponseAudio(const String& url, const String& localPath, const String& sha256,
+                                  uint32_t expectedSize, const String& title, const String& preview);
 void saveHubEndpoint(const String& host, uint16_t port);
 void syncClockFromNtp(bool force = false);
 void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs = 180);

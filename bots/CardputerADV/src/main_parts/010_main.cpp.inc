@@ -43,6 +43,27 @@ void pushLine(const String& prefix, const String& text, LineKind kind) {
   gChatScrollOffset = 0;
 }
 
+void pushVoiceHistoryLine(const String& prefix, const String& text, LineKind kind, const String& url,
+                          const String& title, const String& sha256, uint32_t size) {
+  if (text.isEmpty()) {
+    return;
+  }
+  ChatLine line;
+  line.prefix = prefix;
+  line.text = text;
+  line.kind = kind;
+  line.voicePlayable = !url.isEmpty();
+  line.voiceUrl = url;
+  line.voiceTitle = title;
+  line.voiceSha256 = sha256;
+  line.voiceSize = size;
+  gChatLines.push_back(line);
+  while (gChatLines.size() > kMaxChatLines) {
+    gChatLines.pop_front();
+  }
+  gChatScrollOffset = 0;
+}
+
 void pushSystem(const String& text) { pushLine("SYS", text, LineKind::System); }
 void pushError(const String& text) {
   pushLine("ERR", text, LineKind::Error);
@@ -86,7 +107,12 @@ void replaceChatWithTopicHistory(const String& title, const std::vector<ChatLine
     return;
   }
   for (const auto& line : lines) {
-    pushLine(line.prefix, line.text, line.kind);
+    if (line.voicePlayable) {
+      pushVoiceHistoryLine(line.prefix, line.text, line.kind, line.voiceUrl, line.voiceTitle, line.voiceSha256,
+                           line.voiceSize);
+    } else {
+      pushLine(line.prefix, line.text, line.kind);
+    }
   }
   gChatScrollOffset = 0;
 }
@@ -229,4 +255,3 @@ String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji)
     }
   }
   cleaned.trim();
-

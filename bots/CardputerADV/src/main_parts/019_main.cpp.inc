@@ -201,7 +201,7 @@ bool fetchSelectedTopicHistory() {
   gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
   String topicKey = gContexts[gSelectedContext].topicKey.isEmpty() ? gContexts[gSelectedContext].key : gContexts[gSelectedContext].topicKey;
   String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) +
-               "/history?limit=5&compact=1&text_chars=150";
+               "/history?limit=8&compact=1&text_chars=0";
 
   auto getHistoryBody = [&](String& outBody) -> int {
     HTTPClient http;
@@ -235,4 +235,3 @@ bool fetchSelectedTopicHistory() {
     appendRuntimeLog("CTX", "history http " + String(code), true);
     return false;
   }
-
