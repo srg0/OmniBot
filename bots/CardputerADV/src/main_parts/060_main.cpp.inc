@@ -205,6 +205,10 @@ void renderStatusBar() {
 }
 
 void render() {
+  if (!gCanvasSpriteActive) {
+    return;
+  }
+  uint32_t renderStartMs = millis();
   if (gStatusUntilMs != 0 && millis() > gStatusUntilMs) {
     gStatusUntilMs = 0;
     if (gBleActive) {
@@ -217,4 +221,3 @@ void render() {
       gStatusText = "Ready";
     }
   }
-

@@ -183,9 +183,19 @@ bool downloadAndPlayResponseAudio(const String& url, const String& localPath, co
   }
   String id = makeVoiceNoteId(true);
   String outPath = voiceAudioPath(id);
-  if (!downloadUrlToFile(url, outPath, sha256, expectedSize)) {
+  setStatus("Preparing voice reply");
+  bool releasedCanvas = releaseUiCanvasForNetwork("reply-audio");
+  if (!downloadUrlToFile(url, outPath, sha256, expectedSize, "Voice reply",
+                         rgb565_local(246, 194, 74), false)) {
+    if (releasedCanvas) {
+      restoreUiCanvasAfterNetwork();
+    }
     appendRuntimeLog("AUDIO", "reply audio download failed", true);
-    return false;
+    setStatus("Preparing fallback TTS");
+    return requestAndPlayTts(preview);
+  }
+  if (releasedCanvas) {
+    restoreUiCanvasAfterNetwork();
   }
   if (!registerDownloadedVoiceNote(outPath, title, preview, true)) {
     return false;
@@ -213,4 +223,3 @@ void stopPlaybackStream() {
   }
   M5Cardputer.Speaker.stop();
 }
-

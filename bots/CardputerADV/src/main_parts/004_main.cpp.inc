@@ -178,6 +178,7 @@ int gLogScrollOffset = 0;
 int gSelectedSetting = 0;
 
 uint32_t gLastRenderMs = 0;
+uint32_t gLastUiSlowLogMs = 0;
 uint32_t gStatusUntilMs = 0;
 uint32_t gRecordStartMs = 0;
 uint32_t gBlinkEndMs = 0;

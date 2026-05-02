@@ -72,6 +72,38 @@ void prepareNetworkMemory(const char* reason, bool forceTtsBuffer) {
        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
 }
 
+bool releaseUiCanvasForNetwork(const char* reason) {
+  if (!gCanvasSpriteActive) {
+    return false;
+  }
+  gCanvas.deleteSprite();
+  gCanvasSpriteActive = false;
+  yield();
+  delay(2);
+  logf("[MEM] ui canvas released reason=%s free=%u largest=%u",
+       reason ? reason : "net",
+       static_cast<unsigned>(ESP.getFreeHeap()),
+       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+  return true;
+}
+
+void restoreUiCanvasAfterNetwork() {
+  if (gCanvasSpriteActive) {
+    return;
+  }
+  gCanvas.setColorDepth(8);
+  gCanvas.createSprite(240, 135);
+  gCanvas.setTextWrap(false);
+  gCanvas.setFont(&fonts::Font2);
+  gCanvas.setTextSize(1);
+  configureEmojiRendering();
+  gCanvasSpriteActive = true;
+  gLastRenderMs = 0;
+  logf("[MEM] ui canvas restored free=%u largest=%u",
+       static_cast<unsigned>(ESP.getFreeHeap()),
+       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+}
+
 String chipIdSuffix() {
   uint64_t chip = ESP.getEfuseMac();
   char buf[13];

@@ -187,6 +187,7 @@ bool requestAndPlayTts(const String& text) {
   }
 
   prepareNetworkMemory("tts", true);
+  bool releasedCanvasForTts = releaseUiCanvasForNetwork("tts");
 
   bool pausedWsForTts = false;
   if (gWsReady) {
@@ -216,6 +217,9 @@ bool requestAndPlayTts(const String& text) {
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
     }
+    if (releasedCanvasForTts) {
+      restoreUiCanvasAfterNetwork();
+    }
     return false;
   }
 
@@ -239,6 +243,9 @@ bool requestAndPlayTts(const String& text) {
     releaseTtsBuffer();
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
+    }
+    if (releasedCanvasForTts) {
+      restoreUiCanvasAfterNetwork();
     }
     return false;
   }

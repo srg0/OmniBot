@@ -229,7 +229,79 @@ void renderAssistantPulseChatHint() {
   d.print(hasInput ? tailUtf8ToFit("> " + gInputBuffer, 116) : (realtime ? "> realtime" : "> type to chat"));
 }
 
+void renderAssistantThinkingLite() {
+  auto& d = gCanvas;
+  constexpr uint16_t bg = rgb565_local(3, 7, 10);
+  constexpr uint16_t panel = rgb565_local(13, 11, 8);
+  constexpr uint16_t panel2 = rgb565_local(25, 20, 10);
+  constexpr uint16_t edge = rgb565_local(92, 69, 24);
+  constexpr uint16_t amber = rgb565_local(246, 194, 74);
+  constexpr uint16_t cyan = rgb565_local(47, 227, 255);
+  constexpr uint16_t white = rgb565_local(255, 248, 232);
+  constexpr uint16_t muted = rgb565_local(154, 131, 77);
+
+  uint32_t nowMs = millis();
+  uint8_t phase = static_cast<uint8_t>((nowMs / 110U) % 12U);
+
+  d.fillScreen(bg);
+  d.fillRoundRect(0, 0, 240, 135, 6, bg);
+  d.drawRoundRect(0, 0, 240, 135, 6, rgb565_local(57, 48, 28));
+  d.fillRoundRect(8, 8, 224, 119, 8, panel);
+  d.drawRoundRect(8, 8, 224, 119, 8, edge);
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(amber, panel);
+  d.setCursor(17, 16);
+  d.print("OPENCLAW");
+  d.setTextColor(muted, panel);
+  d.setCursor(224 - d.textWidth(kAppVersion), 16);
+  d.print(kAppVersion);
+
+  d.fillRoundRect(17, 34, 72, 43, 6, panel2);
+  d.drawRoundRect(17, 34, 72, 43, 6, rgb565_local(118, 82, 30));
+  d.setFont(&fonts::Font4);
+  d.setTextColor(white, panel2);
+  d.setCursor(29, 46);
+  d.print("THINK");
+
+  for (int i = 0; i < 10; ++i) {
+    int x = 103 + i * 11;
+    int p = (phase + i * 2) % 12;
+    int h = 8 + (p < 6 ? p : 12 - p) * 4;
+    uint16_t fill = (i % 3 == 0) ? cyan : amber;
+    d.fillRoundRect(x, 58 - h / 2, 6, h, 3, rgb565_local(35, 27, 11));
+    d.fillRoundRect(x + 1, 58 - h / 2 + 1, 4, max<int>(2, h - 2), 2, fill);
+  }
+
+  for (int i = 0; i < 6; ++i) {
+    int x = 104 + i * 18;
+    uint16_t fill = (i == phase % 6) ? amber : rgb565_local(54, 43, 20);
+    d.fillRoundRect(x, 82, 12, 4, 2, fill);
+  }
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(muted, panel);
+  d.setCursor(18, 92);
+  String status = gStatusText.isEmpty() ? String("agent thinking") : gStatusText;
+  d.print(fitCurrentFontToWidth(status, 205));
+
+  if (gAssistantPendingVisible) {
+    d.setTextColor(amber, panel);
+    d.setCursor(121, 33);
+    d.print("agent");
+  }
+  drawAssistantPulseButton(154, 105, 62, 21, "THINK", amber, millis() < gAssistantPulsePressUntilMs);
+  renderAssistantPulseChatHint();
+  renderTopicOverlayIfVisible();
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 void renderAssistantPulseUi() {
   auto& d = gCanvas;
   ensureBangkokTimezone();
   AssistantPulseState state = assistantPulseState();
+  if (state == AssistantPulseState::Thinking && !gRealtimeAwaiting && !gRealtimeActive) {
+    renderAssistantThinkingLite();
+    return;
+  }

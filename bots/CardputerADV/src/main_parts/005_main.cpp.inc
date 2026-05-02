@@ -50,6 +50,7 @@ bool gRealtimeSmokeTextPending = false;
 bool gRealtimeSmokeAudioPending = false;
 bool gRealtimeSmokeAudioStreaming = false;
 bool gRealtimeTlsVerify = true;
+bool gCanvasSpriteActive = false;
 uint32_t gRealtimeSessionStartedMs = 0;
 uint32_t gRealtimeAwaitingStartedMs = 0;
 uint32_t gRealtimeSmokeAudioNextMs = 0;
@@ -147,7 +148,12 @@ void finishTransferUi(const String& statusText, bool ok);
 std::vector<String> wrapText(const String& raw, int32_t pixelLimit);
 String keyboardSignatureFromState();
 bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs = kHttpReconnectTimeoutMs);
+bool downloadUrlToFile(const String& url, const String& path, const String& expectedSha = "",
+                       uint32_t expectedSize = 0, const String& progressTitle = "Downloading",
+                       uint16_t progressAccent = TFT_CYAN, bool showProgress = true);
 void prepareNetworkMemory(const char* reason, bool forceTtsBuffer = false);
+bool releaseUiCanvasForNetwork(const char* reason);
+void restoreUiCanvasAfterNetwork();
 bool connectHubClient(WiFiClient& client, const char* reason, uint32_t readTimeoutSec = 45);
 void synthesizeTcaKeyboardState();
 void pollTcaKeyboardEvents();

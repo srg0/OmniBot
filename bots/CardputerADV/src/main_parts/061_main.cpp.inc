@@ -59,19 +59,24 @@
     }
   }
   gCanvas.pushSprite(0, 0);
+  uint32_t renderCostMs = millis() - renderStartMs;
+  if (renderCostMs >= 45U && millis() - gLastUiSlowLogMs >= 2000U) {
+    gLastUiSlowLogMs = millis();
+    logf("[UI] render slow mode=%d thinking=%d recording=%d playback=%d ms=%u",
+         static_cast<int>(gUiMode), gThinking ? 1 : 0, gRecording ? 1 : 0,
+         gPlaybackActive ? 1 : 0, static_cast<unsigned>(renderCostMs));
+  }
 }
 
 void renderBootSplash(const char* stage) {
+  uint32_t renderStartMs = millis();
   auto& d = M5Cardputer.Display;
   const uint16_t bg = rgb565_local(3, 8, 14);
-  const uint16_t panel = rgb565_local(2, 6, 7);
-  const uint16_t panelLine = rgb565_local(38, 53, 50);
+  const uint16_t panel = rgb565_local(4, 10, 14);
+  const uint16_t panelLine = rgb565_local(36, 58, 66);
   const uint16_t mint = rgb565_local(111, 255, 230);
   const uint16_t mintDim = rgb565_local(32, 94, 89);
   const uint16_t gold = rgb565_local(255, 211, 106);
-  const uint16_t goldDim = rgb565_local(117, 82, 32);
-  const uint16_t rungFront = rgb565_local(154, 169, 164);
-  const uint16_t rungBack = rgb565_local(54, 70, 65);
   const uint16_t muted = rgb565_local(135, 154, 149);
   uint8_t stageIndex = 0;
   String stageName = stage && stage[0] ? String(stage) : String("");
@@ -89,66 +94,10 @@ void renderBootSplash(const char* stage) {
     stageIndex = 6;
   }
 
-  auto line = [&](int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color, bool thick) {
-    d.drawLine(x1, y1, x2, y2, color);
-    if (thick) {
-      d.drawLine(x1, y1 + 1, x2, y2 + 1, color);
-    }
-  };
-
-  auto drawHelix = [&]() {
-    constexpr int16_t axisY = 66;
-    constexpr int16_t startX = 41;
-    constexpr int16_t step = 14;
-    constexpr int16_t count = 12;
-    constexpr float amp = 24.0f;
-    float phase = stageIndex * 0.36f;
-
-    for (int i = 0; i < count; ++i) {
-      float theta = phase + i * 0.72f;
-      float s = sinf(theta);
-      float c = cosf(theta);
-      int16_t x = startX + i * step;
-      int16_t yA = axisY + static_cast<int16_t>(s * amp);
-      int16_t yB = axisY - static_cast<int16_t>(s * amp);
-      bool frontA = c > 0.0f;
-      line(x, yA, x, yB, frontA ? rungFront : rungBack, frontA);
-    }
-
-    for (int pass = 0; pass < 2; ++pass) {
-      for (int i = 0; i < count; ++i) {
-        float theta = phase + i * 0.72f;
-        float s = sinf(theta);
-        float c = cosf(theta);
-        int16_t x = startX + i * step;
-        int16_t y = axisY + static_cast<int16_t>((pass == 0 ? s : -s) * amp);
-        bool front = pass == 0 ? c > 0.0f : c < 0.0f;
-        uint16_t color = pass == 0 ? (front ? mint : mintDim) : (front ? gold : goldDim);
-        int16_t r = front ? 5 : 3;
-        d.fillCircle(x, y, r, color);
-        if (front) {
-          d.fillCircle(x - 1, y - 1, 1, TFT_WHITE);
-        }
-        if (i < count - 1) {
-          float nextTheta = phase + (i + 1) * 0.72f;
-          float nextS = sinf(nextTheta);
-          float nextC = cosf(nextTheta);
-          int16_t nx = startX + (i + 1) * step;
-          int16_t ny = axisY + static_cast<int16_t>((pass == 0 ? nextS : -nextS) * amp);
-          bool nextMostlyFront = pass == 0 ? nextC > -0.25f : nextC < 0.25f;
-          line(x, y, nx, ny, color, front && nextMostlyFront);
-        }
-      }
-    }
-  };
-
   d.fillScreen(bg);
-  d.fillTriangle(0, 92, 240, 28, 240, 135, rgb565_local(6, 21, 20));
+  d.fillTriangle(0, 104, 240, 40, 240, 135, rgb565_local(5, 18, 23));
   d.fillRoundRect(7, 7, 226, 121, 9, panel);
   d.drawRoundRect(7, 7, 226, 121, 9, panelLine);
-
-  drawHelix();
-  d.drawEllipse(120, 66, 82, 42 + static_cast<int16_t>(stageIndex % 2), mintDim);
 
   d.setFont(&fonts::Font2);
   d.setTextSize(1);
@@ -165,21 +114,36 @@ void renderBootSplash(const char* stage) {
   d.setTextColor(gold, panel);
   d.setCursor(220 - d.textWidth(pctText), 18);
   d.print(pctText);
-  d.drawRoundRect(108, 17, 59, 4, 2, panelLine);
-  d.fillRoundRect(111 + pct / 4, 18, 18, 2, 1, TFT_WHITE);
+  d.drawRoundRect(109, 18, 60, 4, 2, panelLine);
+  d.fillRoundRect(111, 19, max<int>(2, pct * 56 / 100), 2, 1, mint);
 
-  const char* states[] = {"DNA", "LINK", "SYNC", "READY"};
+  const char* names[] = {"DSP", "AUD", "SD", "KEY", "CFG", "NET"};
+  for (int i = 0; i < 6; ++i) {
+    int16_t x = 22 + i * 34;
+    uint16_t fill = (i + 1 <= stageIndex) ? rgb565_local(13, 46, 43) : rgb565_local(7, 17, 21);
+    uint16_t line = (i + 1 <= stageIndex) ? mint : rgb565_local(34, 47, 52);
+    d.fillRoundRect(x, 48, 27, 25, 6, fill);
+    d.drawRoundRect(x, 48, 27, 25, 6, line);
+    d.setFont(&fonts::Font0);
+    d.setTextColor((i + 1 <= stageIndex) ? TFT_WHITE : muted, fill);
+    d.setCursor(x + (27 - d.textWidth(names[i])) / 2, 57);
+    d.print(names[i]);
+  }
+
+  const char* states[] = {"BOOT", "CORE", "I/O", "NET"};
   const char* label = states[clampValue<int>((stageIndex + 1) / 2, 0, 3)];
   d.setFont(&fonts::Font4);
   d.setTextColor(TFT_WHITE, panel);
   int16_t tw = d.textWidth(label);
-  d.setCursor((240 - tw) / 2, 101);
+  d.setCursor((240 - tw) / 2, 91);
   d.print(label);
   d.setFont(&fonts::Font2);
   d.setTextColor(muted, panel);
-  String subtitle = stage && stage[0] ? String("molecular context / ") + stage : "molecular context";
-  d.setCursor((240 - d.textWidth(subtitle)) / 2, 121);
+  String subtitle = stage && stage[0] ? String("boot / ") + stage : "boot";
+  d.setCursor((240 - d.textWidth(subtitle)) / 2, 115);
   d.print(subtitle);
+  Serial.printf("[UI] boot stage=%s ms=%u\n", stage && stage[0] ? stage : "-",
+                static_cast<unsigned>(millis() - renderStartMs));
 }
 
 }  // namespace
@@ -200,6 +164,7 @@ void setup() {
   renderBootSplash("Display");
   gCanvas.setColorDepth(8);
   gCanvas.createSprite(240, 135);
+  gCanvasSpriteActive = true;
   gCanvas.setTextWrap(false);
   gCanvas.setFont(&fonts::Font2);
   gCanvas.setTextSize(1);
@@ -335,7 +300,12 @@ void loop() {
   updateBlink();
 
   uint32_t now = millis();
-  uint32_t renderInterval = (gRecording || gSubmitting || gThinking) ? kBusyRenderIntervalMs : kRenderIntervalMs;
+  uint32_t renderInterval = kRenderIntervalMs;
+  if (gRecording || gSubmitting || gThinking) {
+    renderInterval = (gThinking && !gRecording && gUiMode == UiMode::Home)
+                         ? kThinkRenderIntervalMs
+                         : kBusyRenderIntervalMs;
+  }
   if (now - gLastRenderMs >= renderInterval) {
     render();
     gLastRenderMs = now;

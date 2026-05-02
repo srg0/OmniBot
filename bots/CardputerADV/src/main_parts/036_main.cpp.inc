@@ -4,6 +4,9 @@
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
     }
+    if (releasedCanvasForTts) {
+      restoreUiCanvasAfterNetwork();
+    }
     return false;
   }
 
@@ -16,6 +19,9 @@
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
     }
+    if (releasedCanvasForTts) {
+      restoreUiCanvasAfterNetwork();
+    }
     return false;
   }
 
@@ -25,6 +31,9 @@
     setVoiceDiag("tts: fs unavailable");
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
+    }
+    if (releasedCanvasForTts) {
+      restoreUiCanvasAfterNetwork();
     }
     return false;
   }
@@ -45,6 +54,9 @@
     setVoiceDiag("tts: fs open failed");
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
+    }
+    if (releasedCanvasForTts) {
+      restoreUiCanvasAfterNetwork();
     }
     return false;
   }
@@ -83,6 +95,9 @@
         if (pausedWsForTts) {
           resumeHubWebSocketAfterVoice();
         }
+        if (releasedCanvasForTts) {
+          restoreUiCanvasAfterNetwork();
+        }
         return false;
       }
       bytesRead += static_cast<size_t>(got);
@@ -101,6 +116,9 @@
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
     }
+    if (releasedCanvasForTts) {
+      restoreUiCanvasAfterNetwork();
+    }
     return false;
   }
 
@@ -113,6 +131,9 @@
     if (pausedWsForTts) {
       resumeHubWebSocketAfterVoice();
     }
+    if (releasedCanvasForTts) {
+      restoreUiCanvasAfterNetwork();
+    }
     return false;
   }
 
@@ -124,6 +145,9 @@
   }
   if (pausedWsForTts) {
     resumeHubWebSocketAfterVoice();
+  }
+  if (releasedCanvasForTts) {
+    restoreUiCanvasAfterNetwork();
   }
   return started;
 }

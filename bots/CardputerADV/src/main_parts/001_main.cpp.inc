@@ -125,6 +125,7 @@ constexpr uint32_t kWifiConnectTimeoutMs = 20000;
 constexpr uint32_t kWifiReconnectIntervalMs = 5000;
 constexpr uint32_t kWsReconnectIntervalMs = 3000;
 constexpr uint32_t kRenderIntervalMs = 20;
+constexpr uint32_t kThinkRenderIntervalMs = 40;
 constexpr uint32_t kBusyRenderIntervalMs = 60;
 constexpr uint32_t kHttpReconnectTimeoutMs = 9000;
 constexpr uint16_t kTurnHttpTimeoutMs = 65000;

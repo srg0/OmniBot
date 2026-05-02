@@ -136,9 +136,9 @@ bool configureHttpClient(HTTPClient& http, std::unique_ptr<WiFiClientSecure>& se
   return ok;
 }
 
-bool downloadUrlToFile(const String& url, const String& path, const String& expectedSha = "",
-                       uint32_t expectedSize = 0, const String& progressTitle = "Downloading",
-                       uint16_t progressAccent = TFT_CYAN) {
+bool downloadUrlToFile(const String& url, const String& path, const String& expectedSha,
+                       uint32_t expectedSize, const String& progressTitle,
+                       uint16_t progressAccent, bool showProgress) {
   if ((!gWifiReady && !ensureWifiForHttp("download", 3000)) || url.isEmpty()) {
     setStatus("Download no Wi-Fi", 1200);
     return false;
@@ -157,13 +157,17 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
     return false;
   }
 
-  beginTransferUi(progressTitle, "connecting", expectedSize, progressAccent);
+  if (showProgress) {
+    beginTransferUi(progressTitle, "connecting", expectedSize, progressAccent);
+  }
   HTTPClient http;
   std::unique_ptr<WiFiClientSecure> secureClient;
   if (!configureHttpClient(http, secureClient, url, 180000)) {
     out.close();
     fsRemove(*fs, tempPath);
-    finishTransferUi("connect failed", false);
+    if (showProgress) {
+      finishTransferUi("connect failed", false);
+    }
     return false;
   }
   if (!gDeviceToken.isEmpty()) {
@@ -176,7 +180,9 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
     http.end();
     out.close();
     fsRemove(*fs, tempPath);
-    finishTransferUi("HTTP " + String(code), false);
+    if (showProgress) {
+      finishTransferUi("HTTP " + String(code), false);
+    }
     return false;
   }
 
@@ -196,7 +202,9 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
                                 " http=" + String(contentLength), true);
         break;
       }
-      updateTransferUi(written, progressTotal, "waiting");
+      if (showProgress) {
+        updateTransferUi(written, progressTotal, "waiting");
+      }
       delay(2);
       continue;
     }
@@ -209,12 +217,16 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
       http.end();
       out.close();
       fsRemove(*fs, tempPath);
-      finishTransferUi("write failed", false);
+      if (showProgress) {
+        finishTransferUi("write failed", false);
+      }
       return false;
     }
     written += readBytes;
     lastProgress = millis();
-    updateTransferUi(written, progressTotal, "receiving");
+    if (showProgress) {
+      updateTransferUi(written, progressTotal, "receiving");
+    }
   }
   http.end();
   out.close();
@@ -222,7 +234,9 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
   if ((expectedSize > 0 && written != expectedSize) ||
       (contentLength > 0 && written != static_cast<uint32_t>(contentLength))) {
     fsRemove(*fs, tempPath);
-    finishTransferUi("download short", false);
+    if (showProgress) {
+      finishTransferUi("download short", false);
+    }
     appendRuntimeLog("DL", "short path=" + path +
                             " written=" + String(static_cast<unsigned>(written)) +
                             " expected=" + String(static_cast<unsigned>(expectedSize)) +
@@ -230,14 +244,18 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
     return false;
   }
   if (!expectedSha.isEmpty()) {
-    updateTransferUi(written, progressTotal, "verifying SHA");
+    if (showProgress) {
+      updateTransferUi(written, progressTotal, "verifying SHA");
+    }
     String actualSha = sha256File(*fs, tempPath);
     actualSha.toLowerCase();
     String expected = expectedSha;
     expected.toLowerCase();
     if (actualSha != expected) {
       fsRemove(*fs, tempPath);
-      finishTransferUi("SHA mismatch", false);
+      if (showProgress) {
+        finishTransferUi("SHA mismatch", false);
+      }
       appendRuntimeLog("SHA", path + " mismatch", true);
       return false;
     }
@@ -245,10 +263,14 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
   fsRemove(*fs, path);
   if (!fsRename(*fs, tempPath, path)) {
     fsRemove(*fs, tempPath);
-    finishTransferUi("rename failed", false);
+    if (showProgress) {
+      finishTransferUi("rename failed", false);
+    }
     return false;
   }
-  finishTransferUi("saved", true);
+  if (showProgress) {
+    finishTransferUi("saved", true);
+  }
   return true;
 }
 
