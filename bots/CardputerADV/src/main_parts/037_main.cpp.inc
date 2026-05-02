@@ -75,15 +75,20 @@ void textTurnTask(void* arg) {
   }
 
   result->response.reserve(2048);
+  bool releasedCanvasForText = false;
 
   if (payload->url.isEmpty()) {
     result->error = "Hub is not configured.";
   } else if (!ensureWifiForHttp("text-turn", 3000)) {
     result->error = "Wi-Fi unavailable.";
   } else {
+    prepareNetworkMemory("text", false);
+    releasedCanvasForText = releaseUiCanvasForNetwork("text");
+
     HTTPClient http;
     std::unique_ptr<WiFiClientSecure> secureClient;
     http.setTimeout(kTurnHttpTimeoutMs);
+    http.setReuse(false);
     bool beginOk = false;
     logf("[TEXT] preconnect free=%u largest=%u url=%s",
          static_cast<unsigned>(ESP.getFreeHeap()),
@@ -180,6 +185,10 @@ void textTurnTask(void* arg) {
         }
       }
     }
+  }
+
+  if (releasedCanvasForText) {
+    restoreUiCanvasAfterNetwork();
   }
 
   portENTER_CRITICAL(&gTextTurnMux);
