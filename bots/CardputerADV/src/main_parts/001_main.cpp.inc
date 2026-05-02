@@ -45,7 +45,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.68-dev"
+#define APP_VERSION "0.2.69-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -188,6 +188,12 @@ constexpr uint32_t kTopicTaskStackSize = 8192;
 constexpr size_t kMaxFlashVoiceNotes = 12;
 constexpr size_t kMaxSdVoiceNotes = 256;
 constexpr size_t kMaxStoredPreviewChars = 84;
+constexpr size_t kMaxChatStoredChars = 720;
+constexpr size_t kMaxLowHeapChatLines = 10;
+constexpr uint32_t kLowHeapFreeBytes = 32000;
+constexpr uint32_t kLowHeapLargestBlockBytes = 12000;
+constexpr uint32_t kCriticalHeapFreeBytes = 16000;
+constexpr uint32_t kCriticalHeapLargestBlockBytes = 7000;
 constexpr size_t kMaxAudioAssets = 96;
 constexpr size_t kMaxRuntimeLogLines = 36;
 constexpr size_t kMaxContexts = 32;

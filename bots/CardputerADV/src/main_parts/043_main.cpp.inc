@@ -730,6 +730,14 @@ bool handleHostSerialCommand(String line) {
          static_cast<unsigned>(gInboxLastSeq));
     return true;
   }
+  if (cmd == "mem.compact" || cmd == "/mem.compact") {
+    bool compacted = compactMemoryForUi("host", true);
+    logf("[HOST] mem.compact compacted=%d free=%u largest=%u",
+         static_cast<int>(compacted),
+         static_cast<unsigned>(ESP.getFreeHeap()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    return true;
+  }
   if (cmd.startsWith("inbox.inject ") || cmd.startsWith("/inbox.inject ")) {
     int spaceIndex = line.indexOf(' ');
     String text = spaceIndex >= 0 ? line.substring(spaceIndex + 1) : "";

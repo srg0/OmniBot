@@ -268,6 +268,7 @@ void loop() {
     servicePet();
     processCompletedTopicTask();
     processCompletedTextTurn();
+    serviceMemoryGuard();
     updateG0VoiceTrigger();
     updateVoiceTrigger();
     pollTyping();

@@ -154,6 +154,8 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
 void prepareNetworkMemory(const char* reason, bool forceTtsBuffer = false);
 bool releaseUiCanvasForNetwork(const char* reason);
 void restoreUiCanvasAfterNetwork();
+bool compactMemoryForUi(const char* reason, bool force = false);
+void serviceMemoryGuard();
 bool connectHubClient(WiFiClient& client, const char* reason, uint32_t readTimeoutSec = 45);
 void synthesizeTcaKeyboardState();
 void pollTcaKeyboardEvents();
@@ -175,6 +177,7 @@ void serviceRealtimeVoice();
 void stopPlaybackStream();
 void releaseRecordBuffer();
 void releaseTtsBuffer();
+void clearEmojiCache();
 void toggleRealtimeVoice();
 void startRealtimeSession(bool startAfterReady);
 void startRealtimeRecording();

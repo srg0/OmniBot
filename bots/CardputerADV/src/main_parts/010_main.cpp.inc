@@ -18,6 +18,89 @@ void updateStatusLed() {
   }
 }
 
+String compactChatTextForDevice(String text, size_t maxChars = kMaxChatStoredChars) {
+  text.trim();
+  if (text.length() <= static_cast<int>(maxChars)) {
+    return text;
+  }
+  const String suffix = " ... [full text in topic]";
+  size_t keep = maxChars > static_cast<size_t>(suffix.length()) ? maxChars - suffix.length() : maxChars;
+  return text.substring(0, keep) + suffix;
+}
+
+void compactChatHistoryForMemory() {
+  for (auto& line : gChatLines) {
+    if (line.text.length() > static_cast<int>(kMaxChatStoredChars)) {
+      line.text = compactChatTextForDevice(line.text);
+    }
+  }
+  while (gChatLines.size() > kMaxLowHeapChatLines) {
+    gChatLines.pop_front();
+  }
+  gChatScrollOffset = 0;
+}
+
+bool compactMemoryForUi(const char* reason, bool force) {
+  const uint32_t beforeFree = ESP.getFreeHeap();
+  const uint32_t beforeLargest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  if (!force && beforeFree >= kLowHeapFreeBytes && beforeLargest >= kLowHeapLargestBlockBytes) {
+    return false;
+  }
+  if (!gRecording && gRecordBuffer) {
+    releaseRecordBuffer();
+  }
+  if (!gPlaybackActive && gTtsBuffer) {
+    releaseTtsBuffer();
+  }
+  if (!gPlaybackActive && gDynamicPlaybackBuffer) {
+    free(gDynamicPlaybackBuffer);
+    gDynamicPlaybackBuffer = nullptr;
+  }
+  clearEmojiCache();
+  gRuntimeLogs.clear();
+  compactChatHistoryForMemory();
+  yield();
+  delay(1);
+  logf("[MEM] compact reason=%s free=%u->%u largest=%u->%u",
+       reason ? reason : "guard",
+       static_cast<unsigned>(beforeFree),
+       static_cast<unsigned>(ESP.getFreeHeap()),
+       static_cast<unsigned>(beforeLargest),
+       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+  return true;
+}
+
+void serviceMemoryGuard() {
+  static uint32_t lastCheckMs = 0;
+  static uint32_t criticalSinceMs = 0;
+  uint32_t now = millis();
+  if (now - lastCheckMs < 1000) {
+    return;
+  }
+  lastCheckMs = now;
+  uint32_t freeHeap = ESP.getFreeHeap();
+  uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  bool low = freeHeap < kLowHeapFreeBytes || largest < kLowHeapLargestBlockBytes;
+  if (low && !gRecording && !gPlaybackActive && !gSubmitting && !gThinking && !gOtaApplyInProgress) {
+    compactMemoryForUi("guard", true);
+    freeHeap = ESP.getFreeHeap();
+    largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  }
+  bool critical = freeHeap < kCriticalHeapFreeBytes || largest < kCriticalHeapLargestBlockBytes;
+  if (critical && !gRecording && !gPlaybackActive && !gSubmitting && !gThinking && !gOtaApplyInProgress) {
+    if (criticalSinceMs == 0) {
+      criticalSinceMs = now;
+      logf("[MEM] critical free=%u largest=%u", static_cast<unsigned>(freeHeap), static_cast<unsigned>(largest));
+    } else if (now - criticalSinceMs > 5000) {
+      logf("[MEM] critical restart free=%u largest=%u", static_cast<unsigned>(freeHeap), static_cast<unsigned>(largest));
+      delay(80);
+      ESP.restart();
+    }
+  } else {
+    criticalSinceMs = 0;
+  }
+}
+
 uint16_t colorForLine(LineKind kind) {
   switch (kind) {
     case LineKind::User:
@@ -36,7 +119,7 @@ void pushLine(const String& prefix, const String& text, LineKind kind) {
   if (text.isEmpty()) {
     return;
   }
-  gChatLines.push_back({prefix, text, kind});
+  gChatLines.push_back({prefix, compactChatTextForDevice(text), kind});
   while (gChatLines.size() > kMaxChatLines) {
     gChatLines.pop_front();
   }
@@ -50,7 +133,7 @@ void pushVoiceHistoryLine(const String& prefix, const String& text, LineKind kin
   }
   ChatLine line;
   line.prefix = prefix;
-  line.text = text;
+  line.text = compactChatTextForDevice(text);
   line.kind = kind;
   line.voicePlayable = !url.isEmpty();
   line.voiceUrl = url;
