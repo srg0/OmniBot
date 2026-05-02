@@ -52,6 +52,7 @@ Primary guardrail document:
 
 - `bots/CardputerADV/docs/ota-clean-boot-baseline.md`
 - `bots/CardputerADV/docs/cardputer-ops-recipes.md`
+- `bots/CardputerADV/docs/server-routing-architecture.md`
 
 ## OTA Architecture
 
@@ -129,6 +130,8 @@ test "$(shasum -a 256 /tmp/cardputer-fw-smoke.bin | awk '{print $1}')" = "$FW_SH
 ```
 
 ## Voice Architecture
+
+Detailed server-side routing is in `bots/CardputerADV/docs/server-routing-architecture.md`.
 
 There are two voice paths.
 

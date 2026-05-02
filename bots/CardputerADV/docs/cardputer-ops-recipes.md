@@ -9,7 +9,7 @@ Use these recipes for repeatable Cardputer firmware/bridge work. They are intent
 - Keep secrets out of commits, logs, and handoff docs.
 - Do not commit `hosts/...` runtime snapshots unless the task is explicitly host-config work.
 - Do not change OTA architecture while debugging voice, UI, or bridge logic.
-- Keep docs minimal: `fresh-start`, `ota-clean-boot-baseline`, and this runbook are the canonical docs.
+- Keep docs minimal: `fresh-start`, `ota-clean-boot-baseline`, `server-routing-architecture`, and this runbook are the canonical docs.
 
 ## Repo Health Check
 
@@ -159,6 +159,10 @@ curl -fsS https://bridge.ai.k-digital.pro/healthz | jq .
 ```
 
 ## Bridge Debug
+
+For the current message/voice/realtime/OTA routing architecture, read:
+
+- `bots/CardputerADV/docs/server-routing-architecture.md`
 
 Use the bundled debug skill script:
 
