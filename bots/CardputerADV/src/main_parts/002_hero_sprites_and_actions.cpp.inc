@@ -1,0 +1,247 @@
+const uint16_t PROGMEM kHeroIdle3[kHeroSpriteW * kHeroSpriteH] = {
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HWHITE, HWHITE, HRED, HRED, HWHITE, HWHITE, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HWHITE, HEYE, HRED, HRED, HWHITE, HEYE, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HORANGE, HORANGE, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HBLACK, HBLACK, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HBLACK, HBLACK, HCLEAR,
+    HBLACK, HCLAW, HCLAW, HBLACK, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HBLACK, HCLAW, HCLAW, HBLACK,
+    HBLACK, HCLAW, HCLAW, HBLACK, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HBLACK, HCLAW, HCLAW, HBLACK,
+    HCLEAR, HBLACK, HBLACK, HCLEAR, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HCLEAR, HBLACK, HBLACK, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HTAIL, HBLACK, HDARK, HDARK, HBLACK, HTAIL, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HBLACK, HBLACK, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+};
+
+const uint16_t PROGMEM kHeroHappy1[kHeroSpriteW * kHeroSpriteH] = {
+    HBLACK, HCLAW, HCLAW, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLAW, HCLAW, HBLACK,
+    HBLACK, HCLAW, HCLAW, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLAW, HCLAW, HBLACK,
+    HCLEAR, HBLACK, HBLACK, HCLEAR, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HCLEAR, HBLACK, HBLACK, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HHIGHLIGHT, HHIGHLIGHT, HRED, HRED, HHIGHLIGHT, HHIGHLIGHT, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HHIGHLIGHT, HEYE, HRED, HRED, HHIGHLIGHT, HEYE, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HORANGE, HBLACK, HBLACK, HORANGE, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HBLACK, HBLACK, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+};
+
+const uint16_t PROGMEM kHeroTalk1[kHeroSpriteW * kHeroSpriteH] = {
+    HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HWHITE, HWHITE, HRED, HRED, HWHITE, HWHITE, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HWHITE, HEYE, HRED, HRED, HWHITE, HEYE, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HBLACK, HORANGE, HORANGE, HBLACK, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HBLACK, HBLACK, HBLACK, HBLACK, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HBLACK, HBLACK, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HBLACK, HBLACK, HCLEAR,
+    HBLACK, HCLAW, HCLAW, HBLACK, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HBLACK, HCLAW, HCLAW, HBLACK,
+    HBLACK, HCLAW, HCLAW, HBLACK, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HBLACK, HCLAW, HCLAW, HBLACK,
+    HCLEAR, HBLACK, HBLACK, HCLEAR, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HCLEAR, HBLACK, HBLACK, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HTAIL, HBLACK, HDARK, HDARK, HBLACK, HTAIL, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HTAIL, HBLACK, HTAIL, HTAIL, HBLACK, HTAIL, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HBLACK, HBLACK, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+};
+
+const uint16_t PROGMEM kHeroTalk2[kHeroSpriteW * kHeroSpriteH] = {
+    HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HWHITE, HWHITE, HRED, HRED, HWHITE, HWHITE, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HWHITE, HEYE, HRED, HRED, HWHITE, HEYE, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HBLACK, HBLACK, HBLACK, HBLACK, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HBLACK, HBLACK, HCLEAR, HBLACK, HRED, HRED, HRED, HRED, HRED, HRED, HBLACK, HCLEAR, HBLACK, HBLACK, HCLEAR,
+    HBLACK, HCLAW, HCLAW, HBLACK, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HBLACK, HCLAW, HCLAW, HBLACK,
+    HBLACK, HCLAW, HCLAW, HBLACK, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HBLACK, HCLAW, HCLAW, HBLACK,
+    HCLEAR, HBLACK, HBLACK, HCLEAR, HCLEAR, HBLACK, HDARK, HDARK, HDARK, HDARK, HBLACK, HCLEAR, HCLEAR, HBLACK, HBLACK, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HTAIL, HBLACK, HDARK, HDARK, HBLACK, HTAIL, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HTAIL, HBLACK, HTAIL, HTAIL, HBLACK, HTAIL, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+    HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HBLACK, HBLACK, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
+};
+
+enum class LineKind : uint8_t {
+  System,
+  User,
+  Assistant,
+  Error,
+};
+
+enum class FaceMode : uint8_t {
+  Idle,
+  Listening,
+  Thinking,
+  Speaking,
+  Error,
+};
+
+enum class KeyboardLayout : uint8_t {
+  En,
+  Ru,
+};
+
+enum class UiMode : uint8_t {
+  Home,
+  ChatFace,
+  Face,
+  Hero,
+  ChatFull,
+  Clock,
+  Battery,
+  Voice,
+  Focus,
+  Library,
+  AudioFolders,
+  Notes,
+  Assets,
+  Ota,
+  Contexts,
+  Settings,
+  Logs,
+};
+
+enum class FocusState : uint8_t {
+  Stopped,
+  Focus,
+  ShortBreak,
+  LongBreak,
+  Reflect,
+  Paused,
+};
+
+enum class PetStage : uint8_t {
+  Egg,
+  Baby,
+  Teen,
+  Adult,
+  Elder,
+};
+
+enum class PetMood : uint8_t {
+  Calm,
+  Happy,
+  Hungry,
+  Bored,
+  Curious,
+  Sick,
+  Excited,
+  Sleepy,
+  Dirty,
+  Dead,
+};
+
+enum class PetActivity : uint8_t {
+  Idle,
+  Eating,
+  Playing,
+  Cleaning,
+  Sleeping,
+  Hunting,
+  Exploring,
+  Medicine,
+  Discipline,
+  Evolving,
+  Dead,
+};
+
+enum class PetRestPhase : uint8_t {
+  None,
+  Enter,
+  Deep,
+  Wake,
+};
+
+enum class PetCareAction : uint8_t {
+  Feed,
+  Play,
+  Clean,
+  Sleep,
+  Medicine,
+  Discipline,
+  Hunt,
+  Explore,
+};
+
+enum class EyeEmotion : uint8_t {
+  Neutral,
+  Speaking,
+  Happy,
+  Mad,
+  Sad,
+  Surprised,
+  Sleepy,
+  Thinking,
+  Confused,
+  Excited,
+  Love,
+};
+
+enum class AssistantPulseState : uint8_t {
+  Ready,
+  Recording,
+  Thinking,
+  Playback,
+};
+
+enum class NotesMode : uint8_t {
+  List,
+  View,
+  Edit,
+};
+
+struct DeviceActionCatalogEntry {
+  const char* type;
+  const char* label;
+  const char* example;
+};
+
+constexpr const char* kDeviceActionCatalogVersion = "2026-05-01.2";
+constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
+    {"focus.start", "start focus", "set pomodoro to 45 minutes"},
+    {"focus.pause", "pause focus", "pause focus"},
+    {"focus.resume", "resume focus", "resume focus"},
+    {"focus.reset", "reset focus", "reset pomodoro"},
+    {"focus.set_duration", "focus length", "make focus 45 minutes"},
+    {"focus.set_short_break", "short break", "short break 10 minutes"},
+    {"focus.set_long_break", "long break", "long break 20 minutes"},
+    {"focus.set_cycles", "cycles", "set cycles to 4"},
+    {"focus.set_autostart", "auto start", "turn focus autostart on"},
+    {"focus.set_metronome", "metronome", "turn metronome off"},
+    {"focus.set_bpm", "bpm", "set bpm to 80"},
+    {"ui.open", "open screen", "open battery"},
+    {"audio.play", "play library", "play nutrition plan"},
+    {"voice.play", "play voice note", "play last voice note"},
+    {"settings.set_audio_language", "audio lang", "set language to russian"},
+    {"settings.set_ota_auto", "OTA auto", "turn auto updates on"},
+    {"settings.set_ota_boot_check", "OTA boot", "check updates on boot"},
+    {"settings.set_ota_min_battery", "OTA battery", "update above 50 percent"},
+    {"topic.next", "next topic", "next topic"},
+    {"topic.prev", "prev topic", "previous topic"},
+    {"topic.open", "open topic", "open project topic"},
+    {"pet.feed", "pet food", "feed the OpenClaw pet"},
+    {"pet.play", "pet play", "play with the pet"},
+    {"pet.clean", "pet clean", "clean the pet"},
+    {"pet.sleep", "pet sleep", "put the pet to sleep"},
+    {"pet.medicine", "pet medicine", "heal the sick pet"},
+    {"pet.discipline", "pet discipline", "discipline the pet"},
+    {"pet.hunt", "pet hunt", "send the pet hunting Wi-Fi"},
+    {"pet.explore", "pet explore", "let the pet explore"},
+    {"pet.revive", "pet revive", "revive the pet"},
+    {"pet.reset", "pet reset", "reset the pet"},
+};
+constexpr size_t kDeviceActionCatalogCount = sizeof(kDeviceActionCatalog) / sizeof(kDeviceActionCatalog[0]);
+
