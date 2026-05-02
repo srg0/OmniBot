@@ -89,8 +89,8 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Focus Space", UiMode::Focus}}},
     {"OpenClaw", "OC", "Bridge runtime", rgb565_local(180, 150, 255), 2,
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}}},
-    {"System", "SYS", "Power and settings", rgb565_local(203, 216, 226), 3,
-     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Firmware", UiMode::Ota}}},
+    {"System", "SYS", "Power and settings", rgb565_local(203, 216, 226), 4,
+     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Calculator", UiMode::Calculator}, {"Firmware", UiMode::Ota}}},
 };
 
 Preferences gPrefs;
@@ -111,6 +111,9 @@ uint16_t gHubPort = kDefaultHubPort;
 std::deque<ChatLine> gChatLines;
 String gInputBuffer;
 String gStatusText = "Booting";
+String gCalcExpression;
+String gCalcResult = "0";
+String gCalcStatus = "Ready";
 std::vector<VoiceNote> gVoiceNotes;
 std::vector<NoteFile> gNotes;
 std::vector<AudioAsset> gAudioAssets;
@@ -184,4 +187,3 @@ uint32_t gLastBatterySampleMs = 0;
 uint32_t gClientTurnSeq = 0;
 uint32_t gLastBlockingRenderPumpMs = 0;
 bool gBlockingRenderPumpEnabled = false;
-

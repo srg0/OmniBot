@@ -862,6 +862,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/calculator" || cmd == "/calc") {
+    setUiMode(UiMode::Calculator);
+    return true;
+  }
+
   if (cmd == "/syncassets") {
     fetchRemoteAssetManifest();
     syncAssetsFromManifest();

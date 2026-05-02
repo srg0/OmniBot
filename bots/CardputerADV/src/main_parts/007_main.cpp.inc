@@ -30,6 +30,8 @@ const char* uiModeName(UiMode mode) {
       return "Topics";
     case UiMode::Settings:
       return "Settings";
+    case UiMode::Calculator:
+      return "Calc";
     case UiMode::Logs:
       return "Logs";
     case UiMode::ChatFace:
@@ -210,4 +212,3 @@ void removeFirstUtf8Char(String& value) {
   }
   value.remove(0, pos);
 }
-

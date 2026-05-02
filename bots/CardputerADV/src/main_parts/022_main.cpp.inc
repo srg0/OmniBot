@@ -215,6 +215,8 @@ bool mapActionUiMode(String mode, UiMode& out) {
     out = UiMode::Logs;
   } else if (mode == "settings") {
     out = UiMode::Settings;
+  } else if (mode == "calculator" || mode == "calc") {
+    out = UiMode::Calculator;
   } else if (mode == "battery") {
     out = UiMode::Battery;
   } else if (mode == "ota" || mode == "firmware") {
@@ -229,4 +231,3 @@ bool actionLocalPathAllowed(const String& path) {
   return path.startsWith("/audio/") || path.startsWith("/pomodoro/audio/") ||
          path.startsWith("/voice/") || path.startsWith("/reply/");
 }
-

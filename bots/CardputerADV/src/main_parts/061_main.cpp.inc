@@ -45,6 +45,9 @@
       case UiMode::Settings:
         renderSettingsUi();
         break;
+      case UiMode::Calculator:
+        renderCalculatorUi();
+        break;
       case UiMode::Logs:
         renderLogsUi();
         break;

@@ -56,6 +56,64 @@ void renderSettingsUi() {
   renderDebugOverlay();
 }
 
+void renderCalculatorUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(3, 7, 11);
+  const uint16_t panel = rgb565_local(9, 17, 24);
+  const uint16_t row = rgb565_local(14, 28, 38);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t muted = rgb565_local(126, 143, 157);
+  uint16_t accent = gCalcStatus == "Error" ? amber : green;
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, accent);
+  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(22, 44, 57));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(16, 14);
+  d.print("CALCULATOR");
+  d.setFont(&fonts::Font0);
+  d.setTextColor(accent, panel);
+  d.setCursor(224 - d.textWidth(gCalcStatus), 17);
+  d.print(gCalcStatus);
+
+  d.fillRoundRect(16, 34, 208, 28, 8, row);
+  d.setFont(&fonts::efontCN_12);
+  d.setTextColor(TFT_WHITE, row);
+  String expr = gCalcExpression.isEmpty() ? "type expression" : tailUtf8ToFit(gCalcExpression, 188);
+  d.setCursor(24, 41);
+  d.print(expr);
+
+  d.fillRoundRect(16, 68, 208, 25, 8, rgb565_local(3, 12, 16));
+  d.setFont(&fonts::Font4);
+  d.setTextColor(accent, rgb565_local(3, 12, 16));
+  String result = fitCurrentFontToWidth(gCalcResult, 194);
+  d.setCursor(218 - d.textWidth(result), 72);
+  d.print(result);
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(19, 101);
+  d.print("0-9 + - * / . ( )");
+  d.setTextColor(cyan, panel);
+  d.setCursor(142, 101);
+  d.print("Enter =");
+  d.setTextColor(amber, panel);
+  d.setCursor(19, 114);
+  d.print("C clear");
+  d.setTextColor(muted, panel);
+  d.setCursor(82, 114);
+  d.print("Del back  Esc home");
+  d.setFont(&fonts::Font2);
+
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 void renderContextsUi() {
   auto& d = gCanvas;
   const uint16_t bg = rgb565_local(3, 6, 12);
@@ -230,4 +288,3 @@ void renderTopicOverlayIfVisible() {
   const uint16_t violet = rgb565_local(157, 102, 255);
   const uint16_t muted = rgb565_local(128, 145, 155);
   const uint16_t amber = rgb565_local(246, 194, 74);
-

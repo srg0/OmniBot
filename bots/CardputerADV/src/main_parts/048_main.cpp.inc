@@ -98,6 +98,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Settings && handleSettingsKey(key)) {
     return;
   }
+  if (gUiMode == UiMode::Calculator && handleCalculatorKey(key, keys)) {
+    return;
+  }
   if (gUiMode == UiMode::Logs && handleLogsKey(key)) {
     return;
   }

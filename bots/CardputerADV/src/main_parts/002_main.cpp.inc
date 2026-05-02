@@ -166,6 +166,7 @@ enum class UiMode : uint8_t {
   Ota,
   Contexts,
   Settings,
+  Calculator,
   Logs,
 };
 
@@ -230,4 +231,3 @@ enum class PetCareAction : uint8_t {
   Hunt,
   Explore,
 };
-

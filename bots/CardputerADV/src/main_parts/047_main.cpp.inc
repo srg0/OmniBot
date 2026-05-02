@@ -152,6 +152,171 @@ void cancelRecordingDiscard() {
   gRecordedSamples = 0;
 }
 
+void calcSkipSpaces(const char*& p) {
+  while (*p == ' ' || *p == '\t') {
+    ++p;
+  }
+}
+
+bool calcParseExpression(const char*& p, double& out);
+
+bool calcParseFactor(const char*& p, double& out) {
+  calcSkipSpaces(p);
+  if (*p == '+') {
+    ++p;
+    return calcParseFactor(p, out);
+  }
+  if (*p == '-') {
+    ++p;
+    if (!calcParseFactor(p, out)) {
+      return false;
+    }
+    out = -out;
+    return true;
+  }
+  if (*p == '(') {
+    ++p;
+    if (!calcParseExpression(p, out)) {
+      return false;
+    }
+    calcSkipSpaces(p);
+    if (*p != ')') {
+      return false;
+    }
+    ++p;
+    return true;
+  }
+  char* end = nullptr;
+  out = strtod(p, &end);
+  if (end == p) {
+    return false;
+  }
+  p = end;
+  return true;
+}
+
+bool calcParseTerm(const char*& p, double& out) {
+  if (!calcParseFactor(p, out)) {
+    return false;
+  }
+  while (true) {
+    calcSkipSpaces(p);
+    char op = *p;
+    if (op != '*' && op != '/') {
+      return true;
+    }
+    ++p;
+    double rhs = 0.0;
+    if (!calcParseFactor(p, rhs)) {
+      return false;
+    }
+    if (op == '*') {
+      out *= rhs;
+    } else {
+      if (fabs(rhs) < 0.0000001) {
+        return false;
+      }
+      out /= rhs;
+    }
+  }
+}
+
+bool calcParseExpression(const char*& p, double& out) {
+  if (!calcParseTerm(p, out)) {
+    return false;
+  }
+  while (true) {
+    calcSkipSpaces(p);
+    char op = *p;
+    if (op != '+' && op != '-') {
+      return true;
+    }
+    ++p;
+    double rhs = 0.0;
+    if (!calcParseTerm(p, rhs)) {
+      return false;
+    }
+    out = op == '+' ? out + rhs : out - rhs;
+  }
+}
+
+bool evaluateCalculatorExpression(const String& expression, String& result) {
+  String trimmed = expression;
+  trimmed.trim();
+  if (trimmed.isEmpty()) {
+    return false;
+  }
+  const char* p = trimmed.c_str();
+  double value = 0.0;
+  if (!calcParseExpression(p, value)) {
+    return false;
+  }
+  calcSkipSpaces(p);
+  if (*p != '\0' || !isfinite(value)) {
+    return false;
+  }
+  result = String(value, 6);
+  while (result.indexOf('.') >= 0 && result.endsWith("0")) {
+    result.remove(result.length() - 1);
+  }
+  if (result.endsWith(".")) {
+    result.remove(result.length() - 1);
+  }
+  if (result == "-0") {
+    result = "0";
+  }
+  return true;
+}
+
+bool handleCalculatorKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (keys.ctrl && lowerKey == 'c') {
+    gCalcExpression = "";
+    gCalcResult = "0";
+    gCalcStatus = "Cleared";
+    setStatus("Calculator cleared", 700);
+    return true;
+  }
+  if (keys.del || key == '\b') {
+    if (!gCalcExpression.isEmpty()) {
+      gCalcExpression.remove(gCalcExpression.length() - 1);
+      gCalcStatus = "Editing";
+    }
+    return true;
+  }
+  if (keys.enter || key == '\r' || key == '\n' || key == '=') {
+    String result;
+    if (evaluateCalculatorExpression(gCalcExpression, result)) {
+      gCalcResult = result;
+      gCalcExpression = result;
+      gCalcStatus = "OK";
+      setStatus("Calculated", 700);
+    } else {
+      gCalcStatus = "Error";
+      setStatus("Calculator error", 900);
+    }
+    return true;
+  }
+  if (key == 'c' || key == 'C') {
+    gCalcExpression = "";
+    gCalcResult = "0";
+    gCalcStatus = "Cleared";
+    return true;
+  }
+  if (key == 'x' || key == 'X') {
+    key = '*';
+  }
+  if ((key >= '0' && key <= '9') || key == '+' || key == '-' || key == '*' || key == '/' ||
+      key == '.' || key == '(' || key == ')' || key == ' ') {
+    if (gCalcExpression.length() < 48) {
+      gCalcExpression += key;
+      gCalcStatus = "Editing";
+    }
+    return true;
+  }
+  return true;
+}
+
 bool handleGlobalEscape() {
   bool changed = false;
 
@@ -214,4 +379,3 @@ bool handleGlobalEscape() {
   appendRuntimeLog("UI", "escape reset", false);
   return changed || gUiMode != UiMode::Home;
 }
-
