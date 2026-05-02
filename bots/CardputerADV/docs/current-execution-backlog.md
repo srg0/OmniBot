@@ -2,136 +2,226 @@
 
 Last consolidated: 2026-05-01.
 
-Purpose: single active task list for the current Cardputer ADV firmware iteration. This file is the execution tracker when chat interruptions happen.
+This is the active source of truth for the current Cardputer ADV/OpenClaw iteration.
+When chat context becomes noisy, continue from this file first.
 
-## P0 - Stabilize Current Firmware Base
+## Current Baseline
 
-- [handoff] Use exactly one firmware/upload owner at a time. Do not run concurrent `pio upload` or direct `pio run` from another agent against the same `.pio/build`.
-- [handoff] Upload through `/Users/s1z0v/kd-projects/adv_cardputer/scripts/cardputer_adv_pio.sh upload` so Wi-Fi and bridge env are sourced; avoid bare `pio run -t upload` with empty `DEFAULT_WIFI_SSID/PASSWORD`.
-- [done] Merge visual handoff changes already present in `main.cpp`: Assistant Pulse, Library Player, Audio Folders, grouped launcher.
-- [resolved] Keep launcher grouped with shallow subitems, not a long flat list: `Up/Down` chooses the main group, `Left/Right` chooses the screen inside that group, `Enter` opens.
-- [done] Restore missing launcher entries after merge: `Assets` and `Logs`.
-- [handoff done] Keep early `OpenClaw Loading...` splash with boot stages: Display, Audio, Storage, Input, Config, Wi-Fi.
-- [handoff done] Keep display brightness explicitly set with `M5Cardputer.Display.setBrightness(180)`.
-- [handoff done] Keep boot-time LittleFS -> SD voice migration disabled until hardware boot is stable.
-- [handoff done] Keep full `/emoji` SD scan disabled at boot; use lazy exact-file lookup for emoji assets.
-- [done] Build passed after merge with PlatformIO `pio run -j1`.
-- [done] Source whitespace validation passed with `git diff --check`.
-- [done] Final firmware build passed after Topic Deck changes: RAM 28.3%, app flash 73.8% of 3MB OTA slot.
-- [done] Cable flash completed successfully after partition layout change. Bootloader, partition table, otadata, and app image were written and hash-verified.
-- [resolved] Latest wrapper flash completed successfully through `/Users/s1z0v/kd-projects/adv_cardputer/scripts/cardputer_adv_pio.sh upload`: app wrote to 100%, hash verified, hard reset sent.
-- [pending hardware] Verify on-device boot screen, Wi-Fi provisioning defaults/NVS, bridge connection, text chat, voice record/playback, SD mount, and launcher navigation.
+- Firmware tree: `/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV`.
+- Firmware code baseline is commit `b38771e Cardputer ADV 0.2.26 harden direct OTA fallback`; this backlog file may move independently.
+- Source version: `0.2.27-dev` in `platformio.ini` and fallback `APP_VERSION`.
+- Live OTA manifest on `https://bridge.ai.k-digital.pro` serves `0.2.27-dev`.
+- Bridge repo has recent Cardputer commits for voice route, device actions, topics, and firmware request logging.
+- Bridge topic API returns real Telegram titles/emojis and bounded recent histories.
+- SD `/Volumes/CARDSD` is mounted and usable.
+- Pomodoro WAV package is staged on SD:
+  - `/pomodoro/audio/{ru,en,es}/{start,break,reflection}.wav`
+  - compatibility aliases `/pomodoro/audio/focus_<lang>.wav`, `break_<lang>.wav`, `reflection_<lang>.wav`
+  - `/pomodoro/audio/index.json`
+- All staged Pomodoro WAV files were validated as complete RIFF/WAVE files.
 
-## P0 - OTA / Partition / SD Policy
+## Non-Negotiable Rules
 
-- [done] Add dual-OTA partition table: `partitions_8mb_dual_ota.csv`.
-- [done] Switch `platformio.ini` to the dual-OTA partition table.
-- [done] Keep `nvs` offset stable at `0x9000` so saved settings can survive if flash is not erased.
-- [done] Use 3MB OTA slots: `app0` at `0x10000`, `app1` at `0x310000`.
-- [done] Keep internal `spiffs` as smaller fallback storage at `0x610000`, size `0x1f0000`.
-- [done] Make OTA apply SD-required. If SD is missing, show an on-screen error instead of staging firmware in LittleFS.
-- [done] Add numeric `Update.getError()` logging for OTA begin/write/end failures.
-- [done] Cable-flashed this layout once. OTA cannot fix a single-slot partition table by itself, but this device should now be on dual-OTA layout.
-- [pending hardware] Publish/test next OTA version only after the device is running the dual-OTA layout.
+- One firmware/upload owner at a time. Do not run concurrent `pio` builds/uploads against the same `.pio/build`.
+- Use `/Users/s1z0v/kd-projects/adv_cardputer/scripts/cardputer_adv_pio.sh build|upload`.
+- Do not run bare `pio run` / `pio run -t upload` unless Wi-Fi, hub host, hub port, device id, and token env vars are already exported.
+- Never print Wi-Fi passwords, device tokens, OpenAI/OpenRouter keys, Telegram tokens, or OpenClaw root tokens.
+- Keep the current autonomous bridge path; do not reintroduce the local laptop hub as a normal dependency.
+- SD is required for media, long audio, OTA staging, and recovery bundles. Text chat/basic assistant must still degrade gracefully without SD.
+- Do not revive rejected scope:
+  - no M5PORKCHOP settings/menu port;
+  - no wake word / always-listening mode;
+  - no broad MP3-player backend until WAV/PCM path is fully stable.
 
-## P0 - SD Required User Feedback
+## P0 - Baseline Verification
 
-- [done] OTA explicitly blocks without SD and shows `SD card required for OTA` / `Insert SD card`.
-- [done] Add consistent SD-required banners for SD-backed screens where user expects media to exist: `Library`, `Folders`, `Voice Notes`, `Assets`, `Firmware OTA`.
-- [done] Keep text chat and basic assistant screen usable without SD.
-- [done] Avoid silently falling back to internal LittleFS for large voice/audio/OTA workflows unless it is explicitly a recovery path.
-- [next] Add a smaller emoji-missing hint in chat if SD is present but `/emoji` pack is missing.
+Goal: prove that the current source, bridge manifest, SD assets, and physical device are all describing the same product.
 
-## P1 - Voice / Audio Reliability
+- [done] Source version and live OTA manifest are both `0.2.27-dev`.
+- [done] SD Pomodoro multilingual WAV assets are staged and validated.
+- [done] Clean firmware build passes through the wrapper: RAM 28.3%, app flash 76.9% of the 3MB OTA slot.
+- [done] Live OTA manifest download and binary SHA verified without exposing the device token.
+- [next] On hardware, confirm boot version, Wi-Fi, bridge connection, SD mount, and Library scan.
+- [next] Capture the exact current device version before any OTA or cable flash.
 
-## P0 - Reliability Pass 2026-05-01
+Exit criteria:
 
-- [done] Reviewed `/Users/s1z0v/Downloads/cardputer_adv_codex_handoff_2026_05_01_0715_39874ba9_5396_419d.md`; treat OTA apply, voice turn, WAV playback, assistant audio lifecycle, and action visibility as the active reliability block before new UX work.
-- [done] Version target bumped to `0.2.16-dev` for the next clean source build; do not repack older binaries as a fake source release.
-- [done] OTA apply path now logs running/boot/next partitions, rejects missing/too-small inactive OTA slot, requires `Update.isFinished()`, uses strict `Update.end(false)`, and verifies that boot partition changed to the expected inactive slot before reboot.
-- [done] OTA screen action label changed from ambiguous `R load` to `R check`; full historical firmware revert remains a separate real feature, not a fake button.
-- [done] Voice/text turns now include `X-Client-Msg-Id` and `X-Turn-Id`; user-visible errors distinguish transport failure, HTTP status, and assistant timeout instead of collapsing into `voice upload body failed` / `Hub request failed`.
-- [done] Bridge default turn wait is aligned below firmware HTTPClient's 16-bit timeout cap: bridge waits 60s, firmware waits 65s. Longer 5-10 minute interactions require the planned async `POST turn -> turn_id -> poll/WS result` protocol, not one long synchronous HTTP request.
-- [done] WAV playback now parses RIFF chunks (`fmt `, `data`) instead of assuming a fixed 44-byte header, records exact decoder errors, and Library progress is driven by real playback bytes.
-- [done] Non-slash help aliases (`help`, `commands`, `actions`, `команды`, `помощь`) show the available action groups and examples without reintroducing slash-command UX.
-- [next] Hardware QA after flashing: OTA fetch/apply must show partition logs and boot into `0.2.16-dev`; Library must audibly play `/audio/take15-day-01.wav` and a bridge `ai_answers` WAV; voice turn must show exact `504/413/422/transport` if it fails.
-- [next] Implement the async turn protocol for truly long voice and slow assistant replies: upload audio to SD/cache, send turn metadata, return immediately with `turn_id`, show pending UI, poll/WS for transcript/reply/audio, then download/play saved WAV.
+- Build passes.
+- Manifest binary SHA matches.
+- Device screen/serial confirms the expected version and bridge connectivity.
 
-- [current baseline] Voice recording and response worked in previous checks, but long voice/audio and playback truncation still need hardware validation after this merge.
-- [done] Audio library scan now supports direct SD user library at `/audio` in addition to managed `/pomodoro/audio`.
-- [flashed] Verify `/audio/take15-day-01.wav` ... `/audio/take15-day-15.wav` appear in Library/Folders after `R scan`.
-- [next] Verify double Ctrl voice start/stop and `G0` hold behavior after launcher changes.
-- [next] Verify saved own voice notes and assistant voice replies are written to SD and appear in Voice Notes player.
-- [next] Verify incoming voice playback is full length, not 2-5 seconds truncated.
-- [next] Keep WAV/PCM as primary stable format; MP3 player integration remains secondary.
+## P0 - OTA Proof And Recovery
 
-## P1 - Launcher / Menu UX
+Goal: stop guessing why OTA sometimes reboots without changing the app.
 
-- [resolved] Use grouped direct navigation, not a deep nested launcher: `Assistant`, `Chat`, `Audio`, `Focus`, `OpenClaw`, `System`.
-- [done] Make controls deterministic: `Up/Down` moves main group, `Left/Right` or `Tab` moves sub-screen, `Enter` opens.
-- [done] Remove `Topics` as a sibling of `Full Chat`; topic is now a chat context, not a separate chat mode.
-- [next] Improve launcher visual polish without adding another navigation depth.
-- [next] Keep numeric keys as shortcuts to the first 1-6 main groups only; sub-screen selection stays horizontal.
-- [next] Verify `Tab`, arrows, WASD, `Enter`, and `Esc` on hardware.
+Current decision:
 
-## P1 - OpenClaw Pet / Tamagotchi
+- Keep dual-slot in-app OTA as the short-term production path.
+- Keep M5Launcher/SD-managed rollback as the medium-term recovery architecture.
+- Do not replace the working OpenClaw app with Launcher until boot-confirm/rollback is cable-tested.
 
-- [accepted] Handoff captured in `/Users/s1z0v/kd-projects/adv_cardputer/docs/openclaw-pet-tamagotchi-handoff.md`.
-- [accepted] Patch export `/Users/s1z0v/kd-projects/adv_cardputer/tmp/openclaw-pet-tamagotchi.patch` is an older full diff from `0.2.11-dev` to `0.2.13-dev`; do not apply it wholesale over current `0.2.14-dev`, because it would collide with Notes and focus geometry fixes.
-- [done] Current firmware already contains the pet runtime, NVS persistence, stats/mood/stage/activity, offline catch-up, autonomous hunt/explore/rest, procedural OpenClaw pet renderer, pet hotkeys, `/pet`/`/tama`/`/petreset`, and `pet.*` device actions.
-- [next] Hardware QA pet screen: verify launcher entry, care hotkeys `F/P/C/S/M/D/H/E/R`, Enter/Space auto-care, accelerometer movement, persistence across reboot, and autonomous state changes over time.
+Tasks:
 
-## P1 - Assistant Pulse / Animation Quality
+- [done] Source uses `partitions_8mb_dual_ota.csv` with two 3MB app slots.
+- [done] OTA requires SD for staged download and has direct-stream fallback.
+- [done] OTA apply logs partition/boot/update errors.
+- [done] Published a no-op `0.2.27-dev` proof build; live manifest binary download and SHA smoke passed.
+- [next] Trigger OTA on device and collect logs immediately after reboot.
+- [next] If OTA still returns to old version, inspect running partition, next boot partition, otadata, and `esp_ota_mark_app_valid_cancel_rollback` behavior.
+- [planned] Finish Launcher-managed SD recovery flow per `/Users/s1z0v/kd-projects/adv_cardputer/docs/launcher-boot-ota-architecture.md`.
 
-- [done] Assistant Pulse is the main home/watch screen.
-- [next] Improve circular geometry: thicker arcs, darker underlay, bright top arc, manual round caps.
-- [next] Fix Think animation feeling frozen: use segmented moving arcs and raise render cadence for `gThinking`.
-- [next] Do not change display driver unless hardware evidence shows a driver-level issue. Current issue is renderer geometry/cadence/blocking, not ST7789 backend.
+Exit criteria:
 
-## P2 - Premium Visual Ports
+- A real OTA jump changes the visible boot version.
+- Failure mode is logged with a concrete ESP-IDF error/partition state.
+- Previous-good app remains recoverable through cable or Launcher SD bundle.
 
-- [handoff] Detailed gap tasks with source/design/code links are in `docs/ui-gap-implementation-tasks.md`.
-- [todo] Premium Chat surfaces: compose, reply-ready, thread/bubbles, scroll rail.
-- [todo] Premium Focus variants: deep focus, break breathing ball, metro pendulum, reflect/note card.
-- [todo] Voice Notes visual refresh using the new Library Player primitives.
-- [done] Resolve launcher model mismatch: grouped launcher is the current accepted model; do not revert to flat unless explicitly requested.
-- [todo] Finish menu visual polish from HTML prototype only after launcher model is agreed.
-- [todo] Update `ux/cardputer-ux-1x1.html` to match actual firmware screens: Library Player, Folders, SD-required states, current launcher, OTA state.
+## P0 - Voice Reliability And Latency
 
-## P2 - Bridge / OpenClaw Integration
+Goal: make short voice stable and define the path for long voice without RAM clipping or HTTP timeout failures.
 
-- [baseline] Device talks to OpenClaw bridge, not local laptop hub, for autonomous Wi-Fi use.
-- [done] Bridge Topic API updated and deployed: `/api/cardputer/v1/topics` includes `current/default`, `/topics/{topic_key}/select` persists selected current topic, and `conversation_key` exact matches update bridge current topic.
-- [done] Firmware text-turn now sends selected context both in JSON and `X-Conversation-Key`; voice raw upload already used `X-Conversation-Key`.
-- [done] Firmware Topic Deck added on `Topics` launcher item: R syncs remote topics, arrows/Ctrl+arrows switch, Enter selects and loads last 5 messages lazily.
-- [planned] Replace full Topic Deck as the normal chat UI with the `03 Compact Header Overlay` design from `telegram-topic-overlay-handoff.md`: header is hidden during normal chat, appears only on `Tab` or topic switch, then collapses after ~1200-1800 ms.
-- [done] Switch topics with `Alt+Left/Right`, not `Ctrl+Left/Right`, so double Ctrl remains dedicated to voice start/stop and accidental topic switching is avoided.
-- [done] Topic overlay appears on Pulse and Chat as a transient overlay; topic id/thread/root-main internals are hidden from the user.
-- [done] Pulse `type to chat` starts typing into the Pulse input pill; `Enter` sends non-empty text and opens Full Chat only when input is empty.
-- [planned] Topic switching must be local and instant; Telegram topic catalog/history fetch only after debounce.
-- [planned] History preview stays bounded to the latest small slice; voice messages in topic preview remain lazy placeholders only, no eager media download.
-- [planned] Keep chat message area primary; topic header is an overlay/compact state indicator, not a permanent row consuming display height.
-- [next] After cable flash, verify bridge health, manifest fetch, text turn, voice turn, and runtime logs upload.
-- [next] Keep all access token handling in build env / provisioning config. Do not commit secrets.
+Current stable path:
+
+- Manual voice capture.
+- Upload to bridge.
+- STT/agent/TTS on bridge/OpenClaw side.
+- WAV/PCM playback on device.
+
+Tasks:
+
+- [done] Short voice path was manually reported working.
+- [done] Device actions can be emitted by the agent and executed by firmware whitelist.
+- [done] WAV playback parses RIFF chunks and progress is based on played bytes.
+- [next] Verify double Ctrl start/stop and G0 hold on current hardware build.
+- [next] Verify assistant voice replies autoplay fully and saved notes replay fully.
+- [next] Add/verify Pomodoro language cue selection in firmware: `audioLanguage` should choose RU/EN/ES cue aliases instead of hardcoded RU paths.
+- [planned] Replace long synchronous voice turn with async/chunked transport:
+  - create turn/session;
+  - upload numbered audio chunks;
+  - commit;
+  - show pending UI;
+  - receive transcript/reply/audio through polling or WS;
+  - stream/play saved WAV from SD.
+- [planned] Add fast command lane for app/device actions so commands such as "start Pomodoro" do not wait for a slow full OpenClaw turn.
+
+Exit criteria:
+
+- Short voice roundtrip works repeatedly.
+- Long recording can be captured to SD without reboot.
+- Network failure does not lose the whole recording.
+- User sees clear state: recording, saving, uploading, waiting, downloading, playing, failed.
+
+## P1 - Topic Workspace
+
+Goal: Pulse and Chat must be two views of one selected OpenClaw/Telegram topic workspace.
+
+Current state:
+
+- Bridge topic API returns current/default topic, real titles, emojis, and recent histories.
+- Firmware sends selected context in JSON and `X-Conversation-Key`.
+- `Alt/Opt + Left/Right` switches topics.
+- Topic overlay exists on Pulse/Chat and hides internal ids.
+
+Tasks:
+
+- [next] Verify on hardware that topic title and emoji render, not raw ids or squares.
+- [next] Verify topic history loads into the chat view after switching.
+- [next] Verify text/voice turns execute in the selected topic, not a random/default topic.
+- [next] Keep topic deck only as fallback/debug; normal UX is in-chat overlay.
+- [next] Debounce history fetch after rapid topic switches and never fetch inside render.
+- [planned] Implement clean "create new topic" UX later, after switching/history is stable.
+
+Exit criteria:
+
+- The selected topic name/emoji is visible on Pulse and Chat.
+- Sending from Pulse and Full Chat uses the same selected workspace.
+- Recent messages match the selected Telegram topic.
+
+## P1 - UI / Input / Navigation
+
+Goal: keep the device fast and readable on the real 240x135 display.
+
+Accepted navigation model:
+
+- `Up/Down`: main launcher group.
+- `Left/Right` or `Tab`: screen inside current group.
+- `Enter`: open.
+- `Esc`: close overlay/back to clear default state.
+- Double `Ctrl`: voice record toggle.
+- `Alt/Opt + Left/Right`: topic switch.
+- `Option`: Pulse / Full Chat view toggle.
+
+Tasks:
+
+- [next] Hardware QA for Tab/arrows/WASD/Enter/Esc/R/Option/Ctrl.
+- [next] Polish launcher visuals without adding another navigation depth.
+- [next] Fix any remaining text overlap in logs/menu/player/focus.
+- [planned] Premium chat bubbles/input/scroll rail.
+- [planned] Voice Notes visual refresh using Library Player primitives.
+- [planned] Focus visual variants, keeping existing timer/settings logic.
+
+Exit criteria:
+
+- No screen has footer/header/text overlap.
+- The user can identify where they are and how to go back.
+- Input appears immediately and local echo is shown before assistant reply.
+
+## P1 - Pomodoro / Focus Audio
+
+Goal: make the staged RU/EN/ES Pomodoro voice assets actually usable from Focus.
+
+Tasks:
+
+- [done] Stage complete WAV assets on SD.
+- [next] Patch `playFocusCue()` to resolve cue path by `gDeviceSettings.audioLanguage`.
+- [next] Preserve RU fallback if selected language file is missing.
+- [next] Surface missing-audio hint on Focus screen if SD/audio asset is absent.
+- [next] Verify start/break/reflection cues on hardware.
+
+Exit criteria:
+
+- Changing audio language changes Pomodoro cue language.
+- Missing SD or missing cue gives a readable warning, not silence.
+
+## P2 - Pet, Notes, Assets, Demo
+
+- [next] Hardware QA pet screen: hotkeys, persistence, accelerometer movement, autonomous state changes.
+- [next] Notes app QA: create, open, edit, save to SD, long note scroll.
+- [next] Assets screen QA: download/sync progress, SD-required state, no flicker.
+- [next] Battery/status screen QA.
+- [planned] Demo video checklist after P0/P1 acceptance:
+  - boot/version;
+  - Wi-Fi/bridge;
+  - topic switch;
+  - English/Russian text;
+  - voice request/reply;
+  - Pomodoro cue;
+  - audio library replay;
+  - debug logs.
+
+## Reference Documents
+
+- `/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/docs/current-gap-audit-2026-05-01.md`
+- `/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/docs/ui-gap-implementation-tasks.md`
+- `/Users/s1z0v/kd-projects/adv_cardputer/docs/launcher-boot-ota-architecture.md`
+- `/Users/s1z0v/kd-projects/adv_cardputer/docs/cardputer-production-finish-plan.md`
+- `/Users/s1z0v/kd-projects/adv_cardputer/docs/cardputer-bridge-audio-asset-sync-handoff.md`
 
 ## Verification Commands
 
 Build:
 
 ```bash
-cd /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV
-/Users/s1z0v/.platformio/penv/bin/pio run -j1
+/Users/s1z0v/kd-projects/adv_cardputer/scripts/cardputer_adv_pio.sh build
 ```
 
-If `.pio/build/cardputer_adv/*.d` or `.sconsign*.tmp` disappears during build, another PlatformIO/SCons process is touching the same build directory. Stop/wait for that process or build from an isolated copy excluding `.pio`.
+Upload:
 
-Expected binary:
-
-```text
-/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/.pio/build/cardputer_adv/firmware.bin
+```bash
+/Users/s1z0v/kd-projects/adv_cardputer/scripts/cardputer_adv_pio.sh upload
 ```
 
-Download mode for cable flash:
+Download mode:
 
 ```text
 Hold G0 -> press Reset -> release G0 -> upload.

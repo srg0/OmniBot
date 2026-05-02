@@ -28,7 +28,6 @@ Primary design artifacts:
 | P2 | Voice Notes visual refresh | `renderVoicePlayerUi()` still uses older dense list/sidebar UI. | Use the newer premium audio player language from Library Player. | Rework `renderVoicePlayerUi()` using Library player primitives: selected note, count, compact preview, progress, minimal controls. | Saved voice notes look consistent with Library Player and are less dense. Long titles are trimmed/marquee-safe. |
 | P2 | Launcher visual polish | Current launcher is usable but not fully aligned with premium menu sheets. | Premium compact menu style from `navigation_menu_variants.png` / `cardputer-v3-menu-premium.png`. | Add small glyph/orb preview, accent rail, and clearer selected row without nested card-on-card. | Looks like same system as Pulse/Library. Does not reduce navigation speed. |
 | P2 | Loading FPS policy | DNA boot splash is implemented as boot-stage splash. | DNA loader can be reused as high-FPS loading/sync screen when needed. | Extract `renderBootSplash()` visual into reusable loading helper or add a second helper. Use dedicated `16-20 ms` cadence only while loading screen is active. | Boot splash remains clean. Future sync/loading screens can run best-effort `50-60 FPS` without changing global UI cadence. |
-| P2 | UX review gallery | `ux/cardputer-ux-1x1.html` is reported stale in handoff. | Browser review artifact should show actual current firmware states. | Update gallery with actual Library, Folders, Topic Deck/Overlay target, DNA loading, SD-required states, current launcher. | A reviewer can open one local HTML and see current reality plus planned gaps. |
 
 ## Detailed Task Notes
 
@@ -165,5 +164,4 @@ Implementation direction:
 3. Launcher flat-vs-group consistency decision.
 4. Voice Notes visual refresh.
 5. Focus premium variants.
-6. UX gallery update.
-7. Loading DNA reuse/FPS policy if more loading states need it.
+6. Loading DNA reuse/FPS policy if more loading states need it.

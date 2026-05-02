@@ -50,7 +50,6 @@ Baseline checked:
 - Voice player is improved, but saved voice notes UI and long-title marquee still need final polish on hardware.
 - Launcher is grouped and buildable, but visual polish/navigation hints are not final.
 - Loading DNA/transfer screens exist in pieces, but not every long network operation uses the same polished progress animation yet.
-- HTML `ux/cardputer-ux-1x1.html` is behind the actual firmware state and cannot be treated as 1:1 review truth yet.
 
 ## Not Done / Lost Or Deliberately Deferred
 
@@ -75,7 +74,7 @@ Baseline checked:
 1. Publish `0.2.22-dev` with no unrelated changes and test OTA from `0.2.21-dev` to prove slot switching.
 2. Replace voice turn transport with async/chunked sessions on bridge and firmware; this unlocks long recordings and avoids HTTP timeout/body failures.
 3. Finish topic UX as one workspace: remove normal reliance on the separate topic deck, debounce history fetch, improve title/emoji fallbacks, and verify OpenClaw actually executes in the selected session.
-4. Finish the visual pass on Chat, Launcher, Voice Notes, Focus, Settings, and update the 1x1 HTML review artifact to match firmware.
+4. Finish the visual pass on Chat, Launcher, Voice Notes, Focus, and Settings directly in firmware.
 5. Run hardware acceptance matrix: text, RU input, topic switch, topic history, voice record, voice reply, saved playback, `/audio` library, OTA, SD-missing banners, notes, pet persistence.
 
 ## Explicitly Out Of Scope

@@ -10,6 +10,7 @@
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <WebSocketsClient.h>
+#include <base64.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -23,6 +24,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <mbedtls/sha256.h>
+
+extern "C" {
+#include "libb64/cdecode.h"
+}
 
 #include <cctype>
 #include <algorithm>
@@ -40,7 +45,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.26-dev"
+#define APP_VERSION "0.2.33-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -58,6 +63,7 @@ constexpr const char* kDeviceAudioTurnRawPath = "/api/device-audio-turn-raw";
 constexpr const char* kDeviceTtsPath = "/api/device-tts";
 constexpr const char* kCardputerCommandPath = "/api/cardputer/command";
 constexpr const char* kCardputerLogsPath = "/api/cardputer/logs";
+constexpr const char* kRealtimeWsPath = "/api/cardputer/v1/realtime";
 constexpr const char* kAssetManifestFetchPath = "/api/cardputer/assets/manifest";
 constexpr const char* kFirmwareManifestFetchPath = "/api/cardputer/firmware/manifest";
 
@@ -173,6 +179,7 @@ constexpr const char* kBreakCuePath = "/pomodoro/audio/break_ru.wav";
 constexpr const char* kReflectionCuePath = "/pomodoro/audio/reflection_ru.wav";
 constexpr const char* kActiveRecordPcmPath = "/voice/__active_record.pcm";
 constexpr const char* kActiveTtsPcmPath = "/voice/__active_tts.pcm";
+constexpr const char* kRealtimeReplyPcmPath = "/voice/__realtime_reply.pcm";
 constexpr uint8_t kSdSckPin = 40;
 constexpr uint8_t kSdMisoPin = 39;
 constexpr uint8_t kSdMosiPin = 14;
@@ -181,12 +188,21 @@ constexpr uint32_t kSdFrequencyHz = 25000000;
 constexpr size_t kRecordChunkSamples = 1024;
 constexpr size_t kRecordChunkBytes = kRecordChunkSamples * sizeof(int16_t);
 constexpr size_t kRecordChunkBufferCount = 3;
+constexpr uint32_t kRealtimeInputSampleRate = kMicSampleRate;
+constexpr uint32_t kRealtimeModelSampleRate = 24000;
+constexpr size_t kRealtimeInputChunkSamples = 512;
+constexpr size_t kRealtimeInputChunkBytes = kRealtimeInputChunkSamples * sizeof(int16_t);
+constexpr size_t kRealtimeUpsampleRatio = kRealtimeModelSampleRate / kRealtimeInputSampleRate;
+constexpr size_t kRealtimeOutputChunkSamples = kRealtimeInputChunkSamples * kRealtimeUpsampleRatio;
+constexpr size_t kRealtimeOutputChunkBytes = kRealtimeOutputChunkSamples * sizeof(int16_t);
+constexpr size_t kRealtimeChunkBufferCount = 3;
 constexpr uint32_t kRecordDrainTimeoutMs = 900;
 constexpr size_t kPlaybackChunkSamples = 2048;
 constexpr size_t kPlaybackChunkBytes = kPlaybackChunkSamples * sizeof(int16_t);
 constexpr size_t kPlaybackBufferCount = 2;
 constexpr uint8_t kPlaybackSpectrumBands = 16;
 constexpr uint8_t kPlaybackSpectrumMaxBar = 18;
+constexpr size_t kOtaIoBufferBytes = 4096;
 constexpr size_t kEmojiCacheCap = 10;
 constexpr size_t kEmojiMaxPngBytes = 64 * 1024;
 constexpr uint8_t kTca8418IntPin = 11;
@@ -777,6 +793,7 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
 
 Preferences gPrefs;
 WebSocketsClient gWs;
+WebSocketsClient gRealtimeWs;
 M5Canvas gCanvas(&M5Cardputer.Display);
 Adafruit_TCA8418 gTcaKeyboard;
 SPIClass gSdSpi(FSPI);
@@ -904,6 +921,12 @@ uint8_t* gDynamicPlaybackBuffer = nullptr;
 volatile bool gTcaInterruptPending = false;
 bool gTimeZoneConfigured = false;
 bool gTimeValid = false;
+bool gRealtimeActive = false;
+bool gRealtimeConnected = false;
+bool gRealtimeStartAfterReady = false;
+bool gRealtimeRecording = false;
+bool gRealtimeAwaiting = false;
+bool gRealtimeGotAudio = false;
 File gActiveRecordFile;
 String gActiveRecordPath;
 size_t gActiveRecordBytes = 0;
@@ -912,6 +935,16 @@ size_t gActiveRecordExpectedBytes = 0;
 std::deque<uint8_t> gRecordInflightChunks;
 uint8_t gRecordNextChunkIndex = 0;
 int16_t gRecordChunkBuffers[kRecordChunkBufferCount][kRecordChunkSamples];
+String gRealtimeSessionId;
+String gRealtimeText;
+String gRealtimeReplyPath = kRealtimeReplyPcmPath;
+File gRealtimeReplyFile;
+size_t gRealtimeReplyBytes = 0;
+uint32_t gRealtimeStartedMs = 0;
+std::deque<uint8_t> gRealtimeInflightChunks;
+uint8_t gRealtimeNextChunkIndex = 0;
+int16_t gRealtimeInputBuffers[kRealtimeChunkBufferCount][kRealtimeInputChunkSamples];
+int16_t gRealtimeUpsampleBuffer[kRealtimeOutputChunkSamples];
 File gPlaybackStreamFile;
 String gPlaybackStreamPath;
 uint32_t gPlaybackStreamSampleRate = 0;
@@ -920,6 +953,9 @@ size_t gPlaybackStreamTotalBytes = 0;
 uint8_t gPlaybackStreamNextBuffer = 0;
 bool gPlaybackStreamRawPcm = false;
 uint8_t gPlaybackStreamBuffers[kPlaybackBufferCount][kPlaybackChunkBytes];
+// OTA apply runs on Arduino's loopTask; keep the large flash scratch buffer
+// out of that task stack or the device reboots before selecting the new slot.
+uint8_t gOtaIoBuffer[kOtaIoBufferBytes];
 uint32_t gPlaybackStartedMs = 0;
 uint32_t gPlaybackDurationMs = 0;
 int16_t gVoiceTickerX = 90;
@@ -938,6 +974,7 @@ OtaManifestSummary gOtaManifest;
 NotesMode gNotesMode = NotesMode::List;
 bool gOtaPendingVerify = false;
 bool gOtaConfirmedThisBoot = false;
+bool gOtaApplyInProgress = false;
 uint32_t gOtaVerifyStartMs = 0;
 uint32_t gOtaLastHealthProbeMs = 0;
 String gOtaRunningSlot = "-";
@@ -987,6 +1024,13 @@ void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs = 180
 void updateStatusLed();
 void writeWavHeader(uint8_t* h, uint32_t dataSize, uint32_t sampleRate);
 void serviceRecordingToFile(bool refill = true);
+void serviceRealtimeVoice();
+void toggleRealtimeVoice();
+void startRealtimeSession(bool startAfterReady);
+void startRealtimeRecording();
+void stopRealtimeRecordingAndCommit();
+void closeRealtimeSession(const String& reason);
+void realtimeWsEvent(WStype_t type, uint8_t* payload, size_t length);
 void updateG0VoiceTrigger();
 void servicePlaybackStream();
 bool handleGlobalEscape();
@@ -1176,9 +1220,12 @@ void migrateBridgeEndpoint() {
   bool legacyBridge = gHubHost == kLegacyBridgeHost && gHubPort == kLegacyBridgePort;
   bool staleDomainPort = gHubHost == kProdBridgeHost && (gHubPort == 80 || gHubPort == kLegacyBridgePort);
   bool localBridge = isLocalOrPrivateBridgeHost(gHubHost);
-  if (legacyBridge || staleDomainPort || localBridge) {
+  bool nonProdSavedEndpoint = !gHubHost.isEmpty() && gHubHost != kProdBridgeHost;
+  if (legacyBridge || staleDomainPort || localBridge || nonProdSavedEndpoint) {
+    String previous = gHubHost + ":" + String(gHubPort);
     saveHubEndpoint(kProdBridgeHost, kProdBridgePort);
-    logf("[CFG] migrated bridge endpoint host=%s port=%u", gHubHost.c_str(), gHubPort);
+    logf("[CFG] migrated bridge endpoint from=%s to=%s:%u",
+         previous.c_str(), gHubHost.c_str(), gHubPort);
   }
 }
 
@@ -1214,6 +1261,11 @@ String describeOtaPartition(const esp_partition_t* partition) {
   }
   return String(partition->label) + "@0x" + String(static_cast<uint32_t>(partition->address), HEX) +
          "/" + String(static_cast<unsigned>(partition->size));
+}
+
+void otaLog(const String& message, bool persist = true) {
+  appendRuntimeLog("OTA", message, persist);
+  logf("[OTA] %s", message.c_str());
 }
 
 void clearOtaGuardPrefs() {
@@ -3558,18 +3610,19 @@ bool writeStagedOtaFileToPartition(fs::FS& fs, const String& path, const esp_par
   }
 
   beginTransferUi("Flashing OTA", "writing staged file", expectedSize, rgb565_local(255, 93, 88));
+  otaLog("staged flash begin size=" + String(static_cast<unsigned>(expectedSize)), true);
   mbedtls_sha256_context shaCtx;
   mbedtls_sha256_init(&shaCtx);
   mbedtls_sha256_starts(&shaCtx, 0);
-  uint8_t otaBuffer[4096];
   uint32_t written = 0;
+  uint32_t lastLogged = 0;
   while (firmware.available() && written < expectedSize) {
-    size_t toRead = min<uint32_t>(sizeof(otaBuffer), expectedSize - written);
-    int readBytes = firmware.read(otaBuffer, toRead);
+    size_t toRead = min<uint32_t>(kOtaIoBufferBytes, expectedSize - written);
+    int readBytes = firmware.read(gOtaIoBuffer, toRead);
     if (readBytes <= 0) {
       break;
     }
-    otaErr = esp_ota_write(otaHandle, otaBuffer, static_cast<size_t>(readBytes));
+    otaErr = esp_ota_write(otaHandle, gOtaIoBuffer, static_cast<size_t>(readBytes));
     if (otaErr != ESP_OK) {
       esp_ota_abort(otaHandle);
       mbedtls_sha256_free(&shaCtx);
@@ -3580,9 +3633,14 @@ bool writeStagedOtaFileToPartition(fs::FS& fs, const String& path, const esp_par
                                 " written=" + String(static_cast<unsigned>(written)), true);
       return false;
     }
-    mbedtls_sha256_update(&shaCtx, otaBuffer, static_cast<size_t>(readBytes));
+    mbedtls_sha256_update(&shaCtx, gOtaIoBuffer, static_cast<size_t>(readBytes));
     written += static_cast<uint32_t>(readBytes);
     updateTransferUi(written, expectedSize, "writing staged file");
+    if (written == expectedSize || written - lastLogged >= 256UL * 1024UL) {
+      lastLogged = written;
+      otaLog("staged flash " + String(static_cast<unsigned>(written / 1024)) + "k/" +
+             String(static_cast<unsigned>(expectedSize / 1024)) + "k", false);
+    }
     delay(1);
   }
   firmware.close();
@@ -3617,53 +3675,57 @@ bool writeStagedOtaFileToPartition(fs::FS& fs, const String& path, const esp_par
 }
 
 bool applyOtaFromManifest() {
-  if (!gOtaManifest.parsed || gOtaManifest.url.isEmpty() || gOtaManifest.sha256.isEmpty()) {
-    setStatus("OTA manifest incomplete", 1500);
-    appendRuntimeLog("OTA", "manifest incomplete", true);
+  if (gOtaApplyInProgress) {
+    otaLog("apply ignored: already running", true);
+    setStatus("OTA already running", 1400);
     return false;
   }
-  appendRuntimeLog("OTA", "apply start version=" + gOtaManifest.version +
-                            " size=" + String(gOtaManifest.size), true);
+  gOtaApplyInProgress = true;
+  auto fail = [&](const String& reason) -> bool {
+    gOtaApplyInProgress = false;
+    otaLog("apply failed: " + reason, true);
+    finishTransferUi("failed: " + reason, false);
+    return false;
+  };
+
+  if (!gOtaManifest.parsed || gOtaManifest.url.isEmpty() || gOtaManifest.sha256.isEmpty()) {
+    return fail("manifest incomplete");
+  }
+  uint32_t stackWords = uxTaskGetStackHighWaterMark(nullptr);
+  otaLog("apply start version=" + gOtaManifest.version +
+         " size=" + String(gOtaManifest.size) +
+         " heap=" + String(static_cast<unsigned>(ESP.getFreeHeap())) +
+         " stackw=" + String(static_cast<unsigned>(stackWords)), true);
   setStatus("OTA preparing...", 0);
   render();
   updateBatterySnapshot(true);
   int level = gBatterySnapshot.level < 0 ? 100 : gBatterySnapshot.level;
   uint8_t minBattery = max<uint8_t>(gDeviceSettings.minBatteryForUpdate, gOtaManifest.minBattery);
   if (level < minBattery) {
-    setStatus("Battery too low", 1600);
-    appendRuntimeLog("OTA", "battery too low", true);
-    return false;
+    return fail("battery too low");
   }
   const esp_partition_t* running = esp_ota_get_running_partition();
   const esp_partition_t* boot = esp_ota_get_boot_partition();
   const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
-  appendRuntimeLog("OTA", "partition running=" + describeOtaPartition(running) +
-                            " boot=" + describeOtaPartition(boot) +
-                            " next=" + describeOtaPartition(next), true);
+  otaLog("partition running=" + describeOtaPartition(running) +
+         " boot=" + describeOtaPartition(boot) +
+         " next=" + describeOtaPartition(next), true);
   if (!next) {
-    setStatus("OTA slot missing", 2200);
-    appendRuntimeLog("OTA", "no inactive OTA partition", true);
-    return false;
+    return fail("slot missing");
   }
 
   uint32_t expectedSize = gOtaManifest.size;
   if (expectedSize == 0) {
-    setStatus("OTA size missing", 1800);
-    appendRuntimeLog("OTA", "manifest size missing", true);
-    return false;
+    return fail("size missing");
   }
   if (expectedSize > next->size) {
-    setStatus("OTA image too large", 2200);
-    appendRuntimeLog("OTA", "image too large size=" + String(static_cast<unsigned>(expectedSize)) +
-                              " slot=" + String(static_cast<unsigned>(next->size)), true);
-    return false;
+    return fail("image too large " + String(static_cast<unsigned>(expectedSize)) +
+                "/" + String(static_cast<unsigned>(next->size)));
   }
 
   if (!ensureWifiForHttp("ota", 7000)) {
-    setStatus("OTA no Wi-Fi", 1800);
     setHttpDiag("ota: wifi unavailable");
-    appendRuntimeLog("OTA", "wifi unavailable before download", true);
-    return false;
+    return fail("no Wi-Fi");
   }
 
   if (gSdReady && ensurePomodoroStorageOn(SD) && ensureDirRecursive(SD, parentDirOf(kOtaTempPath))) {
@@ -3674,25 +3736,34 @@ bool applyOtaFromManifest() {
       String cachedSha = sha256File(SD, kOtaTempPath);
       cachedSha.toLowerCase();
       stagedOk = cachedSha == expectedSha;
-      appendRuntimeLog("OTA", stagedOk ? "sd stage cache hit" : "sd stage cache stale", true);
+      otaLog(stagedOk ? "sd stage cache hit" : "sd stage cache stale", true);
       if (!stagedOk) {
         fsRemove(SD, kOtaTempPath);
       }
     }
     if (!stagedOk) {
-      appendRuntimeLog("OTA", "sd stage download start", true);
+      otaLog("sd stage download start", true);
       stagedOk = downloadUrlToFile(gOtaManifest.url, kOtaTempPath, gOtaManifest.sha256, expectedSize,
                                    "Firmware SD stage", rgb565_local(255, 93, 88));
+      otaLog(stagedOk ? "sd stage download ok" : "sd stage download failed", true);
     }
     if (stagedOk) {
-      appendRuntimeLog("OTA", "sd stage verified; flashing", true);
-      return writeStagedOtaFileToPartition(SD, kOtaTempPath, next, expectedSize, gOtaManifest.sha256);
+      otaLog("sd stage verified; flashing", true);
+      bool ok = writeStagedOtaFileToPartition(SD, kOtaTempPath, next, expectedSize, gOtaManifest.sha256);
+      if (!ok) {
+        otaLog("staged flash failed; direct fallback", true);
+        fsRemove(SD, kOtaTempPath);
+        setStatus("OTA direct retry", 900);
+        render();
+      } else {
+        return true;
+      }
     }
-    appendRuntimeLog("OTA", "sd stage failed; direct fallback", true);
+    otaLog("sd stage failed; direct fallback", true);
     setStatus("OTA direct fallback", 700);
     render();
   } else {
-    appendRuntimeLog("OTA", "sd stage unavailable; direct stream", true);
+    otaLog("sd stage unavailable; direct stream", true);
   }
 
   beginTransferUi("Firmware OTA", "connecting", expectedSize, rgb565_local(255, 93, 88));
@@ -3700,10 +3771,8 @@ bool applyOtaFromManifest() {
   std::unique_ptr<WiFiClientSecure> secureClient;
   if (!configureHttpClient(http, secureClient, gOtaManifest.url, 120000)) {
     finishTransferUi("connect failed", false);
-    setStatus("OTA connect failed", 1800);
     setHttpDiag("ota: begin failed");
-    appendRuntimeLog("OTA", "http begin failed", true);
-    return false;
+    return fail("http begin failed");
   }
   if (!gDeviceToken.isEmpty()) {
     http.addHeader("Authorization", "Bearer " + gDeviceToken);
@@ -3713,20 +3782,16 @@ bool applyOtaFromManifest() {
     String detail = code <= 0 ? HTTPClient::errorToString(code) : String(code);
     http.end();
     finishTransferUi("HTTP " + detail, false);
-    setStatus(code <= 0 ? "OTA transport fail" : ("OTA HTTP " + String(code)), 2000);
     setHttpDiag("ota: " + detail);
-    appendRuntimeLog("OTA", "download http failed " + detail, true);
-    return false;
+    return fail("download http " + detail);
   }
 
   int contentLength = http.getSize();
   if (contentLength > 0 && static_cast<uint32_t>(contentLength) != expectedSize) {
     http.end();
     finishTransferUi("size mismatch", false);
-    setStatus("OTA size mismatch", 2000);
-    appendRuntimeLog("OTA", "size mismatch manifest=" + String(static_cast<unsigned>(expectedSize)) +
-                              " http=" + String(contentLength), true);
-    return false;
+    return fail("size mismatch manifest=" + String(static_cast<unsigned>(expectedSize)) +
+                " http=" + String(contentLength));
   }
 
   esp_ota_handle_t otaHandle = 0;
@@ -3735,18 +3800,16 @@ bool applyOtaFromManifest() {
   esp_err_t otaErr = esp_ota_begin(next, OTA_WITH_SEQUENTIAL_WRITES, &otaHandle);
   if (otaErr != ESP_OK) {
     http.end();
-    setStatus("OTA begin err " + String(static_cast<int>(otaErr)), 1800);
-    appendRuntimeLog("OTA", "begin failed err=" + String(static_cast<int>(otaErr)) +
-                              " mode=sequential size=" + String(static_cast<unsigned>(expectedSize)), true);
-    return false;
+    return fail("begin err " + String(static_cast<int>(otaErr)));
   }
+  otaLog("direct flash begin size=" + String(static_cast<unsigned>(expectedSize)), true);
 
   mbedtls_sha256_context shaCtx;
   mbedtls_sha256_init(&shaCtx);
   mbedtls_sha256_starts(&shaCtx, 0);
   WiFiClient* stream = http.getStreamPtr();
-  uint8_t otaBuffer[4096];
   uint32_t written = 0;
+  uint32_t lastLogged = 0;
   uint32_t lastByteMs = millis();
   while (written < expectedSize) {
     size_t available = stream ? stream->available() : 0;
@@ -3759,39 +3822,40 @@ bool applyOtaFromManifest() {
         mbedtls_sha256_free(&shaCtx);
         http.end();
         finishTransferUi("download stalled", false);
-        setStatus("OTA stalled", 2000);
         setHttpDiag("ota: stalled");
-        appendRuntimeLog("OTA", "stream stalled written=" + String(static_cast<unsigned>(written)), true);
-        return false;
+        return fail("stream stalled " + String(static_cast<unsigned>(written)));
       }
       updateTransferUi(written, expectedSize, "receiving");
       delay(2);
       continue;
     }
 
-    size_t toRead = min(available, sizeof(otaBuffer));
+    size_t toRead = min(available, kOtaIoBufferBytes);
     toRead = min<uint32_t>(static_cast<uint32_t>(toRead), expectedSize - written);
-    int readBytes = stream->readBytes(otaBuffer, toRead);
+    int readBytes = stream->readBytes(gOtaIoBuffer, toRead);
     if (readBytes <= 0) {
       delay(1);
       continue;
     }
 
-    otaErr = esp_ota_write(otaHandle, otaBuffer, static_cast<size_t>(readBytes));
+    otaErr = esp_ota_write(otaHandle, gOtaIoBuffer, static_cast<size_t>(readBytes));
     if (otaErr != ESP_OK) {
       esp_ota_abort(otaHandle);
       mbedtls_sha256_free(&shaCtx);
       http.end();
       finishTransferUi("flash write failed", false);
-      setStatus("OTA write err " + String(static_cast<int>(otaErr)), 1800);
-      appendRuntimeLog("OTA", "flash write failed err=" + String(static_cast<int>(otaErr)) +
-                                " written=" + String(static_cast<unsigned>(written)), true);
-      return false;
+      return fail("write err " + String(static_cast<int>(otaErr)) +
+                  " at " + String(static_cast<unsigned>(written)));
     }
-    mbedtls_sha256_update(&shaCtx, otaBuffer, static_cast<size_t>(readBytes));
+    mbedtls_sha256_update(&shaCtx, gOtaIoBuffer, static_cast<size_t>(readBytes));
     written += static_cast<uint32_t>(readBytes);
     lastByteMs = millis();
     updateTransferUi(written, expectedSize, "receiving + flashing");
+    if (written == expectedSize || written - lastLogged >= 256UL * 1024UL) {
+      lastLogged = written;
+      otaLog("direct flash " + String(static_cast<unsigned>(written / 1024)) + "k/" +
+             String(static_cast<unsigned>(expectedSize / 1024)) + "k", false);
+    }
     delay(1);
   }
 
@@ -3803,10 +3867,8 @@ bool applyOtaFromManifest() {
   if (written != expectedSize) {
     esp_ota_abort(otaHandle);
     finishTransferUi("flash short", false);
-    setStatus("OTA short write", 1800);
-    appendRuntimeLog("OTA", "short write written=" + String(static_cast<unsigned>(written)) +
-                              " size=" + String(static_cast<unsigned>(expectedSize)), true);
-    return false;
+    return fail("short write " + String(static_cast<unsigned>(written)) +
+                "/" + String(static_cast<unsigned>(expectedSize)));
   }
 
   String actualSha = bytesToHex(hash, sizeof(hash));
@@ -3816,13 +3878,15 @@ bool applyOtaFromManifest() {
   if (actualSha != expectedSha) {
     esp_ota_abort(otaHandle);
     finishTransferUi("SHA mismatch", false);
-    setStatus("OTA SHA mismatch", 2200);
-    appendRuntimeLog("OTA", "sha mismatch expected=" + expectedSha.substring(0, 12) +
-                              " actual=" + actualSha.substring(0, 12), true);
-    return false;
+    return fail("sha mismatch expected=" + expectedSha.substring(0, 12) +
+                " actual=" + actualSha.substring(0, 12));
   }
 
-  return finishOtaApply(otaHandle, next, written, expectedSize);
+  bool ok = finishOtaApply(otaHandle, next, written, expectedSize);
+  if (!ok) {
+    return fail("direct flash failed");
+  }
+  return true;
 }
 
 String urlEncodePathSegment(const String& raw) {
@@ -8993,6 +9057,452 @@ void resumeHubWebSocketAfterVoice() {
   }
 }
 
+bool queueRealtimeChunk(uint8_t chunkIndex) {
+  return M5Cardputer.Mic.record(gRealtimeInputBuffers[chunkIndex],
+                                kRealtimeInputChunkSamples,
+                                kRealtimeInputSampleRate);
+}
+
+void upsampleRealtimeChunk(const int16_t* input) {
+  for (size_t i = 0; i < kRealtimeInputChunkSamples; ++i) {
+    const int16_t sample = input[i];
+    const size_t out = i * kRealtimeUpsampleRatio;
+    for (size_t r = 0; r < kRealtimeUpsampleRatio; ++r) {
+      gRealtimeUpsampleBuffer[out + r] = sample;
+    }
+  }
+}
+
+bool sendRealtimeAudioChunk(const int16_t* samples, size_t sampleCount) {
+  if (!gRealtimeActive || !gRealtimeConnected) {
+    return false;
+  }
+  String encoded = base64::encode(reinterpret_cast<const uint8_t*>(samples),
+                                  sampleCount * sizeof(int16_t));
+  encoded.replace("\n", "");
+  encoded.replace("\r", "");
+  DynamicJsonDocument doc(768 + encoded.length());
+  doc["type"] = "audio.append";
+  doc["audio"] = encoded;
+  String payload;
+  serializeJson(doc, payload);
+  return gRealtimeWs.sendTXT(payload);
+}
+
+void flushCompletedRealtimeChunks(size_t completedCount) {
+  for (size_t i = 0; i < completedCount && !gRealtimeInflightChunks.empty(); ++i) {
+    uint8_t chunkIndex = gRealtimeInflightChunks.front();
+    gRealtimeInflightChunks.pop_front();
+    updateVoiceLevelFromSamples(gRealtimeInputBuffers[chunkIndex], kRealtimeInputChunkSamples);
+    upsampleRealtimeChunk(gRealtimeInputBuffers[chunkIndex]);
+    if (!sendRealtimeAudioChunk(gRealtimeUpsampleBuffer, kRealtimeOutputChunkSamples)) {
+      setVoiceDiag("realtime: audio send failed");
+      appendRuntimeLog("RT", "audio send failed", true);
+      setFaceMode(FaceMode::Error);
+      setStatus("Realtime send failed", 1600);
+      break;
+    }
+  }
+}
+
+void serviceRealtimeRecording(bool refill = true) {
+  if (!gRealtimeRecording && gRealtimeInflightChunks.empty()) {
+    return;
+  }
+  size_t micQueued = M5Cardputer.Mic.isRecording();
+  if (gRealtimeInflightChunks.size() > micQueued) {
+    flushCompletedRealtimeChunks(gRealtimeInflightChunks.size() - micQueued);
+  }
+  if (!refill || !gRealtimeRecording) {
+    return;
+  }
+  while (gRealtimeInflightChunks.size() < 2) {
+    uint8_t chunkIndex = gRealtimeNextChunkIndex;
+    gRealtimeNextChunkIndex = (gRealtimeNextChunkIndex + 1) % kRealtimeChunkBufferCount;
+    bool alreadyInflight = false;
+    for (uint8_t inflight : gRealtimeInflightChunks) {
+      if (inflight == chunkIndex) {
+        alreadyInflight = true;
+        break;
+      }
+    }
+    if (alreadyInflight) {
+      continue;
+    }
+    if (!queueRealtimeChunk(chunkIndex)) {
+      break;
+    }
+    gRealtimeInflightChunks.push_back(chunkIndex);
+  }
+}
+
+void drainRealtimeRecording() {
+  unsigned long deadline = millis() + kRecordDrainTimeoutMs;
+  while (millis() < deadline) {
+    serviceRealtimeRecording(false);
+    if (M5Cardputer.Mic.isRecording() == 0 && gRealtimeInflightChunks.empty()) {
+      return;
+    }
+    yield();
+    delay(4);
+  }
+  serviceRealtimeRecording(false);
+}
+
+void closeRealtimeReplyFile() {
+  if (gRealtimeReplyFile) {
+    gRealtimeReplyFile.flush();
+    gRealtimeReplyFile.close();
+  }
+}
+
+bool ensureRealtimeReplyFile() {
+  if (gRealtimeReplyFile) {
+    return true;
+  }
+  if (!gStorageReady || !ensureVoiceStorage()) {
+    setVoiceDiag("realtime: no storage");
+    return false;
+  }
+  fs::FS* fs = activeVoiceFs();
+  if (!fs) {
+    setVoiceDiag("realtime: no fs");
+    return false;
+  }
+  fsRemove(*fs, kRealtimeReplyPcmPath);
+  gRealtimeReplyFile = fs->open(kRealtimeReplyPcmPath, "w");
+  if (!gRealtimeReplyFile) {
+    setVoiceDiag("realtime: reply file failed");
+    return false;
+  }
+  gRealtimeReplyPath = kRealtimeReplyPcmPath;
+  gRealtimeReplyBytes = 0;
+  return true;
+}
+
+void resetRealtimeTurnState() {
+  gRealtimeText = "";
+  gRealtimeGotAudio = false;
+  gRealtimeReplyBytes = 0;
+  closeRealtimeReplyFile();
+  fs::FS* fs = activeVoiceFs();
+  if (fs) {
+    fsRemove(*fs, kRealtimeReplyPcmPath);
+  }
+}
+
+void closeRealtimeSession(const String& reason) {
+  if (gRealtimeRecording) {
+    gRealtimeRecording = false;
+    drainRealtimeRecording();
+    stopMic();
+  }
+  closeRealtimeReplyFile();
+  gRealtimeInflightChunks.clear();
+  if (gRealtimeActive || gRealtimeConnected) {
+    DynamicJsonDocument doc(128);
+    doc["type"] = "close";
+    String payload;
+    serializeJson(doc, payload);
+    gRealtimeWs.sendTXT(payload);
+    gRealtimeWs.disconnect();
+  }
+  gRealtimeActive = false;
+  gRealtimeConnected = false;
+  gRealtimeStartAfterReady = false;
+  gRealtimeAwaiting = false;
+  gRealtimeGotAudio = false;
+  gRealtimeSessionId = "";
+  setVoiceDiag("realtime: " + reason);
+}
+
+void handleRealtimeJson(const JsonDocument& doc) {
+  const String type = doc["type"] | "";
+  if (type == "connected") {
+    setStatus("Realtime connected", 700);
+    return;
+  }
+  if (type == "realtime.ready") {
+    gRealtimeConnected = true;
+    gRealtimeSessionId = doc["session_id"] | "";
+    appendRuntimeLog("RT", "ready " + gRealtimeSessionId, false);
+    setStatus("Realtime ready", 700);
+    if (gRealtimeStartAfterReady) {
+      gRealtimeStartAfterReady = false;
+      startRealtimeRecording();
+    }
+    return;
+  }
+  if (type == "speech.started") {
+    setStatus("Realtime speech...", 500);
+    return;
+  }
+  if (type == "speech.stopped") {
+    setStatus("Realtime heard", 500);
+    return;
+  }
+  if (type == "realtime.thinking") {
+    gRealtimeAwaiting = true;
+    setFaceMode(FaceMode::Thinking);
+    setStatus("Realtime thinking...");
+    return;
+  }
+  if (type == "transcript.done") {
+    const String text = doc["text"] | "";
+    if (!text.isEmpty()) {
+      pushUser(text);
+      setStatus("Transcript ready", 700);
+    }
+    return;
+  }
+  if (type == "text.delta") {
+    const String delta = doc["delta"] | "";
+    if (!delta.isEmpty()) {
+      gRealtimeText += delta;
+    }
+    return;
+  }
+  if (type == "text.done" || type == "response.done") {
+    String text = doc["text"] | "";
+    if (text.isEmpty()) {
+      text = gRealtimeText;
+    }
+    text.trim();
+    if (!text.isEmpty()) {
+      appendAssistantReply(text);
+    }
+    gRealtimeText = "";
+    if (type == "response.done") {
+      gRealtimeAwaiting = false;
+      if (!gPlaybackActive && !gRealtimeGotAudio) {
+        setFaceMode(FaceMode::Idle);
+        setStatus("Realtime done", 1000);
+      }
+    }
+    return;
+  }
+  if (type == "device_actions") {
+    String actionsJson;
+    serializeJson(doc["actions"], actionsJson);
+    executeDeviceActionsJson(actionsJson);
+    return;
+  }
+  if (type == "audio.delta") {
+    const String audio = doc["audio"] | "";
+    if (audio.isEmpty()) {
+      return;
+    }
+    if (!ensureRealtimeReplyFile()) {
+      appendRuntimeLog("RT", "reply file unavailable", true);
+      return;
+    }
+    const int maxDecoded = static_cast<int>((audio.length() * 3U) / 4U + 8U);
+    uint8_t* decoded = static_cast<uint8_t*>(malloc(maxDecoded));
+    if (!decoded) {
+      appendRuntimeLog("RT", "audio decode oom", true);
+      setStatus("Realtime OOM", 1200);
+      return;
+    }
+    int decodedLen = base64_decode_chars(audio.c_str(), static_cast<int>(audio.length()),
+                                         reinterpret_cast<char*>(decoded));
+    if (decodedLen > 0) {
+      size_t written = gRealtimeReplyFile.write(decoded, decodedLen);
+      gRealtimeReplyBytes += written;
+      gRealtimeGotAudio = true;
+      setFaceMode(FaceMode::Speaking);
+      setStatus("Realtime audio...", 700);
+    }
+    free(decoded);
+    return;
+  }
+  if (type == "audio.done") {
+    closeRealtimeReplyFile();
+    if (gRealtimeReplyBytes > 0) {
+      appendRuntimeLog("RT", "audio bytes=" + String(static_cast<unsigned>(gRealtimeReplyBytes)), false);
+      startPlaybackStreamFromRawPcmFile(kRealtimeReplyPcmPath,
+                                        kRealtimeModelSampleRate,
+                                        gRealtimeReplyBytes,
+                                        "realtime reply");
+    } else {
+      appendRuntimeLog("RT", "audio done empty", true);
+    }
+    return;
+  }
+  if (type == "realtime.error" || type == "protocol_error") {
+    const String message = doc["message"] | "realtime error";
+    appendRuntimeLog("RT", "error " + message, true);
+    pushError("Realtime: " + message);
+    setFaceMode(FaceMode::Error);
+    setStatus("Realtime error", 1800);
+    gRealtimeAwaiting = false;
+    return;
+  }
+  if (type == "realtime.closed") {
+    const String reason = doc["reason"] | "closed";
+    gRealtimeActive = false;
+    gRealtimeConnected = false;
+    gRealtimeAwaiting = false;
+    closeRealtimeReplyFile();
+    setStatus("Realtime closed", 1000);
+    appendRuntimeLog("RT", "closed " + reason, false);
+  }
+}
+
+void realtimeWsEvent(WStype_t type, uint8_t* payload, size_t length) {
+  switch (type) {
+    case WStype_DISCONNECTED:
+      gRealtimeConnected = false;
+      if (gRealtimeActive) {
+        appendRuntimeLog("RT", "disconnected", true);
+        setStatus("Realtime disconnected", 1200);
+      }
+      break;
+    case WStype_CONNECTED: {
+      DynamicJsonDocument doc(768);
+      doc["type"] = "connect";
+      doc["device_id"] = gDeviceId;
+      doc["device_token"] = gDeviceToken;
+      doc["topic_key"] = currentConversationKey();
+      doc["sample_rate"] = kRealtimeModelSampleRate;
+      String out;
+      serializeJson(doc, out);
+      gRealtimeWs.sendTXT(out);
+      setStatus("Realtime auth...", 700);
+      break;
+    }
+    case WStype_TEXT: {
+      DynamicJsonDocument doc(8192);
+      auto err = deserializeJson(doc, payload, length);
+      if (err) {
+        appendRuntimeLog("RT", "json parse failed", true);
+        setStatus("Realtime JSON failed", 1200);
+        break;
+      }
+      handleRealtimeJson(doc);
+      break;
+    }
+    case WStype_ERROR:
+      appendRuntimeLog("RT", "ws error", true);
+      setStatus("Realtime WS error", 1200);
+      break;
+    default:
+      break;
+  }
+}
+
+void startRealtimeSession(bool startAfterReady) {
+  if (gRealtimeActive) {
+    if (gRealtimeConnected && startAfterReady) {
+      startRealtimeRecording();
+    } else {
+      gRealtimeStartAfterReady = startAfterReady;
+    }
+    return;
+  }
+  if (!gWifiReady || gHubHost.isEmpty()) {
+    pushError("Realtime needs Wi-Fi and bridge.");
+    setStatus("Realtime unavailable", 1400);
+    setFaceMode(FaceMode::Error);
+    return;
+  }
+  resetRealtimeTurnState();
+  gRealtimeActive = true;
+  gRealtimeConnected = false;
+  gRealtimeStartAfterReady = startAfterReady;
+  gRealtimeAwaiting = false;
+  if (hubUsesTls()) {
+    gRealtimeWs.beginSSL(gHubHost.c_str(), gHubPort, kRealtimeWsPath);
+  } else {
+    gRealtimeWs.begin(gHubHost.c_str(), gHubPort, kRealtimeWsPath);
+  }
+  gRealtimeWs.onEvent(realtimeWsEvent);
+  gRealtimeWs.setReconnectInterval(0);
+  gRealtimeWs.enableHeartbeat(15000, 3000, 2);
+  setStatus("Realtime connecting...");
+  appendRuntimeLog("RT", "connect host=" + gHubHost + ":" + String(gHubPort), false);
+}
+
+void startRealtimeRecording() {
+  if (!gRealtimeActive || !gRealtimeConnected) {
+    startRealtimeSession(true);
+    return;
+  }
+  if (gRealtimeRecording || gRecording || gSubmitting || gThinking) {
+    setStatus("Realtime busy", 800);
+    return;
+  }
+  if (gPlaybackActive) {
+    stopPlaybackStream();
+    gPlaybackActive = false;
+  }
+  resetRealtimeTurnState();
+  gRealtimeInflightChunks.clear();
+  gRealtimeNextChunkIndex = 0;
+  gRealtimeRecording = true;
+  gRealtimeAwaiting = false;
+  gRealtimeStartedMs = millis();
+  gVoiceLevel8 = 36;
+  pulseButtonPress();
+  startMic();
+  serviceRealtimeRecording(true);
+  setFaceMode(FaceMode::Listening);
+  setStatus("Realtime listening...");
+  setVoiceDiag("realtime: recording");
+  appendRuntimeLog("RT", "record start", false);
+}
+
+void stopRealtimeRecordingAndCommit() {
+  if (!gRealtimeRecording) {
+    return;
+  }
+  gRealtimeRecording = false;
+  pulseButtonPress();
+  drainRealtimeRecording();
+  stopMic();
+  gRealtimeInflightChunks.clear();
+  DynamicJsonDocument doc(128);
+  doc["type"] = "audio.commit";
+  String payload;
+  serializeJson(doc, payload);
+  bool sent = gRealtimeConnected && gRealtimeWs.sendTXT(payload);
+  if (!sent) {
+    appendRuntimeLog("RT", "commit send failed", true);
+    setStatus("Realtime commit failed", 1500);
+    setFaceMode(FaceMode::Error);
+    gRealtimeAwaiting = false;
+    return;
+  }
+  gRealtimeAwaiting = true;
+  setFaceMode(FaceMode::Thinking);
+  setStatus("Realtime thinking...");
+  setVoiceDiag("realtime: committed");
+  appendRuntimeLog("RT", "record commit", false);
+}
+
+void toggleRealtimeVoice() {
+  if (gRealtimeRecording) {
+    stopRealtimeRecordingAndCommit();
+    return;
+  }
+  if (!gRealtimeActive || !gRealtimeConnected) {
+    startRealtimeSession(true);
+    return;
+  }
+  if (gRealtimeAwaiting) {
+    setStatus("Realtime waiting...", 700);
+    return;
+  }
+  startRealtimeRecording();
+}
+
+void serviceRealtimeVoice() {
+  if (!gRealtimeActive) {
+    return;
+  }
+  gRealtimeWs.loop();
+  serviceRealtimeRecording(true);
+}
+
 void maintainConnectivity() {
   bool wifiNow = WiFi.status() == WL_CONNECTED;
 
@@ -9970,6 +10480,10 @@ bool handleGlobalEscape() {
     cancelRecordingDiscard();
     changed = true;
   }
+  if (gRealtimeActive || gRealtimeRecording) {
+    closeRealtimeSession("escape");
+    changed = true;
+  }
   if (gPlaybackActive) {
     stopPlaybackStream();
     gPlaybackActive = false;
@@ -10029,9 +10543,17 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     handleGlobalEscape();
     return;
   }
+  if (gRealtimeRecording && !(keys.ctrl && lowerKey == 'r')) {
+    setStatus("Ctrl+R stop realtime", 600);
+    return;
+  }
   if (keys.ctrl && keys.space) {
     gKeyboardLayout = (gKeyboardLayout == KeyboardLayout::En) ? KeyboardLayout::Ru : KeyboardLayout::En;
     setStatus(String("Layout ") + layoutName(gKeyboardLayout), 900);
+    return;
+  }
+  if (keys.ctrl && lowerKey == 'r') {
+    toggleRealtimeVoice();
     return;
   }
   if (keys.ctrl && lowerKey == 'v') {
@@ -13213,6 +13735,7 @@ void loop() {
     updateG0VoiceTrigger();
     updateVoiceTrigger();
     pollTyping();
+    serviceRealtimeVoice();
     serviceRecordingToFile();
     servicePlaybackStream();
   }
