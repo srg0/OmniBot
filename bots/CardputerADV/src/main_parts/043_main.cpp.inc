@@ -640,6 +640,42 @@ bool handleHostSerialCommand(String line) {
     logf("[SMOKE] realtime closed by host");
     return true;
   }
+  if (cmd.startsWith("topic.create ") || cmd.startsWith("/topic.create ")) {
+    int spaceIndex = line.indexOf(' ');
+    String title = spaceIndex >= 0 ? line.substring(spaceIndex + 1) : "";
+    title.trim();
+    if (title.isEmpty()) {
+      title = defaultNewTopicTitle();
+    }
+    bool started = startTopicTask(false, false, false, "Creating topic...", true, title);
+    logf("[HOST] topic.create title=%s started=%d", title.c_str(), static_cast<int>(started));
+    return true;
+  }
+  if (cmd.startsWith("text.send ") || cmd.startsWith("/text.send ") ||
+      cmd.startsWith("send.text ") || cmd.startsWith("/send.text ")) {
+    int spaceIndex = line.indexOf(' ');
+    String text = spaceIndex >= 0 ? line.substring(spaceIndex + 1) : "";
+    text.trim();
+    if (text.isEmpty()) {
+      logf("[HOST] text.send empty");
+      return true;
+    }
+    pushUser(text);
+    gPendingTextTurns.push_back(text);
+    gAssistantPendingVisible = true;
+    logf("[HOST] text.send queued chars=%d ctx=%s", text.length(), currentConversationKey().c_str());
+    if (gSubmitting || gTextTurnTaskHandle != nullptr || !gActiveTextTurn.isEmpty()) {
+      setStatus("Queued +" + String(gPendingTextTurns.size()), 1000);
+    }
+    maybeStartNextTextTurn();
+    return true;
+  }
+  if (cmd == "ota.apply" || cmd == "/ota.apply") {
+    logf("[HOST] ota.apply requested");
+    fetchRemoteOtaManifest();
+    applyOtaFromManifest();
+    return true;
+  }
   return handleLocalCommand(line);
 }
 
@@ -655,7 +691,7 @@ void handleHostSerialInput() {
       handleHostSerialCommand(line);
       continue;
     }
-    if (gSerialControlBuffer.length() < 220) {
+    if (gSerialControlBuffer.length() < 900) {
       gSerialControlBuffer += ch;
     } else {
       gSerialControlBuffer = "";
