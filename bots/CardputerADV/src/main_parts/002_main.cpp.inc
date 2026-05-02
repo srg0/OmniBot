@@ -167,6 +167,7 @@ enum class UiMode : uint8_t {
   Contexts,
   Settings,
   Calculator,
+  Stopwatch,
   Logs,
 };
 

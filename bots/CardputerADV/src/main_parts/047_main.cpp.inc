@@ -317,6 +317,73 @@ bool handleCalculatorKey(char key, const Keyboard_Class::KeysState& keys) {
   return true;
 }
 
+uint32_t stopwatchElapsedMs() {
+  if (!gStopwatchRunning) {
+    return gStopwatchElapsedMs;
+  }
+  return gStopwatchElapsedMs + (millis() - gStopwatchStartedMs);
+}
+
+String formatStopwatchElapsed(uint32_t elapsedMs) {
+  uint32_t centis = (elapsedMs / 10UL) % 100UL;
+  uint32_t totalSec = elapsedMs / 1000UL;
+  uint32_t seconds = totalSec % 60UL;
+  uint32_t minutes = (totalSec / 60UL) % 60UL;
+  uint32_t hours = totalSec / 3600UL;
+  char buf[18];
+  if (hours > 0) {
+    snprintf(buf, sizeof(buf), "%lu:%02lu:%02lu.%02lu", static_cast<unsigned long>(hours),
+             static_cast<unsigned long>(minutes), static_cast<unsigned long>(seconds),
+             static_cast<unsigned long>(centis));
+  } else {
+    snprintf(buf, sizeof(buf), "%02lu:%02lu.%02lu", static_cast<unsigned long>(minutes),
+             static_cast<unsigned long>(seconds), static_cast<unsigned long>(centis));
+  }
+  return String(buf);
+}
+
+void stopwatchToggle() {
+  if (gStopwatchRunning) {
+    gStopwatchElapsedMs = stopwatchElapsedMs();
+    gStopwatchRunning = false;
+    gStopwatchStatus = "Paused";
+    setStatus("Stopwatch paused", 700);
+  } else {
+    gStopwatchStartedMs = millis();
+    gStopwatchRunning = true;
+    gStopwatchStatus = "Running";
+    setStatus("Stopwatch running", 700);
+  }
+}
+
+void stopwatchReset() {
+  gStopwatchRunning = false;
+  gStopwatchElapsedMs = 0;
+  gStopwatchStartedMs = millis();
+  gStopwatchLapMs = 0;
+  gStopwatchStatus = "Reset";
+  setStatus("Stopwatch reset", 700);
+}
+
+bool handleStopwatchKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (keys.enter || keys.space || key == '\r' || key == '\n' || key == ' ') {
+    stopwatchToggle();
+    return true;
+  }
+  if (lowerKey == 'r' || keys.del || key == '\b') {
+    stopwatchReset();
+    return true;
+  }
+  if (lowerKey == 'l') {
+    gStopwatchLapMs = stopwatchElapsedMs();
+    gStopwatchStatus = "Lap";
+    setStatus("Stopwatch lap", 700);
+    return true;
+  }
+  return true;
+}
+
 bool handleGlobalEscape() {
   bool changed = false;
 

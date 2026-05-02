@@ -48,6 +48,9 @@
       case UiMode::Calculator:
         renderCalculatorUi();
         break;
+      case UiMode::Stopwatch:
+        renderStopwatchUi();
+        break;
       case UiMode::Logs:
         renderLogsUi();
         break;

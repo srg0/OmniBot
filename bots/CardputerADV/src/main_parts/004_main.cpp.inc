@@ -85,8 +85,8 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}, {"Notes", UiMode::Notes}}},
     {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
      {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice}, {"Assets", UiMode::Assets}}},
-    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 1,
-     {{"Focus Space", UiMode::Focus}}},
+    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 2,
+     {{"Focus Space", UiMode::Focus}, {"Stopwatch", UiMode::Stopwatch}}},
     {"OpenClaw", "OC", "Bridge runtime", rgb565_local(180, 150, 255), 2,
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}}},
     {"System", "SYS", "Power and settings", rgb565_local(203, 216, 226), 4,
@@ -114,6 +114,7 @@ String gStatusText = "Booting";
 String gCalcExpression;
 String gCalcResult = "0";
 String gCalcStatus = "Ready";
+String gStopwatchStatus = "Ready";
 std::vector<VoiceNote> gVoiceNotes;
 std::vector<NoteFile> gNotes;
 std::vector<AudioAsset> gAudioAssets;
@@ -196,3 +197,7 @@ uint32_t gLastBatterySampleMs = 0;
 uint32_t gClientTurnSeq = 0;
 uint32_t gLastBlockingRenderPumpMs = 0;
 bool gBlockingRenderPumpEnabled = false;
+bool gStopwatchRunning = false;
+uint32_t gStopwatchElapsedMs = 0;
+uint32_t gStopwatchStartedMs = 0;
+uint32_t gStopwatchLapMs = 0;

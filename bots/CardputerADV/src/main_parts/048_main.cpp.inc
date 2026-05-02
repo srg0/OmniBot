@@ -101,6 +101,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Calculator && handleCalculatorKey(key, keys)) {
     return;
   }
+  if (gUiMode == UiMode::Stopwatch && handleStopwatchKey(key, keys)) {
+    return;
+  }
   if (gUiMode == UiMode::Logs && handleLogsKey(key)) {
     return;
   }

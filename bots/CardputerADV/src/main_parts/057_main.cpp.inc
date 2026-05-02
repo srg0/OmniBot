@@ -114,6 +114,74 @@ void renderCalculatorUi() {
   renderDebugOverlay();
 }
 
+void renderStopwatchUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(3, 7, 11);
+  const uint16_t panel = rgb565_local(8, 16, 24);
+  const uint16_t panel2 = rgb565_local(3, 12, 16);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t muted = rgb565_local(126, 143, 157);
+  uint32_t elapsed = stopwatchElapsedMs();
+  uint16_t accent = gStopwatchRunning ? green : amber;
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, accent);
+  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(22, 44, 57));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(16, 14);
+  d.print("STOPWATCH");
+  String state = gStopwatchRunning ? "RUN" : (elapsed == 0 ? "READY" : "PAUSE");
+  d.setTextColor(accent, panel);
+  d.setCursor(224 - d.textWidth(state), 17);
+  d.print(state);
+
+  int16_t cx = 120;
+  int16_t cy = 62;
+  d.fillCircle(cx, cy, 36, panel2);
+  d.drawCircle(cx, cy, 37, rgb565_local(24, 46, 58));
+  for (int i = 0; i < 60; i += 5) {
+    float a = (i - 15) * 0.10472f;
+    int16_t x1 = cx + static_cast<int16_t>(cosf(a) * 30.0f);
+    int16_t y1 = cy + static_cast<int16_t>(sinf(a) * 30.0f);
+    int16_t x2 = cx + static_cast<int16_t>(cosf(a) * 34.0f);
+    int16_t y2 = cy + static_cast<int16_t>(sinf(a) * 34.0f);
+    d.drawLine(x1, y1, x2, y2, i == 0 ? accent : muted);
+  }
+  float hand = ((elapsed / 1000UL) % 60UL - 15) * 0.10472f;
+  d.drawLine(cx, cy, cx + static_cast<int16_t>(cosf(hand) * 27.0f),
+             cy + static_cast<int16_t>(sinf(hand) * 27.0f), accent);
+  d.fillCircle(cx, cy, 3, accent);
+
+  d.fillRoundRect(19, 82, 202, 26, 8, panel2);
+  d.setFont(&fonts::Font4);
+  d.setTextColor(accent, panel2);
+  String timeText = formatStopwatchElapsed(elapsed);
+  d.setCursor((240 - d.textWidth(timeText)) / 2, 86);
+  d.print(timeText);
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(18, 111);
+  String lap = gStopwatchLapMs > 0 ? String("Lap ") + formatStopwatchElapsed(gStopwatchLapMs)
+                                  : String("No lap yet");
+  d.print(fitCurrentFontToWidth(lap, 106));
+  d.setTextColor(green, panel);
+  d.setCursor(132, 111);
+  d.print("Ent start/pause");
+  d.setTextColor(amber, panel);
+  d.setCursor(18, 122);
+  d.print("R reset  L lap  Esc home");
+  d.setFont(&fonts::Font2);
+
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 void renderContextsUi() {
   auto& d = gCanvas;
   const uint16_t bg = rgb565_local(3, 6, 12);

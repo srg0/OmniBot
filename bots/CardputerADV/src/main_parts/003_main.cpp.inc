@@ -45,7 +45,7 @@ constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
     {"focus.set_autostart", "auto start", "turn focus autostart on"},
     {"focus.set_metronome", "metronome", "turn metronome off"},
     {"focus.set_bpm", "bpm", "set bpm to 80"},
-    {"ui.open", "open screen", "open battery"},
+    {"ui.open", "open screen", "open stopwatch"},
     {"audio.play", "play library", "play nutrition plan"},
     {"voice.play", "play voice note", "play last voice note"},
     {"settings.set_audio_language", "audio lang", "set language to russian"},

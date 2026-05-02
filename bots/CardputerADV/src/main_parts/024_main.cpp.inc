@@ -72,7 +72,11 @@
   }
   if (type == "ui.open") {
     UiMode mode;
-    if (mapActionUiMode(action["mode"] | "", mode)) {
+    String modeName = action["mode"] | "";
+    if (modeName.isEmpty()) {
+      modeName = action["screen"] | "";
+    }
+    if (mapActionUiMode(modeName, mode)) {
       setUiMode(mode);
       return true;
     }
@@ -233,4 +237,3 @@ void applyLauncherSelection() {
   UiMode target = kLauncherGroups[gLauncherSelection].items[gLauncherSubSelection].mode;
   setUiMode(target);
 }
-

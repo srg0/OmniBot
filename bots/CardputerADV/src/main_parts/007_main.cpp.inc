@@ -32,6 +32,8 @@ const char* uiModeName(UiMode mode) {
       return "Settings";
     case UiMode::Calculator:
       return "Calc";
+    case UiMode::Stopwatch:
+      return "Stopwatch";
     case UiMode::Logs:
       return "Logs";
     case UiMode::ChatFace:

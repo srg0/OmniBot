@@ -967,6 +967,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/stopwatch" || cmd == "/sw") {
+    setUiMode(UiMode::Stopwatch);
+    return true;
+  }
+
   if (cmd == "/syncassets") {
     fetchRemoteAssetManifest();
     syncAssetsFromManifest();
