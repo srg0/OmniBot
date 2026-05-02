@@ -278,3 +278,20 @@ For the future “dictate firmware request -> OTA candidate” loop:
 8. User applies OTA.
 9. Device uploads OTA result logs.
 10. Codex marks the loop success/failure and either commits a stabilization patch or rolls forward.
+
+Current MVP route, proven manually on 2026-05-02:
+
+1. Cardputer voice/text request lands in the active OpenClaw bridge topic.
+2. Codex reads the latest bridge context and firmware runbook.
+3. Codex patches the firmware in `/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware`.
+4. Codex builds with `/Users/s1z0v/kd-projects/adv_cardputer/scripts/cardputer_adv_pio.sh build`.
+5. Codex commits and pushes the firmware branch.
+6. Codex publishes the built binary as the bridge OTA candidate.
+7. Cardputer fetches the manifest from the Firmware OTA screen and applies the update.
+
+Missing automation before this is a true OpenClaw skill:
+
+- dedicated firmware-development topic or classifier route;
+- bridge-side task envelope with repo, branch, runbook, requested change, and publish policy;
+- Codex task launcher plus completion callback;
+- device-visible “OTA candidate ready” notification and OTA result upload.

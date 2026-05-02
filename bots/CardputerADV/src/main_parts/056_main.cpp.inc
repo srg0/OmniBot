@@ -69,6 +69,36 @@ void drawActionChip(int16_t x, int16_t y, int16_t w, const String& key, const St
   d.setFont(&fonts::Font2);
 }
 
+struct FirmwareCapacityInfo {
+  uint32_t slotBytes = 0;
+  uint32_t reserveBytes = 64UL * 1024UL;
+  uint32_t usableBytes = 0;
+  uint32_t usedBytes = 0;
+  uint32_t freeBytes = 0;
+  uint8_t usedPct = 0;
+};
+
+String compactFlashKb(uint32_t bytes) {
+  return String((bytes + 1023UL) / 1024UL) + "KB";
+}
+
+FirmwareCapacityInfo firmwareCapacityInfo() {
+  FirmwareCapacityInfo info;
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  info.slotBytes = running ? running->size : 0;
+  info.usedBytes = ESP.getSketchSize();
+  if (info.slotBytes == 0 && info.usedBytes > 0) {
+    info.slotBytes = info.usedBytes + ESP.getFreeSketchSpace();
+  }
+  if (info.slotBytes <= info.reserveBytes) {
+    info.reserveBytes = 0;
+  }
+  info.usableBytes = info.slotBytes > info.reserveBytes ? info.slotBytes - info.reserveBytes : info.slotBytes;
+  info.freeBytes = info.usableBytes > info.usedBytes ? info.usableBytes - info.usedBytes : 0;
+  info.usedPct = info.usableBytes > 0 ? static_cast<uint8_t>(min<uint32_t>(100, (info.usedBytes * 100ULL) / info.usableBytes)) : 0;
+  return info;
+}
+
 void renderAssetsUi() {
   if (!gSdReady) {
     renderSdRequiredBanner("Asset Sync");
@@ -173,12 +203,15 @@ void renderOtaUi() {
   drawServiceOrb(48, 66, accent, cyan, "OTA", updateReady || gOtaPendingVerify);
 
   int x = 91;
+  FirmwareCapacityInfo fw = firmwareCapacityInfo();
+  String freeValue = fw.usableBytes > 0 ? compactFlashKb(fw.freeBytes) + "/" + compactFlashKb(fw.usableBytes) : "-";
+  String usedValue = fw.usableBytes > 0 ? compactFlashKb(fw.usedBytes) + " " + String(fw.usedPct) + "%" : "-";
   drawInfoRow(x, 34, 128, "current", String(kAppVersion), row, muted, TFT_WHITE);
   drawInfoRow(x, 49, 128, "candidate", gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version,
               row, muted, updateReady ? red : green);
-  drawInfoRow(x, 64, 128, "size", gOtaManifest.size ? compactBytes(gOtaManifest.size) : "-",
+  drawInfoRow(x, 64, 128, "fw free", freeValue,
               row, muted, cyan);
-  drawInfoRow(x, 79, 128, "slot", gOtaRunningSlot + " " + (gOtaPendingVerify ? "pending" : gOtaBootState),
+  drawInfoRow(x, 79, 128, "fw used", usedValue,
               row, muted, gOtaPendingVerify ? amber : muted);
 
   d.setFont(&fonts::Font0);
@@ -190,9 +223,9 @@ void renderOtaUi() {
   } else if (gOtaPendingVerify) {
     d.print("new app is pending verification");
   } else if (updateReady) {
-    d.print("ready to download and flash");
+    d.print(fitCurrentFontToWidth("image " + compactBytes(gOtaManifest.size) + "; reserve " + compactFlashKb(fw.reserveBytes), 202));
   } else if (hasCandidate) {
-    d.print("installed version is current");
+    d.print(fitCurrentFontToWidth(gOtaRunningSlot + " " + gOtaBootState + "; reserve " + compactFlashKb(fw.reserveBytes), 202));
   } else {
     d.print("fetch manifest from bridge");
   }
@@ -236,4 +269,3 @@ String settingLabel(uint8_t index) {
       return "-";
   }
 }
-
