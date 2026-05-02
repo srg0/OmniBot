@@ -1,3 +1,6 @@
+
+String filenameFromPath(const String& path) {
+  int slash = path.lastIndexOf('/');
   return slash >= 0 ? path.substring(slash + 1) : path;
 }
 
@@ -199,3 +202,65 @@ void scanAudioAssets() {
 }
 
 void loadAssetManifestSummary() {
+  gAssetManifest = AssetManifestSummary{};
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !fsExists(*fs, kAssetManifestPath)) {
+    gAssetManifest.error = "missing";
+    return;
+  }
+  gAssetManifest.present = true;
+  File file = fs->open(kAssetManifestPath, "r");
+  if (!file) {
+    gAssetManifest.error = "open failed";
+    return;
+  }
+  DynamicJsonDocument doc(8192);
+  auto err = deserializeJson(doc, file);
+  file.close();
+  if (err) {
+    gAssetManifest.error = err.c_str();
+    return;
+  }
+  gAssetManifest.parsed = true;
+  gAssetManifest.version = doc["asset_version"] | doc["version"] | "";
+  gAssetManifest.generatedAt = doc["generated_at"] | doc["generated"] | "";
+  JsonArray files = doc["files"].as<JsonArray>();
+  gAssetManifest.fileCount = files.size();
+  uint32_t total = 0;
+  for (JsonObject item : files) {
+    total += item["size"] | 0;
+  }
+  gAssetManifest.totalBytes = total;
+  appendRuntimeLog("ASSET", "manifest files=" + String(gAssetManifest.fileCount), true);
+}
+
+void loadOtaManifestSummary() {
+  gOtaManifest = OtaManifestSummary{};
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !fsExists(*fs, kOtaManifestPath)) {
+    gOtaManifest.error = "missing";
+    return;
+  }
+  gOtaManifest.present = true;
+  File file = fs->open(kOtaManifestPath, "r");
+  if (!file) {
+    gOtaManifest.error = "open failed";
+    return;
+  }
+  DynamicJsonDocument doc(3072);
+  auto err = deserializeJson(doc, file);
+  file.close();
+  if (err) {
+    gOtaManifest.error = err.c_str();
+    return;
+  }
+  gOtaManifest.parsed = true;
+  gOtaManifest.version = doc["version"] | "";
+  gOtaManifest.channel = doc["channel"] | "";
+  gOtaManifest.url = doc["firmware_url"] | doc["url"] | "";
+  gOtaManifest.sha256 = doc["sha256"] | "";
+  gOtaManifest.size = doc["size"] | 0;
+  gOtaManifest.minBattery = doc["min_battery"] | 50;
+  gOtaManifest.confirmRequired = doc["confirm_required"] | true;
+  appendRuntimeLog("OTA", "manifest version=" + gOtaManifest.version, true);
+}

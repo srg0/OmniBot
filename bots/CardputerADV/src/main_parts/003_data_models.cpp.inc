@@ -1,3 +1,5 @@
+constexpr size_t kDeviceActionCatalogCount = sizeof(kDeviceActionCatalog) / sizeof(kDeviceActionCatalog[0]);
+
 struct ChatLine {
   String prefix;
   String text;
@@ -237,4 +239,3 @@ struct EmojiCacheEntry {
   int16_t width = 0;
   int16_t height = 0;
 };
-

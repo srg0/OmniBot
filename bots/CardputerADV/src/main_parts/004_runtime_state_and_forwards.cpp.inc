@@ -1,3 +1,4 @@
+
 constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
     {"Assistant", "AI", "Voice, face, pet", rgb565_local(47, 227, 255), 4,
      {{"Pulse", UiMode::Home}, {"Big Eyes", UiMode::Face}, {"OpenClaw Pet", UiMode::Hero}, {"Chat Eyes", UiMode::ChatFace}}},
@@ -237,15 +238,3 @@ std::vector<String> wrapText(const String& raw, int32_t pixelLimit);
 String keyboardSignatureFromState();
 bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs = kHttpReconnectTimeoutMs);
 bool connectHubClient(WiFiClient& client, const char* reason, uint32_t readTimeoutSec = 45);
-void synthesizeTcaKeyboardState();
-void pollTcaKeyboardEvents();
-bool hasHidKey(const Keyboard_Class::KeysState& keys, uint8_t keyCode);
-void submitInput();
-void saveHubEndpoint(const String& host, uint16_t port);
-void syncClockFromNtp(bool force = false);
-void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs = 180);
-void updateStatusLed();
-void writeWavHeader(uint8_t* h, uint32_t dataSize, uint32_t sampleRate);
-void serviceRecordingToFile(bool refill = true);
-void serviceRealtimeVoice();
-void toggleRealtimeVoice();

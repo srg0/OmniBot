@@ -1,53 +1,3 @@
-String sanitizeNoteTitle(String value) {
-  value.trim();
-  value.toLowerCase();
-  String out;
-  out.reserve(32);
-  for (int i = 0; i < value.length() && out.length() < 28; ++i) {
-    char c = value[i];
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-      out += c;
-    } else if ((c == ' ' || c == '-' || c == '_' || c == '.') && !out.endsWith("-")) {
-      out += '-';
-    }
-  }
-  while (out.endsWith("-")) {
-    out.remove(out.length() - 1);
-  }
-  return out.isEmpty() ? "note" : out;
-}
-
-String makeNoteFileName(const String& titleHint = "") {
-  String stem = sanitizeNoteTitle(titleHint);
-  char stamp[24];
-  if (hasValidSystemTime()) {
-    time_t now = time(nullptr);
-    struct tm localNow;
-    localtime_r(&now, &localNow);
-    strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &localNow);
-  } else {
-    snprintf(stamp, sizeof(stamp), "%lu", static_cast<unsigned long>(millis() / 1000UL));
-  }
-  return stem + "-" + String(stamp) + ".md";
-}
-
-uint32_t countNoteLines(fs::FS& fs, const String& path) {
-  File file = fs.open(path, "r");
-  if (!file) {
-    return 0;
-  }
-  uint32_t lines = 0;
-  bool hasChars = false;
-  while (file.available()) {
-    char c = static_cast<char>(file.read());
-    hasChars = true;
-    if (c == '\n') {
-      ++lines;
-    }
-  }
-  file.close();
-  return lines + (hasChars ? 1 : 0);
-}
 
 void clampNoteSelection() {
   if (gNotes.empty()) {
@@ -221,3 +171,73 @@ const EmojiCacheEntry* rememberEmojiEntry(const EmojiCacheEntry& entry) {
   return &gEmojiCache[kEmojiCacheCap - 1];
 }
 
+const EmojiCacheEntry* emojiCacheLookup(uint32_t codepoint) {
+  for (uint8_t i = 0; i < gEmojiCacheSize; ++i) {
+    if (gEmojiCache[i].codepoint == codepoint) {
+      return &gEmojiCache[i];
+    }
+  }
+
+  EmojiCacheEntry entry;
+  entry.codepoint = codepoint;
+  if (!gSdReady || !isEmojiAssetCodepoint(codepoint)) {
+    return rememberEmojiEntry(entry);
+  }
+
+  char path[40];
+  snprintf(path, sizeof(path), "%s/u%lX.png", kEmojiDir, static_cast<unsigned long>(codepoint));
+  File file = SD.open(path, "r");
+  if (!file) {
+    snprintf(path, sizeof(path), "%s/u%lx.png", kEmojiDir, static_cast<unsigned long>(codepoint));
+    file = SD.open(path, "r");
+  }
+  if (!file) {
+    return rememberEmojiEntry(entry);
+  }
+
+  size_t size = file.size();
+  if (size > 24 && size <= kEmojiMaxPngBytes) {
+    uint8_t* data = static_cast<uint8_t*>(malloc(size));
+    if (data && file.read(data, size) == size &&
+        memcmp(data, "\x89PNG\r\n\x1A\n", 8) == 0) {
+      uint32_t width = (static_cast<uint32_t>(data[16]) << 24) |
+                       (static_cast<uint32_t>(data[17]) << 16) |
+                       (static_cast<uint32_t>(data[18]) << 8) | data[19];
+      uint32_t height = (static_cast<uint32_t>(data[20]) << 24) |
+                        (static_cast<uint32_t>(data[21]) << 16) |
+                        (static_cast<uint32_t>(data[22]) << 8) | data[23];
+      if (width > 0 && width <= 240 && height > 0 && height <= 240) {
+        entry.data = data;
+        entry.len = static_cast<uint32_t>(size);
+        entry.width = static_cast<int16_t>(width);
+        entry.height = static_cast<int16_t>(height);
+        data = nullptr;
+      }
+    }
+    if (data) {
+      free(data);
+    }
+  }
+  file.close();
+  return rememberEmojiEntry(entry);
+}
+
+int32_t drawEmojiFromSd(lgfx::LGFXBase* gfx, int32_t x, int32_t y, uint32_t codepoint,
+                        int32_t fontHeight) {
+  const EmojiCacheEntry* entry = emojiCacheLookup(codepoint);
+  if (!gfx || !entry || !entry->data || entry->height <= 0 || fontHeight <= 0) {
+    return 0;
+  }
+
+  float scale = static_cast<float>(fontHeight) / static_cast<float>(entry->height);
+  int32_t drawY = y - static_cast<int32_t>((fontHeight * 90) / 100);
+  if (!gfx->drawPng(entry->data, entry->len, x, drawY, 0, 0, 0, 0, scale, 0)) {
+    return 0;
+  }
+  return max<int32_t>(1, static_cast<int32_t>(entry->width * scale));
+}
+
+void configureEmojiRendering() {
+  M5Cardputer.Display.setEmojiCallback(drawEmojiFromSd);
+  gCanvas.setEmojiCallback(drawEmojiFromSd);
+}

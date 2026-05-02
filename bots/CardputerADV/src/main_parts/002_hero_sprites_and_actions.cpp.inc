@@ -1,3 +1,4 @@
+
 const uint16_t PROGMEM kHeroIdle3[kHeroSpriteW * kHeroSpriteH] = {
     HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR,
     HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HCLEAR, HBLACK, HCLEAR, HCLEAR,
@@ -243,5 +244,3 @@ constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
     {"pet.revive", "pet revive", "revive the pet"},
     {"pet.reset", "pet reset", "reset the pet"},
 };
-constexpr size_t kDeviceActionCatalogCount = sizeof(kDeviceActionCatalog) / sizeof(kDeviceActionCatalog[0]);
-
