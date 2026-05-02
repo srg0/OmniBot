@@ -45,7 +45,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.33-dev"
+#define APP_VERSION "0.2.34-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -532,6 +532,7 @@ constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
     {"pet.discipline", "pet discipline", "discipline the pet"},
     {"pet.hunt", "pet hunt", "send the pet hunting Wi-Fi"},
     {"pet.explore", "pet explore", "let the pet explore"},
+    {"pet.revive", "pet revive", "revive the pet"},
     {"pet.reset", "pet reset", "reset the pet"},
 };
 constexpr size_t kDeviceActionCatalogCount = sizeof(kDeviceActionCatalog) / sizeof(kDeviceActionCatalog[0]);
@@ -854,6 +855,7 @@ String gContextHistoryKey;
 String gContextError;
 bool gContextsRemoteLoaded = false;
 bool gTopicCreateArmed = false;
+bool gPetHelpVisible = false;
 uint32_t gContextsFetchedAtMs = 0;
 uint32_t gContextHistoryFetchedAtMs = 0;
 uint32_t gContextAnimStartMs = 0;
@@ -1041,6 +1043,7 @@ void saveDeviceSettings();
 void loadPetState();
 void savePetState(bool force = false);
 void resetPet(bool fullReset);
+void revivePet(const char* reason = "manual");
 void servicePet();
 bool handlePetKey(char key, const Keyboard_Class::KeysState& keys);
 bool applyPetCare(PetCareAction action);
@@ -5133,6 +5136,9 @@ bool executePetActionByName(String actionName) {
     executed = applyPetCare(PetCareAction::Hunt);
   } else if (op == "explore" || op == "scan") {
     executed = applyPetCare(PetCareAction::Explore);
+  } else if (op == "revive" || op == "restore" || op == "resurrect") {
+    revivePet("action");
+    executed = true;
   } else if (op == "reset" || op == "new") {
     resetPet(true);
     executed = true;
@@ -5351,6 +5357,9 @@ void syncLauncherToMode(UiMode mode) {
 }
 
 void setUiMode(UiMode mode) {
+  if (mode != UiMode::Hero) {
+    gPetHelpVisible = false;
+  }
   gUiMode = mode;
   gLauncherVisible = false;
   if (gLauncherSelection >= 0 && gLauncherSelection < kLauncherGroupCount &&
@@ -6634,6 +6643,13 @@ void loadPetState() {
   gPet.restPhase = PetRestPhase::None;
   gPet.nextDecisionMs = static_cast<uint32_t>(random(kPetDecisionMinMs, kPetDecisionMaxMs));
 
+  if (!gPet.alive) {
+    // A dead persisted pet otherwise blocks every care action. Revive once on
+    // boot/update, preserving age and stage so the companion is recoverable.
+    revivePet("boot");
+    return;
+  }
+
   uint32_t nowEpoch = petEpochNow();
   if (nowEpoch > savedEpoch + 90 && savedEpoch > 0) {
     uint32_t offlineMinutes = (nowEpoch - savedEpoch) / 60UL;
@@ -6651,6 +6667,33 @@ void resetPet(bool fullReset) {
   updatePetMood();
   setStatus(fullReset ? "Pet reset" : "Pet restored", 1200);
   appendRuntimeLog("PET", fullReset ? "reset full" : "reset stats", true);
+  savePetState(true);
+}
+
+void revivePet(const char* reason) {
+  bool wasDead = !gPet.alive || gPet.activity == PetActivity::Dead || gPet.mood == PetMood::Dead;
+  gPet.alive = true;
+  gPet.sick = false;
+  gPet.hunger = max<uint8_t>(gPet.hunger, 68);
+  gPet.happiness = max<uint8_t>(gPet.happiness, 64);
+  gPet.health = max<uint8_t>(gPet.health, 76);
+  gPet.energy = max<uint8_t>(gPet.energy, 72);
+  gPet.cleanliness = max<uint8_t>(gPet.cleanliness, 82);
+  gPet.discipline = max<uint8_t>(gPet.discipline, 42);
+  gPet.poop = 0;
+  gPet.careMistakes = 0;
+  gPet.restPhase = PetRestPhase::None;
+  gPet.env.scanPending = false;
+  if (gPet.ageMinutes >= 3 && gPet.stage == PetStage::Egg) {
+    gPet.stage = PetStage::Baby;
+  }
+  gPet.activity = PetActivity::Medicine;
+  gPet.actionUntilMs = millis() + 3200;
+  updatePetMood();
+  focusTone(1319, 80);
+  focusTone(1760, 90);
+  setStatus(wasDead ? "Pet revived" : "Pet restored", 1400);
+  appendRuntimeLog("PET", String("revived reason=") + (reason && reason[0] ? reason : "manual"), true);
   savePetState(true);
 }
 
@@ -7046,7 +7089,19 @@ PetCareAction suggestedPetAction() {
 
 bool handlePetKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'q') {
+    gPetHelpVisible = !gPetHelpVisible;
+    setStatus(gPetHelpVisible ? "Pet controls" : "Pet clean", 700);
+    return true;
+  }
+  if (gPetHelpVisible) {
+    return true;
+  }
   if (keys.enter || keys.space || key == '\n' || key == '\r' || key == ' ') {
+    if (!gPet.alive) {
+      revivePet("enter");
+      return true;
+    }
     return applyPetCare(suggestedPetAction());
   }
   if (lowerKey == 'f') {
@@ -9608,6 +9663,12 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/petrevive" || cmd == "/tamarevive") {
+    revivePet("slash");
+    setUiMode(UiMode::Hero);
+    return true;
+  }
+
   if (cmd == "/clock") {
     setUiMode(UiMode::Home);
     return true;
@@ -10501,6 +10562,10 @@ bool handleGlobalEscape() {
     gFocus.helpVisible = false;
     changed = true;
   }
+  if (gPetHelpVisible) {
+    gPetHelpVisible = false;
+    changed = true;
+  }
   if (!gInputBuffer.isEmpty()) {
     gInputBuffer = "";
     changed = true;
@@ -10552,7 +10617,12 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     setStatus(String("Layout ") + layoutName(gKeyboardLayout), 900);
     return;
   }
-  if (keys.ctrl && lowerKey == 'r') {
+  if (keys.ctrl && keys.shift && lowerKey == 'r') {
+    revivePet("hotkey");
+    setUiMode(UiMode::Hero);
+    return;
+  }
+  if (keys.ctrl && !keys.shift && !keys.alt && !keys.opt && !keys.fn && lowerKey == 'r') {
     toggleRealtimeVoice();
     return;
   }
@@ -12884,6 +12954,47 @@ void drawPetStatBar(int16_t x, int16_t y, int16_t w, const char* label, uint8_t 
   d.fillRoundRect(barX, y + 1, fillW, 6, 3, color);
 }
 
+void renderPetHelpOverlay() {
+  if (!gPetHelpVisible) {
+    return;
+  }
+  auto& d = gCanvas;
+  const uint16_t shade = rgb565_local(2, 6, 12);
+  const uint16_t panel = rgb565_local(8, 16, 28);
+  const uint16_t accent = petMoodAccent();
+  const uint16_t text = rgb565_local(223, 236, 244);
+  const uint16_t muted = rgb565_local(139, 156, 170);
+  d.fillRect(0, 0, 240, 135, shade);
+  d.fillRoundRect(10, 9, 220, 117, 14, panel);
+  d.drawRoundRect(10, 9, 220, 117, 14, accent);
+  d.drawRoundRect(14, 13, 212, 109, 11, rgb565_local(28, 47, 63));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, panel);
+  d.setCursor(20, 19);
+  d.print("PET CONTROLS");
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(169, 23);
+  d.print("Q close");
+
+  const char* lines[] = {
+      "Enter  auto-care / revive if gone",
+      "F food   P play   C clean",
+      "S sleep  M meds   D discipline",
+      "H hunt Wi-Fi      E explore",
+      "Ctrl+Shift+R      revive now",
+      "/petrevive        chat command",
+  };
+  int16_t y = 42;
+  for (const char* line : lines) {
+    d.setTextColor(strstr(line, "Ctrl") || strstr(line, "/pet") ? accent : text, panel);
+    d.setCursor(20, y);
+    d.print(line);
+    y += 13;
+  }
+}
+
 void renderHeroUi() {
   auto& d = gCanvas;
   const uint16_t bg = rgb565_local(2, 6, 12);
@@ -12941,13 +13052,16 @@ void renderHeroUi() {
   d.setCursor(18, 114);
   String bottom = String(petMoodName(gPet.mood)) + " " + petActivityName(gPet.activity) +
                   "  age " + petAgeText();
-  d.print(fitCurrentFontToWidth(bottom, 130));
-  d.setCursor(152, 114);
-  String meta = String("poop ") + String(gPet.poop) + " wifi " + String(gPet.env.netCount);
-  d.print(fitCurrentFontToWidth(meta, 72));
+  d.print(fitCurrentFontToWidth(bottom, 124));
+  d.setTextColor(accent, panel);
+  d.setCursor(151, 114);
+  d.print("Q controls");
+  if (!gPet.alive) {
+    d.setCursor(151, 123);
+    d.print("Ctrl+Shift+R");
+  }
 
-  drawTinyFooter(panel, muted, "F food P play C clean S sleep H hunt", 14, 123, 212);
-
+  renderPetHelpOverlay();
   renderLauncherOverlay();
   renderDebugOverlay();
 }
