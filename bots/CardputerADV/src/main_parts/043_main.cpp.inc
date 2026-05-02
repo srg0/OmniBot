@@ -564,8 +564,57 @@ void runRealtimeUpgradeProbe(bool verifyTls = true) {
   client->stop();
 }
 
+void printHostOtaStatus() {
+  logf("[HOST] ota.status app=%s manifest_present=%d parsed=%d version=%s size=%u min_battery=%u confirm=%d pending_verify=%d boot_state=%s running_slot=%s apply_in_progress=%d url=%d sha=%s",
+       kAppVersion,
+       static_cast<int>(gOtaManifest.present),
+       static_cast<int>(gOtaManifest.parsed),
+       gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version.c_str(),
+       static_cast<unsigned>(gOtaManifest.size),
+       static_cast<unsigned>(gOtaManifest.minBattery),
+       static_cast<int>(gOtaManifest.confirmRequired),
+       static_cast<int>(gOtaPendingVerify),
+       gOtaBootState.c_str(),
+       gOtaRunningSlot.c_str(),
+       static_cast<int>(gOtaApplyInProgress),
+       static_cast<int>(!gOtaManifest.url.isEmpty()),
+       gOtaManifest.sha256.isEmpty() ? "-" : gOtaManifest.sha256.substring(0, 12).c_str());
+}
+
+bool runHostOtaCheck() {
+  logf("[HOST] ota.check requested");
+  bool ok = fetchRemoteOtaManifest();
+  printHostOtaStatus();
+  logf("[HOST] ota.check result=%d", static_cast<int>(ok));
+  return ok;
+}
+
+bool runHostOtaApply(bool refreshManifest) {
+  logf("[HOST] ota.apply requested refresh=%d", static_cast<int>(refreshManifest));
+  if (refreshManifest) {
+    bool manifestOk = fetchRemoteOtaManifest();
+    printHostOtaStatus();
+    if (!manifestOk) {
+      setStatus("OTA check failed", 1400);
+      logf("[HOST] ota.apply aborted manifest=0");
+      return false;
+    }
+  } else {
+    printHostOtaStatus();
+  }
+  if (gOtaManifest.parsed && gOtaManifest.version == kAppVersion) {
+    setStatus("OTA already current", 1200);
+    logf("[HOST] ota.apply skipped already_current=%s", kAppVersion);
+    return true;
+  }
+  setStatus("OTA apply requested", 700);
+  appendRuntimeLog("OTA", "apply requested by serial", true);
+  render();
+  return applyOtaFromManifest();
+}
+
 void printHostDiag() {
-  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d voice=%s http=%s",
+  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d voice=%s http=%s",
        kAppVersion,
        kBuildGitSha,
        static_cast<unsigned>(ESP.getFreeHeap()),
@@ -582,6 +631,10 @@ void printHostDiag() {
        static_cast<int>(gRealtimeAwaiting),
        static_cast<int>(gRealtimeHandsFreeActive),
        static_cast<int>(gRealtimeRestartAfterPlayback),
+       gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version.c_str(),
+       gOtaBootState.c_str(),
+       static_cast<int>(gOtaPendingVerify),
+       static_cast<int>(gOtaApplyInProgress),
        gLastVoiceDiag.c_str(),
        gLastHttpDiag.c_str());
 }
@@ -596,6 +649,36 @@ bool handleHostSerialCommand(String line) {
   cmd.toLowerCase();
   if (cmd == "diag" || cmd == "/diag" || cmd == "dbg" || cmd == "/dbg") {
     printHostDiag();
+    return true;
+  }
+  if (cmd == "ota.status" || cmd == "/ota.status" || cmd == "fw.status" || cmd == "/fw.status") {
+    printHostOtaStatus();
+    return true;
+  }
+  if (cmd == "ota.check" || cmd == "/ota.check" || cmd == "ota.fetch" || cmd == "/ota.fetch" ||
+      cmd == "fw.check" || cmd == "/fw.check") {
+    runHostOtaCheck();
+    return true;
+  }
+  if (cmd == "ota.apply" || cmd == "/ota.apply" || cmd == "ota.install" || cmd == "/ota.install" ||
+      cmd == "ota.run" || cmd == "/ota.run" || cmd == "fw.apply" || cmd == "/fw.apply" ||
+      cmd == "fw.install" || cmd == "/fw.install") {
+    runHostOtaApply(true);
+    return true;
+  }
+  if (cmd == "ota.apply.cached" || cmd == "/ota.apply.cached" || cmd == "ota.run.cached" ||
+      cmd == "/ota.run.cached") {
+    runHostOtaApply(false);
+    return true;
+  }
+  if (cmd == "ota.confirm" || cmd == "/ota.confirm" || cmd == "fw.confirm" || cmd == "/fw.confirm") {
+    bool ok = confirmOtaBootIfPending("serial confirm");
+    logf("[HOST] ota.confirm result=%d", static_cast<int>(ok));
+    return true;
+  }
+  if (cmd == "ota.rollback" || cmd == "/ota.rollback" || cmd == "fw.rollback" || cmd == "/fw.rollback") {
+    logf("[HOST] ota.rollback requested");
+    rollbackPendingOta("serial rollback");
     return true;
   }
   if (cmd == "voice.smoke" || cmd == "/voice.smoke" || cmd == "voice smoke") {
@@ -668,12 +751,6 @@ bool handleHostSerialCommand(String line) {
       setStatus("Queued +" + String(gPendingTextTurns.size()), 1000);
     }
     maybeStartNextTextTurn();
-    return true;
-  }
-  if (cmd == "ota.apply" || cmd == "/ota.apply") {
-    logf("[HOST] ota.apply requested");
-    fetchRemoteOtaManifest();
-    applyOtaFromManifest();
     return true;
   }
   return handleLocalCommand(line);
