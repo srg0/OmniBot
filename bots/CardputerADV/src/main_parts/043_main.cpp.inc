@@ -972,6 +972,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/alarm" || cmd == "/wake") {
+    setUiMode(UiMode::Alarm);
+    return true;
+  }
+
   if (cmd == "/stopwatch" || cmd == "/sw") {
     setUiMode(UiMode::Stopwatch);
     return true;

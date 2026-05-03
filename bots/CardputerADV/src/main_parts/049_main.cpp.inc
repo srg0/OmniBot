@@ -49,6 +49,10 @@
     handleTypingKey(',', keys);
   } else if (gUiMode == UiMode::Notes && (rightDown || downDown)) {
     handleTypingKey('.', keys);
+  } else if (gUiMode == UiMode::Alarm && (leftDown || upDown)) {
+    handleTypingKey('-', keys);
+  } else if (gUiMode == UiMode::Alarm && (rightDown || downDown)) {
+    handleTypingKey('+', keys);
   } else if (spaceDown && keys.ctrl) {
     handleTypingKey(' ', keys);
   } else if (enterDown) {
@@ -236,4 +240,3 @@ void drawBrowStroke(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t col
     d.drawLine(x1, y1 + t, x2, y2 + t, color);
   }
 }
-

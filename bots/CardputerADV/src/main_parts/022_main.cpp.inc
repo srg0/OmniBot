@@ -217,6 +217,8 @@ bool mapActionUiMode(String mode, UiMode& out) {
     out = UiMode::Settings;
   } else if (mode == "calculator" || mode == "calc") {
     out = UiMode::Calculator;
+  } else if (mode == "alarm" || mode == "wake" || mode == "wake_up" || mode == "clock_alarm") {
+    out = UiMode::Alarm;
   } else if (mode == "stopwatch" || mode == "stop_watch" || mode == "timer_up" ||
              mode == "chrono" || mode == "chronometer") {
     out = UiMode::Stopwatch;

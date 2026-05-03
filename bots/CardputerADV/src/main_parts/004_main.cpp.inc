@@ -85,8 +85,8 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}, {"Notes", UiMode::Notes}}},
     {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
      {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice}, {"Assets", UiMode::Assets}}},
-    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 2,
-     {{"Focus Space", UiMode::Focus}, {"Stopwatch", UiMode::Stopwatch}}},
+    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 3,
+     {{"Focus Space", UiMode::Focus}, {"Alarm", UiMode::Alarm}, {"Stopwatch", UiMode::Stopwatch}}},
     {"OpenClaw", "OC", "Bridge runtime", rgb565_local(180, 150, 255), 2,
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}}},
     {"System", "SYS", "Power and settings", rgb565_local(203, 216, 226), 4,
@@ -115,6 +115,8 @@ String gCalcExpression;
 String gCalcResult = "0";
 String gCalcStatus = "Ready";
 String gStopwatchStatus = "Ready";
+String gAlarmStatus = "Ready";
+String gAlarmEditBuffer;
 std::vector<VoiceNote> gVoiceNotes;
 std::vector<NoteFile> gNotes;
 std::vector<AudioAsset> gAudioAssets;
@@ -200,3 +202,9 @@ bool gStopwatchRunning = false;
 uint32_t gStopwatchElapsedMs = 0;
 uint32_t gStopwatchStartedMs = 0;
 uint32_t gStopwatchLapMs = 0;
+bool gAlarmRinging = false;
+uint32_t gAlarmTriggeredAtMs = 0;
+uint32_t gAlarmNextBeepMs = 0;
+time_t gAlarmSnoozeEpoch = 0;
+int16_t gAlarmLastTriggerYear = -1;
+int16_t gAlarmLastTriggerYday = -1;

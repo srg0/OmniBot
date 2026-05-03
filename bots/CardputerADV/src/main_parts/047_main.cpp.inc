@@ -384,8 +384,218 @@ bool handleStopwatchKey(char key, const Keyboard_Class::KeysState& keys) {
   return true;
 }
 
+String alarmTimeString(uint8_t hour, uint8_t minute) {
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%02u:%02u", hour, minute);
+  return String(buf);
+}
+
+bool alarmLocalTime(tm& out) {
+  if (!hasValidSystemTime()) {
+    return false;
+  }
+  time_t now = time(nullptr);
+  localtime_r(&now, &out);
+  return true;
+}
+
+String alarmClockText() {
+  tm localNow = {};
+  if (!alarmLocalTime(localNow)) {
+    return "--:--";
+  }
+  return alarmTimeString(static_cast<uint8_t>(localNow.tm_hour), static_cast<uint8_t>(localNow.tm_min));
+}
+
+void alarmMarkTriggeredToday(const tm& localNow) {
+  gAlarmLastTriggerYear = static_cast<int16_t>(localNow.tm_year);
+  gAlarmLastTriggerYday = static_cast<int16_t>(localNow.tm_yday);
+}
+
+void triggerAlarm(const String& reason) {
+  if (gAlarmRinging) {
+    return;
+  }
+  if (gPlaybackActive) {
+    stopPlaybackStream();
+    gPlaybackActive = false;
+  }
+  gAlarmRinging = true;
+  gAlarmTriggeredAtMs = millis();
+  gAlarmNextBeepMs = 0;
+  gAlarmStatus = reason.isEmpty() ? "Ringing" : reason;
+  gAlarmEditBuffer = "";
+  setUiMode(UiMode::Alarm);
+  setStatus("Alarm ringing", 0);
+  appendRuntimeLog("ALARM", String("ring ") + alarmTimeString(gAlarmSettings.hour, gAlarmSettings.minute), true);
+}
+
+void dismissAlarm(const String& reason) {
+  if (gAlarmRinging) {
+    M5Cardputer.Speaker.stop();
+  }
+  gAlarmRinging = false;
+  gAlarmNextBeepMs = 0;
+  gAlarmStatus = reason.isEmpty() ? "Dismissed" : reason;
+  setStatus(gAlarmStatus, 1200);
+  appendRuntimeLog("ALARM", gAlarmStatus, true);
+}
+
+String alarmSnoozeUntilText() {
+  if (gAlarmSnoozeEpoch <= 0) {
+    return "";
+  }
+  tm snoozeTm = {};
+  localtime_r(&gAlarmSnoozeEpoch, &snoozeTm);
+  return alarmTimeString(static_cast<uint8_t>(snoozeTm.tm_hour), static_cast<uint8_t>(snoozeTm.tm_min));
+}
+
+void snoozeAlarm() {
+  time_t now = time(nullptr);
+  gAlarmSnoozeEpoch = now + static_cast<time_t>(kAlarmSnoozeSec);
+  dismissAlarm(String("Snoozed ") + alarmSnoozeUntilText());
+}
+
+void adjustAlarmMinutes(int delta) {
+  int total = static_cast<int>(gAlarmSettings.hour) * 60 + static_cast<int>(gAlarmSettings.minute) + delta;
+  while (total < 0) {
+    total += 24 * 60;
+  }
+  total %= 24 * 60;
+  gAlarmSettings.hour = static_cast<uint8_t>(total / 60);
+  gAlarmSettings.minute = static_cast<uint8_t>(total % 60);
+  gAlarmSettings.enabled = true;
+  gAlarmSnoozeEpoch = 0;
+  saveAlarmSettings();
+  gAlarmStatus = String("Set ") + alarmTimeString(gAlarmSettings.hour, gAlarmSettings.minute);
+  setStatus(gAlarmStatus, 700);
+}
+
+void commitAlarmEditBuffer() {
+  if (gAlarmEditBuffer.length() < 4) {
+    gAlarmStatus = "Type HHMM";
+    setStatus(gAlarmStatus, 700);
+    return;
+  }
+  int hour = (gAlarmEditBuffer[0] - '0') * 10 + (gAlarmEditBuffer[1] - '0');
+  int minute = (gAlarmEditBuffer[2] - '0') * 10 + (gAlarmEditBuffer[3] - '0');
+  gAlarmEditBuffer = "";
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    gAlarmStatus = "Invalid time";
+    setStatus("Alarm invalid HHMM", 1000);
+    return;
+  }
+  gAlarmSettings.hour = static_cast<uint8_t>(hour);
+  gAlarmSettings.minute = static_cast<uint8_t>(minute);
+  gAlarmSettings.enabled = true;
+  gAlarmSnoozeEpoch = 0;
+  saveAlarmSettings();
+  gAlarmStatus = String("Set ") + alarmTimeString(gAlarmSettings.hour, gAlarmSettings.minute);
+  setStatus(gAlarmStatus + " on", 1000);
+}
+
+void toggleAlarmEnabled() {
+  gAlarmSettings.enabled = !gAlarmSettings.enabled;
+  if (!gAlarmSettings.enabled) {
+    gAlarmSnoozeEpoch = 0;
+  }
+  saveAlarmSettings();
+  gAlarmStatus = gAlarmSettings.enabled ? "Enabled" : "Disabled";
+  setStatus(String("Alarm ") + (gAlarmSettings.enabled ? "on" : "off"), 900);
+}
+
+void serviceAlarm() {
+  uint32_t nowMs = millis();
+  if (gAlarmRinging) {
+    if (gAlarmNextBeepMs == 0 || nowMs >= gAlarmNextBeepMs) {
+      uint8_t phase = static_cast<uint8_t>((nowMs - gAlarmTriggeredAtMs) / kAlarmBeepIntervalMs);
+      focusTone((phase % 2) == 0 ? 1320 : 880, 180);
+      flashActivityLed(255, phase % 2 ? 80 : 20, 20, 160);
+      gAlarmNextBeepMs = nowMs + kAlarmBeepIntervalMs;
+    }
+    return;
+  }
+
+  tm localNow = {};
+  bool timeOk = alarmLocalTime(localNow);
+  time_t nowEpoch = time(nullptr);
+  if (gAlarmSnoozeEpoch > 0 && nowEpoch >= gAlarmSnoozeEpoch) {
+    gAlarmSnoozeEpoch = 0;
+    triggerAlarm("Snooze ringing");
+    return;
+  }
+  if (!timeOk || !gAlarmSettings.enabled) {
+    return;
+  }
+  if (localNow.tm_hour == gAlarmSettings.hour && localNow.tm_min == gAlarmSettings.minute &&
+      (gAlarmLastTriggerYear != localNow.tm_year || gAlarmLastTriggerYday != localNow.tm_yday)) {
+    alarmMarkTriggeredToday(localNow);
+    triggerAlarm("Daily alarm");
+  }
+}
+
+bool handleAlarmKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (gAlarmRinging) {
+    if (lowerKey == 's') {
+      snoozeAlarm();
+      return true;
+    }
+    if (keys.enter || keys.space || key == '\r' || key == '\n' || key == ' ' || lowerKey == 'd') {
+      dismissAlarm("Dismissed");
+      return true;
+    }
+    return true;
+  }
+  if (key >= '0' && key <= '9') {
+    if (gAlarmEditBuffer.length() >= 4) {
+      gAlarmEditBuffer = "";
+    }
+    gAlarmEditBuffer += key;
+    gAlarmStatus = String("Edit ") + gAlarmEditBuffer;
+    if (gAlarmEditBuffer.length() == 4) {
+      commitAlarmEditBuffer();
+    } else {
+      setStatus(String("Alarm HHMM ") + gAlarmEditBuffer, 700);
+    }
+    return true;
+  }
+  if (keys.del || key == '\b' || lowerKey == 'c') {
+    if (!gAlarmEditBuffer.isEmpty()) {
+      gAlarmEditBuffer.remove(gAlarmEditBuffer.length() - 1);
+      gAlarmStatus = gAlarmEditBuffer.isEmpty() ? "Ready" : (String("Edit ") + gAlarmEditBuffer);
+    } else {
+      gAlarmStatus = "Ready";
+    }
+    return true;
+  }
+  if (keys.enter || keys.space || key == '\r' || key == '\n' || key == ' ' || lowerKey == 't') {
+    toggleAlarmEnabled();
+    return true;
+  }
+  if (key == '-' || key == '_' || lowerKey == 'z') {
+    adjustAlarmMinutes(lowerKey == 'z' ? -5 : -1);
+    return true;
+  }
+  if (key == '+' || key == '=' || lowerKey == 'x') {
+    adjustAlarmMinutes(lowerKey == 'x' ? 5 : 1);
+    return true;
+  }
+  if (lowerKey == 's') {
+    saveAlarmSettings();
+    setStatus("Alarm saved", 700);
+    return true;
+  }
+  return true;
+}
+
 bool handleGlobalEscape() {
   bool changed = false;
+
+  if (gAlarmRinging) {
+    dismissAlarm("Dismissed");
+    changed = true;
+  }
 
   if (gRecording) {
     cancelRecordingDiscard();

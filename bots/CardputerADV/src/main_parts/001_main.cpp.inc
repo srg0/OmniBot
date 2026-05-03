@@ -42,7 +42,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.69-dev"
+#define APP_VERSION "0.2.70-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -74,6 +74,7 @@ constexpr const char* kPrefsFocusNs = "focus_cfg";
 constexpr const char* kPrefsContextNs = "ctx_cfg";
 constexpr const char* kPrefsOtaGuardNs = "ota_guard";
 constexpr const char* kPrefsPetNs = "pet_v1";
+constexpr const char* kPrefsAlarmNs = "alarm_cfg";
 constexpr const char* kLegacyBridgeHost = "109.199.103.176";
 constexpr uint16_t kLegacyBridgePort = 31889;
 constexpr const char* kProdBridgeHost = "bridge.ai.k-digital.pro";
@@ -164,6 +165,8 @@ constexpr uint32_t kFocusShortBreakDefaultSec = 5UL * 60UL;
 constexpr uint32_t kFocusLongBreakDefaultSec = 15UL * 60UL;
 constexpr uint8_t kFocusDefaultCycles = 4;
 constexpr uint32_t kFocusSnoozeSec = 5UL * 60UL;
+constexpr uint32_t kAlarmSnoozeSec = 5UL * 60UL;
+constexpr uint32_t kAlarmBeepIntervalMs = 650;
 constexpr uint16_t kFocusMinBpm = 30;
 constexpr uint16_t kFocusMaxBpm = 160;
 constexpr uint32_t kPetMinuteMs = 60UL * 1000UL;

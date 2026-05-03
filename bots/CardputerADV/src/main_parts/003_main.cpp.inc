@@ -32,7 +32,7 @@ struct DeviceActionCatalogEntry {
   const char* example;
 };
 
-constexpr const char* kDeviceActionCatalogVersion = "2026-05-01.2";
+constexpr const char* kDeviceActionCatalogVersion = "2026-05-03.1";
 constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
     {"focus.start", "start focus", "set pomodoro to 45 minutes"},
     {"focus.pause", "pause focus", "pause focus"},
@@ -45,7 +45,7 @@ constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
     {"focus.set_autostart", "auto start", "turn focus autostart on"},
     {"focus.set_metronome", "metronome", "turn metronome off"},
     {"focus.set_bpm", "bpm", "set bpm to 80"},
-    {"ui.open", "open screen", "open stopwatch"},
+    {"ui.open", "open screen", "open alarm"},
     {"audio.play", "play library", "play nutrition plan"},
     {"voice.play", "play voice note", "play last voice note"},
     {"settings.set_audio_language", "audio lang", "set language to russian"},
@@ -254,4 +254,10 @@ struct DeviceSettings {
   uint8_t clockFace = 0;
   String updateChannel = "dev";
   String audioLanguage = "ru";
+};
+
+struct AlarmSettings {
+  uint8_t hour = 7;
+  uint8_t minute = 30;
+  bool enabled = false;
 };

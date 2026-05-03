@@ -44,6 +44,9 @@
       case UiMode::Calculator:
         renderCalculatorUi();
         break;
+      case UiMode::Alarm:
+        renderAlarmUi();
+        break;
       case UiMode::Stopwatch:
         renderStopwatchUi();
         break;
@@ -192,6 +195,7 @@ void setup() {
   loadConfig();
   loadFocusSettings();
   loadDeviceSettings();
+  loadAlarmSettings();
   beginOtaBootGuard();
   if (gOtaBootApplyMode) {
     Serial.printf("[OTA] clean boot updater heap=%u largest=%u\n",
@@ -252,6 +256,7 @@ void loop() {
   updateBatterySnapshot();
   updateFocusTimer();
   serviceFocusMetronome();
+  serviceAlarm();
   servicePet();
   processCompletedTopicTask();
   processCompletedTextTurn();
