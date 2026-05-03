@@ -151,6 +151,33 @@ bool handleInboxHistoryItem(JsonObject item, bool forcePlay, bool assistantOnly 
   return true;
 }
 
+bool ackDeviceEvent(const String& eventId) {
+  if (eventId.isEmpty() || gHubHost.isEmpty()) {
+    return false;
+  }
+  String url = hubBaseUrl() + "/api/cardputer/device-events/ack";
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  if (!configureHttpClient(http, secureClient, url, 8000)) {
+    logf("[INBOX] event ack connect failed id=%s", eventId.c_str());
+    return false;
+  }
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  DynamicJsonDocument doc(256);
+  doc["event_id"] = eventId;
+  String body;
+  serializeJson(doc, body);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST(body);
+  String response = code > 0 ? http.getString() : "";
+  http.end();
+  bool ok = code >= 200 && code < 300;
+  logf("[INBOX] event ack id=%s code=%d ok=%d", eventId.c_str(), code, static_cast<int>(ok));
+  return ok;
+}
+
 bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assistantOnly) {
   if ((!gWifiReady && !ensureWifiForHttp("inbox", 3000)) || gHubHost.isEmpty()) {
     if (!quiet) {
@@ -165,10 +192,10 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
     gInboxLastSeq = 0;
     logf("[INBOX] topic reset key=%s", topicKey.c_str());
   }
-  String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) +
-               (assistantOnly ? "/history?limit=20&text_chars=4096" : "/inbox/latest?text_chars=4096");
-  if (!assistantOnly && !forcePlay && gInboxLastSeq > 0) {
-    url += "&after_seq=" + String(gInboxLastSeq);
+  String url = hubBaseUrl() + "/api/cardputer/device-events/pending?limit=1&text_chars=1024&topic_key=" +
+               urlEncodePathSegment(topicKey);
+  if (assistantOnly) {
+    url += "&sender_kind=assistant";
   }
   HTTPClient http;
   std::unique_ptr<WiFiClientSecure> secureClient;
@@ -203,13 +230,15 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
   }
 
   bool found = false;
-  if (assistantOnly && doc["items"].is<JsonArray>()) {
+  String eventId = "";
+  if (doc["items"].is<JsonArray>()) {
     JsonArray items = doc["items"].as<JsonArray>();
-    for (int idx = static_cast<int>(items.size()) - 1; idx >= 0; --idx) {
-      JsonObject item = items[idx].as<JsonObject>();
-      if (handleInboxHistoryItem(item, forcePlay, true)) {
+    if (items.size() > 0) {
+      JsonObject event = items[0].as<JsonObject>();
+      eventId = String(event["event_id"] | "");
+      JsonObject item = event["message"].as<JsonObject>();
+      if (handleInboxHistoryItem(item, forcePlay, assistantOnly)) {
         found = true;
-        break;
       }
     }
   } else if (doc["item"].is<JsonObject>()) {
@@ -228,6 +257,9 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
     bool actionOk = executeInlineDeviceActionsFromText(gInboxLastText);
     if (actionOk) {
       logf("[INBOX] inline actions executed seq=%u", static_cast<unsigned>(gInboxLastSeq));
+    }
+    if (!eventId.isEmpty()) {
+      ackDeviceEvent(eventId);
     }
     return true;
   }

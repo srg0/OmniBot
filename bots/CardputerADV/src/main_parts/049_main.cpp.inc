@@ -41,6 +41,12 @@
   } else if (!gLauncherVisible && gPlaybackActive && downDown) {
     adjustSpeakerVolume(-24);
     setKeyDiag("vol:down");
+  } else if ((gUiMode == UiMode::ChatFull || gUiMode == UiMode::ChatFace) && upDown) {
+    logf("[CHAT] scroll up arrow");
+    scrollChatBy(1);
+  } else if ((gUiMode == UiMode::ChatFull || gUiMode == UiMode::ChatFace) && downDown) {
+    logf("[CHAT] scroll down arrow");
+    scrollChatBy(-1);
   } else if (gUiMode == UiMode::Contexts && (leftDown || upDown)) {
     handleTypingKey(',', keys);
   } else if (gUiMode == UiMode::Contexts && (rightDown || downDown)) {

@@ -110,6 +110,16 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Logs && handleLogsKey(key)) {
     return;
   }
+  if (keys.ctrl && (lowerKey == 'p' || lowerKey == 'k')) {
+    logf("[CHAT] scroll up ctrl=%c", lowerKey);
+    scrollChatBy(1);
+    return;
+  }
+  if (keys.ctrl && (lowerKey == 'n' || lowerKey == 'j')) {
+    logf("[CHAT] scroll down ctrl=%c", lowerKey);
+    scrollChatBy(-1);
+    return;
+  }
   if (gUiMode == UiMode::Home) {
     if (keys.enter || key == '\r' || key == '\n') {
       if (gInputBuffer.isEmpty()) {
@@ -124,14 +134,12 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
       return;
     }
   }
-  if (gInputBuffer.isEmpty() && (key == ',' || key == '<' || key == ';' ||
-                                 (keys.ctrl && (lowerKey == 'p' || lowerKey == 'k')))) {
+  if (gInputBuffer.isEmpty() && (key == ',' || key == '<' || key == ';')) {
     logf("[CHAT] scroll up key=%d", static_cast<int>(key));
     scrollChatBy(1);
     return;
   }
-  if (gInputBuffer.isEmpty() && (key == '.' || key == '>' || key == '/' ||
-                                 (keys.ctrl && (lowerKey == 'n' || lowerKey == 'j')))) {
+  if (gInputBuffer.isEmpty() && (key == '.' || key == '>' || key == '/')) {
     logf("[CHAT] scroll down key=%d", static_cast<int>(key));
     scrollChatBy(-1);
     return;
