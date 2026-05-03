@@ -50,13 +50,13 @@ void processCompletedTextTurn() {
     logf("[TEXT] async reply=%s", done->reply.c_str());
     setStatus("Reply received", 1200);
     if (done->hasDeviceActions) {
-      executeDeviceActionsJson(done->deviceActionsJson);
+      executeOrDeferDeviceActionsJson(done->deviceActionsJson);
     }
   } else if (done->ok) {
     pushSystem("Hub accepted the turn.");
     logf("[TEXT] async accepted without reply");
     if (done->hasDeviceActions) {
-      executeDeviceActionsJson(done->deviceActionsJson);
+      executeOrDeferDeviceActionsJson(done->deviceActionsJson);
     }
     if (!gPlaybackActive) {
       setFaceMode(FaceMode::Idle);
@@ -211,4 +211,3 @@ bool stopRecordingAndSend() {
                       reinterpret_cast<const uint8_t*>(gRecordBuffer), dataSize, kMicSampleRate, false);
   }
   logHeapStats("voice-upload");
-

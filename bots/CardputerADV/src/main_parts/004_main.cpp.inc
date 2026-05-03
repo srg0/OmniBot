@@ -117,6 +117,7 @@ String gCalcStatus = "Ready";
 String gStopwatchStatus = "Ready";
 String gAlarmStatus = "Ready";
 String gAlarmEditBuffer;
+String gDeferredDeviceActionsJson;
 std::vector<VoiceNote> gVoiceNotes;
 std::vector<NoteFile> gNotes;
 std::vector<AudioAsset> gAudioAssets;

@@ -176,6 +176,30 @@ bool executeDeviceActionsJson(const String& json) {
   return executeDeviceActions(doc.as<JsonVariantConst>());
 }
 
+bool executeOrDeferDeviceActionsJson(const String& json) {
+  if (json.isEmpty()) {
+    return false;
+  }
+  if (gPlaybackActive) {
+    gDeferredDeviceActionsJson = json;
+    appendRuntimeLog("ACT", "device action deferred until audio finishes", false);
+    logf("[ACT] deferred while playback active bytes=%u", static_cast<unsigned>(json.length()));
+    return true;
+  }
+  return executeDeviceActionsJson(json);
+}
+
+void serviceDeferredDeviceActions() {
+  if (gDeferredDeviceActionsJson.isEmpty() || gPlaybackActive || gRecording ||
+      gSubmitting || gThinking || gOtaApplyInProgress) {
+    return;
+  }
+  String json = gDeferredDeviceActionsJson;
+  gDeferredDeviceActionsJson = "";
+  logf("[ACT] run deferred bytes=%u", static_cast<unsigned>(json.length()));
+  executeDeviceActionsJson(json);
+}
+
 bool findLauncherEntryForMode(UiMode mode, int& groupIndex, int& subIndex) {
   for (uint8_t g = 0; g < kLauncherGroupCount; ++g) {
     for (uint8_t s = 0; s < kLauncherGroups[g].count; ++s) {

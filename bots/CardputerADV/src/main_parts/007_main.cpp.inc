@@ -171,7 +171,7 @@ bool executeInlineDeviceActionsFromText(const String& text) {
     String json = text.substring(jsonStart, end);
     json.trim();
     if (!json.isEmpty()) {
-      executed = executeDeviceActionsJson(json) || executed;
+      executed = executeOrDeferDeviceActionsJson(json) || executed;
     }
     searchFrom = end + 2;
   }

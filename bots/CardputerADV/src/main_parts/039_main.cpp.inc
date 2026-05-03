@@ -124,7 +124,7 @@
     setStatus("No reply", 1200);
   }
   if (!deviceActionsJson.isEmpty()) {
-    executeDeviceActionsJson(deviceActionsJson);
+    executeOrDeferDeviceActionsJson(deviceActionsJson);
   }
   return true;
 }

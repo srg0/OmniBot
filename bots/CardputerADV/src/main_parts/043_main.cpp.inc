@@ -254,7 +254,7 @@ bool playVoiceSmokeResponse(const String& response, const char* logPrefix) {
     }
   }
   if (!deviceActionsJson.isEmpty()) {
-    executeDeviceActionsJson(deviceActionsJson);
+    executeOrDeferDeviceActionsJson(deviceActionsJson);
   }
 
   logf("[SMOKE] %s result ok=%d transcript_chars=%u reply_chars=%u audio=%d played=%d",

@@ -34,7 +34,7 @@
     logf("[TEXT] accepted without reply");
   }
   if (!deviceActionsJson.isEmpty()) {
-    executeDeviceActionsJson(deviceActionsJson);
+    executeOrDeferDeviceActionsJson(deviceActionsJson);
   }
   setFaceMode(FaceMode::Idle);
   setStatus("Reply received", 1200);
