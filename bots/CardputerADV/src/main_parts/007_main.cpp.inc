@@ -137,16 +137,59 @@ int findInlineCardputerActionMarker(const String& text, int from, int& prefixLen
   return best;
 }
 
+int findInlineCardputerActionJsonEnd(const String& text, int jsonStart) {
+  if (jsonStart < 0 || jsonStart >= text.length()) {
+    return -1;
+  }
+  char first = text[jsonStart];
+  if (first != '[' && first != '{') {
+    return -1;
+  }
+  int depth = 0;
+  bool inString = false;
+  bool escaped = false;
+  for (int i = jsonStart; i < text.length(); ++i) {
+    char c = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inString) {
+      if (c == '\\') {
+        escaped = true;
+      } else if (c == '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (c == '"') {
+      inString = true;
+    } else if (c == '[' || c == '{') {
+      ++depth;
+    } else if (c == ']' || c == '}') {
+      --depth;
+      if (depth == 0) {
+        return i + 1;
+      }
+      if (depth < 0) {
+        return -1;
+      }
+    }
+  }
+  return -1;
+}
+
 String stripInlineCardputerActionMarkers(String out) {
   int prefixLen = 0;
   int start = findInlineCardputerActionMarker(out, 0, prefixLen);
   while (start >= 0) {
-    int end = out.indexOf("]]", start + prefixLen);
-    if (end < 0) {
+    int jsonEnd = findInlineCardputerActionJsonEnd(out, start + prefixLen);
+    int markerEnd = jsonEnd >= 0 ? out.indexOf("]]", jsonEnd) : -1;
+    if (markerEnd < 0) {
       out.remove(start);
       break;
     }
-    out.remove(start, end + 2 - start);
+    out.remove(start, markerEnd + 2 - start);
     start = findInlineCardputerActionMarker(out, start, prefixLen);
   }
   return out;
@@ -163,17 +206,18 @@ bool executeInlineDeviceActionsFromText(const String& text) {
       break;
     }
     int jsonStart = start + prefixLen;
-    int end = text.indexOf("]]", jsonStart);
-    if (end < 0) {
+    int jsonEnd = findInlineCardputerActionJsonEnd(text, jsonStart);
+    int markerEnd = jsonEnd >= 0 ? text.indexOf("]]", jsonEnd) : -1;
+    if (jsonEnd < 0 || markerEnd < 0) {
       appendRuntimeLog("ACT", "inline action marker unterminated", true);
       break;
     }
-    String json = text.substring(jsonStart, end);
+    String json = text.substring(jsonStart, jsonEnd);
     json.trim();
     if (!json.isEmpty()) {
       executed = executeOrDeferDeviceActionsJson(json) || executed;
     }
-    searchFrom = end + 2;
+    searchFrom = markerEnd + 2;
   }
   return executed;
 }
