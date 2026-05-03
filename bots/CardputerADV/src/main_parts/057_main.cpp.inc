@@ -182,6 +182,86 @@ void renderStopwatchUi() {
   renderDebugOverlay();
 }
 
+void renderAlarmUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(5, 5, 10);
+  const uint16_t panel = rgb565_local(13, 15, 24);
+  const uint16_t panel2 = rgb565_local(6, 10, 18);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t red = rgb565_local(255, 82, 82);
+  const uint16_t muted = rgb565_local(126, 143, 157);
+  uint32_t nowMs = millis();
+  bool flash = gAlarmRinging && ((nowMs / 320U) % 2U == 0U);
+  uint16_t accent = gAlarmRinging ? (flash ? red : amber) : (gAlarmSettings.enabled ? green : muted);
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, accent);
+  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(28, 37, 52));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, panel);
+  d.setCursor(16, 14);
+  d.print(gAlarmRinging ? "ALARM RINGING" : "ALARM");
+  String state = gAlarmRinging ? "RING" : (gAlarmSettings.enabled ? "ON" : "OFF");
+  d.setCursor(224 - d.textWidth(state), 14);
+  d.print(state);
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(18, 29);
+  d.print("now ");
+  d.setTextColor(cyan, panel);
+  d.print(alarmClockText());
+  String snooze = alarmSnoozeUntilText();
+  if (!snooze.isEmpty()) {
+    d.setTextColor(amber, panel);
+    d.setCursor(146, 29);
+    d.print("snooze ");
+    d.print(snooze);
+  }
+
+  d.fillRoundRect(19, 43, 202, 45, 10, panel2);
+  d.drawRoundRect(19, 43, 202, 45, 10, accent);
+  d.setFont(&fonts::Font6);
+  d.setTextColor(accent, panel2);
+  String alarmText = alarmTimeString(gAlarmSettings.hour, gAlarmSettings.minute);
+  d.setCursor((240 - d.textWidth(alarmText)) / 2, 43);
+  d.print(alarmText);
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel2);
+  d.setCursor(33, 78);
+  if (!gAlarmEditBuffer.isEmpty()) {
+    d.print("entry HHMM: ");
+    d.setTextColor(amber, panel2);
+    d.print(gAlarmEditBuffer);
+  } else if (gAlarmRinging) {
+    d.setTextColor(red, panel2);
+    d.print("Enter dismiss  S snooze  Esc dismiss");
+  } else {
+    d.print(gAlarmSettings.enabled ? "daily alarm armed" : "toggle on to arm daily alarm");
+  }
+
+  d.fillRoundRect(18, 94, 204, 15, 5, rgb565_local(7, 13, 20));
+  d.setTextColor(gAlarmRinging ? red : amber, rgb565_local(7, 13, 20));
+  d.setCursor(25, 99);
+  d.print(fitCurrentFontToWidth(gAlarmStatus, 190));
+
+  d.setFont(&fonts::Font0);
+  if (gAlarmRinging) {
+    drawTinyFooter(panel, muted, "Enter/Space dismiss   S snooze 5m", 16, 120, 208);
+  } else {
+    drawTinyFooter(panel, muted, "0-9 HHMM  +/- min  Z/X 5m  T toggle", 10, 120, 220);
+  }
+  d.setFont(&fonts::Font2);
+
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 void renderContextsUi() {
   auto& d = gCanvas;
   const uint16_t bg = rgb565_local(3, 6, 12);

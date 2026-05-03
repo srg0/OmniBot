@@ -203,6 +203,28 @@ void saveDeviceSettings() {
   gPrefs.end();
 }
 
+void loadAlarmSettings() {
+  gPrefs.begin(kPrefsAlarmNs, true);
+  gAlarmSettings.hour = static_cast<uint8_t>(gPrefs.getUChar("hour", 7));
+  gAlarmSettings.minute = static_cast<uint8_t>(gPrefs.getUChar("minute", 30));
+  gAlarmSettings.enabled = gPrefs.getBool("enabled", false);
+  gPrefs.end();
+  if (gAlarmSettings.hour > 23) {
+    gAlarmSettings.hour = 7;
+  }
+  if (gAlarmSettings.minute > 59) {
+    gAlarmSettings.minute = 30;
+  }
+}
+
+void saveAlarmSettings() {
+  gPrefs.begin(kPrefsAlarmNs, false);
+  gPrefs.putUChar("hour", gAlarmSettings.hour);
+  gPrefs.putUChar("minute", gAlarmSettings.minute);
+  gPrefs.putBool("enabled", gAlarmSettings.enabled);
+  gPrefs.end();
+}
+
 void saveWifiCreds(const String& ssid, const String& password) {
   gPrefs.begin(kPrefsWifiNs, false);
   gPrefs.putString("ssid", ssid);
@@ -235,4 +257,3 @@ void clearWifiCreds() {
   gHubHost = "";
   gHubPort = kDefaultHubPort;
 }
-
