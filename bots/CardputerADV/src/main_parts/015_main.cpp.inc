@@ -179,14 +179,77 @@ bool fetchRemoteAssetManifest() {
 }
 
 bool fetchRemoteOtaManifest() {
-  if (fetchRemoteJsonToFile(kFirmwareManifestFetchPath, kOtaManifestPath, "OTA")) {
-    loadOtaManifestSummary();
-    if (gDeviceSettings.beepOnUpdate && gOtaManifest.parsed && !gOtaManifest.version.isEmpty() &&
-        gOtaManifest.version != kAppVersion) {
-      focusTone(1320, 120);
-    }
-    return true;
+  if ((!gWifiReady && !ensureWifiForHttp("ota-manifest", 3000)) || gHubHost.isEmpty()) {
+    appendRuntimeLog("OTA", "fetch offline", true);
+    return false;
   }
-  return false;
-}
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !ensurePomodoroStorageOn(*fs) || !ensureDirRecursive(*fs, parentDirOf(kOtaManifestPath))) {
+    appendRuntimeLog("OTA", "fetch no storage", true);
+    return false;
+  }
 
+  String url = hubBaseUrl() + kFirmwareManifestFetchPath;
+  HTTPClient http;
+  std::unique_ptr<WiFiClientSecure> secureClient;
+  if (!configureHttpClient(http, secureClient, url, 30000)) {
+    appendRuntimeLog("OTA", "fetch connect failed", true);
+    return false;
+  }
+  if (!gDeviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + gDeviceToken);
+  }
+  http.addHeader("Accept", "application/json");
+  http.addHeader("Accept-Encoding", "identity");
+  http.addHeader("Connection", "close");
+
+  int code = http.GET();
+  String body = code > 0 ? http.getString() : "";
+  http.end();
+  if (code < 200 || code >= 300 || body.isEmpty()) {
+    appendRuntimeLog("OTA", "fetch HTTP " + String(code) + " bytes=" + String(body.length()), true);
+    return false;
+  }
+
+  DynamicJsonDocument doc(4096);
+  auto err = deserializeJson(doc, body);
+  if (err) {
+    appendRuntimeLog("OTA", "fetch parse failed " + String(err.c_str()) + " bytes=" + String(body.length()), true);
+    return false;
+  }
+  if (String(doc["version"] | "").isEmpty() || String(doc["firmware_url"] | doc["url"] | "").isEmpty() ||
+      String(doc["sha256"] | "").isEmpty()) {
+    appendRuntimeLog("OTA", "fetch missing required fields bytes=" + String(body.length()), true);
+    return false;
+  }
+
+  String tempPath = String(kOtaManifestPath) + ".tmp";
+  fsRemove(*fs, tempPath);
+  File file = fs->open(tempPath, "w");
+  if (!file) {
+    appendRuntimeLog("OTA", "fetch open tmp failed", true);
+    return false;
+  }
+  size_t written = file.print(body);
+  file.flush();
+  file.close();
+  if (written != body.length()) {
+    fsRemove(*fs, tempPath);
+    appendRuntimeLog("OTA", "fetch write short", true);
+    return false;
+  }
+  fsRemove(*fs, kOtaManifestPath);
+  if (!fsRename(*fs, tempPath, kOtaManifestPath)) {
+    fsRemove(*fs, tempPath);
+    appendRuntimeLog("OTA", "fetch rename failed", true);
+    return false;
+  }
+
+  loadOtaManifestSummary();
+  appendRuntimeLog("OTA", "fetch ok bytes=" + String(body.length()), true);
+  if (gDeviceSettings.beepOnUpdate && gOtaManifest.parsed && !gOtaManifest.version.isEmpty() &&
+      gOtaManifest.version != kAppVersion) {
+    focusTone(1320, 120);
+  }
+  return gOtaManifest.parsed;
+}
