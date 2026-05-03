@@ -160,6 +160,8 @@ String gSavedContextKey;
 String gContextHistoryKey;
 String gContextError;
 uint32_t gInboxLastSeq = 0;
+uint32_t gLastInboxAutoPollMs = 0;
+String gInboxLastTopicKey;
 String gInboxLastText;
 String gInboxLastKind;
 String gInboxLastVoiceUrl;

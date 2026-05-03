@@ -42,7 +42,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.71-dev"
+#define APP_VERSION "0.2.72-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -156,6 +156,7 @@ constexpr uint8_t kHidKeyEscape = 0x29;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr uint32_t kClockTickMs = 1000;
 constexpr uint32_t kBatterySampleIntervalMs = 2000;
+constexpr uint32_t kInboxAutoPollIntervalMs = 15000;
 constexpr uint32_t kTimeSyncRetryMs = 15000;
 constexpr uint32_t kTimeResyncMs = 6UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t kFocusMinDurationSec = 60;

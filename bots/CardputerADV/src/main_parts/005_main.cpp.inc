@@ -176,7 +176,7 @@ bool playVisibleVoiceHistoryLine();
 bool downloadAndPlayResponseAudio(const String& url, const String& localPath, const String& sha256,
                                   uint32_t expectedSize, const String& title, const String& preview);
 bool requestAndPlayTts(const String& text);
-bool fetchLatestInboxMessage(bool forcePlay = false, bool speak = true);
+bool fetchLatestInboxMessage(bool forcePlay = false, bool speak = true, bool quiet = false, bool assistantOnly = false);
 bool injectInboxText(const String& text, bool speakAfter = true);
 void saveHubEndpoint(const String& host, uint16_t port);
 void syncClockFromNtp(bool force = false);

@@ -93,7 +93,7 @@ bool playLastInboxMessage() {
   return false;
 }
 
-bool handleInboxHistoryItem(JsonObject item, bool forcePlay) {
+bool handleInboxHistoryItem(JsonObject item, bool forcePlay, bool assistantOnly = false) {
   uint32_t seq = item["seq"] | 0;
   JsonObject sender = item["sender"].as<JsonObject>();
   JsonObject content = item["content"].as<JsonObject>();
@@ -103,6 +103,9 @@ bool handleInboxHistoryItem(JsonObject item, bool forcePlay) {
   String text = kind == "voice" ? String(content["transcript"] | content["text"] | "")
                                 : String(content["text"] | "");
   if (senderKind == "device") {
+    return false;
+  }
+  if (assistantOnly && senderKind != "assistant") {
     return false;
   }
   if (!forcePlay && seq != 0 && seq <= gInboxLastSeq) {
@@ -137,7 +140,8 @@ bool handleInboxHistoryItem(JsonObject item, bool forcePlay) {
     if (text.isEmpty()) {
       return false;
     }
-    pushLine(prefix, text, lineKind);
+    String visibleText = cleanReplyForDevice(text);
+    pushLine(prefix, visibleText.isEmpty() ? text : visibleText, lineKind);
   }
 
   setStatus("Inbox message", 1200);
@@ -147,22 +151,31 @@ bool handleInboxHistoryItem(JsonObject item, bool forcePlay) {
   return true;
 }
 
-bool fetchLatestInboxMessage(bool forcePlay, bool speak) {
+bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assistantOnly) {
   if ((!gWifiReady && !ensureWifiForHttp("inbox", 3000)) || gHubHost.isEmpty()) {
-    setStatus("Inbox offline", 1200);
+    if (!quiet) {
+      setStatus("Inbox offline", 1200);
+    }
     logf("[INBOX] offline");
     return false;
   }
   String topicKey = currentConversationKey();
+  if (topicKey != gInboxLastTopicKey) {
+    gInboxLastTopicKey = topicKey;
+    gInboxLastSeq = 0;
+    logf("[INBOX] topic reset key=%s", topicKey.c_str());
+  }
   String url = hubBaseUrl() + "/api/cardputer/v1/topics/" + urlEncodePathSegment(topicKey) +
-               "/inbox/latest?text_chars=4096";
-  if (!forcePlay && gInboxLastSeq > 0) {
+               (assistantOnly ? "/history?limit=20&text_chars=4096" : "/inbox/latest?text_chars=4096");
+  if (!assistantOnly && !forcePlay && gInboxLastSeq > 0) {
     url += "&after_seq=" + String(gInboxLastSeq);
   }
   HTTPClient http;
   std::unique_ptr<WiFiClientSecure> secureClient;
   if (!configureHttpClient(http, secureClient, url, 15000)) {
-    setStatus("Inbox connect failed", 1200);
+    if (!quiet) {
+      setStatus("Inbox connect failed", 1200);
+    }
     logf("[INBOX] connect failed");
     return false;
   }
@@ -173,22 +186,35 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak) {
   String body = code > 0 ? http.getString() : "";
   http.end();
   if (code < 200 || code >= 300) {
-    setStatus("Inbox HTTP " + String(code), 1400);
+    if (!quiet) {
+      setStatus("Inbox HTTP " + String(code), 1400);
+    }
     logf("[INBOX] http=%d body=%s", code, body.c_str());
     return false;
   }
   DynamicJsonDocument doc(8192);
   auto err = deserializeJson(doc, body);
   if (err) {
-    setStatus("Inbox parse failed", 1400);
+    if (!quiet) {
+      setStatus("Inbox parse failed", 1400);
+    }
     logf("[INBOX] parse failed err=%s body_len=%u", err.c_str(), static_cast<unsigned>(body.length()));
     return false;
   }
 
   bool found = false;
-  if (doc["item"].is<JsonObject>()) {
+  if (assistantOnly && doc["items"].is<JsonArray>()) {
+    JsonArray items = doc["items"].as<JsonArray>();
+    for (int idx = static_cast<int>(items.size()) - 1; idx >= 0; --idx) {
+      JsonObject item = items[idx].as<JsonObject>();
+      if (handleInboxHistoryItem(item, forcePlay, true)) {
+        found = true;
+        break;
+      }
+    }
+  } else if (doc["item"].is<JsonObject>()) {
     JsonObject item = doc["item"].as<JsonObject>();
-    if (handleInboxHistoryItem(item, forcePlay)) {
+    if (handleInboxHistoryItem(item, forcePlay, assistantOnly)) {
       found = true;
     }
   }
@@ -199,11 +225,41 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak) {
       bool played = playLastInboxMessage();
       logf("[INBOX] playback ok=%d seq=%u", static_cast<int>(played), static_cast<unsigned>(gInboxLastSeq));
     }
+    bool actionOk = executeInlineDeviceActionsFromText(gInboxLastText);
+    if (actionOk) {
+      logf("[INBOX] inline actions executed seq=%u", static_cast<unsigned>(gInboxLastSeq));
+    }
     return true;
   }
-  setStatus("No new inbox", 900);
+  if (!quiet) {
+    setStatus("No new inbox", 900);
+  }
   logf("[INBOX] no new message last_seq=%u", static_cast<unsigned>(gInboxLastSeq));
   return false;
+}
+
+bool autoInboxPollAllowed() {
+  return gWifiReady && !gHubHost.isEmpty() && !gOtaApplyInProgress && !gTransferUiActive &&
+         !gBootBackgroundActive && !gRecording && !gSubmitting && !gThinking && !gPlaybackActive &&
+         !gRealtimeActive && !gRealtimeConnected && !gRealtimeRecording && !gRealtimeAwaiting &&
+         !gRealtimeSmokeActive && !gRealtimeSmokeAudioStreaming && gTextTurnTaskHandle == nullptr &&
+         gCompletedTextTurn == nullptr && gActiveTextTurn.isEmpty() && gPendingTextTurns.empty() &&
+         gInputBuffer.isEmpty();
+}
+
+void serviceAutoInboxPoll() {
+  uint32_t now = millis();
+  if (gLastInboxAutoPollMs != 0 && now - gLastInboxAutoPollMs < kInboxAutoPollIntervalMs) {
+    return;
+  }
+  if (!autoInboxPollAllowed()) {
+    return;
+  }
+  gLastInboxAutoPollMs = now;
+  bool ok = fetchLatestInboxMessage(false, true, true, true);
+  if (ok) {
+    appendRuntimeLog("INBOX", "auto poll played seq=" + String(gInboxLastSeq), true);
+  }
 }
 
 bool injectInboxText(const String& text, bool speakAfter) {

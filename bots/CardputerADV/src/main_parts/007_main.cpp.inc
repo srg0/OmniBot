@@ -120,8 +120,66 @@ size_t voiceNoteLimit() {
   return gSdReady ? kMaxSdVoiceNotes : kMaxFlashVoiceNotes;
 }
 
+int findInlineCardputerActionMarker(const String& text, int from, int& prefixLen) {
+  static constexpr const char* kPrefixes[] = {
+      "[[cardputer_actions:",
+      "[[cardputeractions:",
+  };
+  int best = -1;
+  prefixLen = 0;
+  for (const char* prefix : kPrefixes) {
+    int pos = text.indexOf(prefix, from);
+    if (pos >= 0 && (best < 0 || pos < best)) {
+      best = pos;
+      prefixLen = strlen(prefix);
+    }
+  }
+  return best;
+}
+
+String stripInlineCardputerActionMarkers(String out) {
+  int prefixLen = 0;
+  int start = findInlineCardputerActionMarker(out, 0, prefixLen);
+  while (start >= 0) {
+    int end = out.indexOf("]]", start + prefixLen);
+    if (end < 0) {
+      out.remove(start);
+      break;
+    }
+    out.remove(start, end + 2 - start);
+    start = findInlineCardputerActionMarker(out, start, prefixLen);
+  }
+  return out;
+}
+
+bool executeInlineDeviceActionsFromText(const String& text) {
+  bool executed = false;
+  int searchFrom = 0;
+  uint8_t markers = 0;
+  while (markers++ < 3) {
+    int prefixLen = 0;
+    int start = findInlineCardputerActionMarker(text, searchFrom, prefixLen);
+    if (start < 0) {
+      break;
+    }
+    int jsonStart = start + prefixLen;
+    int end = text.indexOf("]]", jsonStart);
+    if (end < 0) {
+      appendRuntimeLog("ACT", "inline action marker unterminated", true);
+      break;
+    }
+    String json = text.substring(jsonStart, end);
+    json.trim();
+    if (!json.isEmpty()) {
+      executed = executeDeviceActionsJson(json) || executed;
+    }
+    searchFrom = end + 2;
+  }
+  return executed;
+}
+
 String cleanReplyForDevice(const String& text) {
-  String out = text;
+  String out = stripInlineCardputerActionMarkers(text);
   out.replace("[[audio_as_voice]]", "");
   out.replace("[[audio_as_text]]", "");
   out.replace("```", "");
