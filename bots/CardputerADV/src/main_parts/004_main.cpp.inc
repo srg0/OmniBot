@@ -125,7 +125,6 @@ std::deque<String> gRuntimeLogs;
 
 bool gWifiReady = false;
 bool gWsReady = false;
-bool gBleActive = false;
 bool gPendingRestart = false;
 bool gSubmitting = false;
 bool gThinking = false;

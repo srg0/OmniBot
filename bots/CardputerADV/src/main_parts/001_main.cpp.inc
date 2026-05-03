@@ -11,9 +11,6 @@
 #include <ArduinoJson.h>
 #include <WebSocketsClient.h>
 #include <base64.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
 #include <WiFiClient.h>
 #include <Wire.h>
 #include <Update.h>
@@ -116,10 +113,6 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 constexpr uint32_t kOtaHealthProbeIntervalMs = 10000;
 constexpr uint32_t kOtaCoreBootGraceMs = 90000;
 
-constexpr const char* kBleServiceName = "OmniBot Cardputer ADV";
-constexpr const char* kBleServiceUuid = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-constexpr const char* kBleWifiCharUuid = "12345678-1234-5678-1234-56789abcdef0";
-
 constexpr uint16_t kDefaultHubPort = 8000;
 constexpr uint32_t kWifiConnectTimeoutMs = 20000;
 constexpr uint32_t kWifiReconnectIntervalMs = 5000;
@@ -186,7 +179,7 @@ constexpr uint8_t kPetMaxPoop = 5;
 constexpr uint32_t kTextTurnTaskStackSize = 8192;
 constexpr uint32_t kTopicTaskStackSize = 8192;
 constexpr size_t kMaxFlashVoiceNotes = 12;
-constexpr size_t kMaxSdVoiceNotes = 256;
+constexpr size_t kMaxSdVoiceNotes = 48;
 constexpr size_t kMaxStoredPreviewChars = 84;
 constexpr size_t kMaxChatStoredChars = 720;
 constexpr size_t kMaxLowHeapChatLines = 10;

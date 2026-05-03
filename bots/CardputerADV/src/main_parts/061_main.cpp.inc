@@ -1,8 +1,4 @@
-  if (gBleActive) {
-    renderBleUi();
-    renderStatusBar();
-  } else {
-    switch (gUiMode) {
+  switch (gUiMode) {
       case UiMode::Home:
         renderAssistantPulseUi();
         break;
@@ -59,7 +55,6 @@
       default:
         renderChatUi();
         break;
-    }
   }
   gCanvas.pushSprite(0, 0);
   uint32_t renderCostMs = millis() - renderStartMs;
@@ -152,6 +147,8 @@ void renderBootSplash(const char* stage) {
 }  // namespace
 
 void setup() {
+  gMainLoopTaskHandle = xTaskGetCurrentTaskHandle();
+  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
   Serial.println("[BOOT] serial ready");
   delay(800);
@@ -173,15 +170,17 @@ void setup() {
   gCanvas.setTextSize(1);
   configureEmojiRendering();
   gOtaBootApplyMode = readOtaApplyBootRequest();
+  if (!gOtaBootApplyMode) {
+    setUiMode(UiMode::Home);
+    setStatus("Starting...", 0);
+    render();
+  }
 
   if (!gOtaBootApplyMode) {
-    renderBootSplash("Audio");
     initSpeaker();
   }
-  renderBootSplash("Storage");
   initStorage();
   if (!gOtaBootApplyMode) {
-    renderBootSplash("Input");
     randomSeed(micros());
     scheduleBlink();
     gImuEnabled = M5.Imu.isEnabled();
@@ -190,7 +189,6 @@ void setup() {
     gTimeValid = hasValidSystemTime();
   }
 
-  renderBootSplash("Config");
   loadConfig();
   loadFocusSettings();
   loadDeviceSettings();
@@ -224,23 +222,7 @@ void setup() {
   logf("[BOOT] version=%s git=%s build=%s", kAppVersion, kBuildGitSha, kBuildTime);
   logHeapStats("boot-before-wifi");
 
-  renderBootSplash("Wi-Fi");
-  if (ensureWifi()) {
-    render();
-    startHubWebSocket();
-    if (gOtaPendingVerify && probeOtaBridgeHealth(8000)) {
-      confirmOtaBootIfPending("bridge health");
-    }
-    if (gDeviceSettings.checkUpdatesOnBoot) {
-      appendRuntimeLog("OTA", "boot remote check deferred", true);
-      setStatus("Update check deferred", 900);
-    }
-    if (gDeviceSettings.autoUpdateFirmware && gOtaManifest.parsed &&
-        !gOtaManifest.url.isEmpty() && gOtaManifest.version != kAppVersion) {
-      applyOtaFromManifest();
-    }
-    appendRuntimeLog("CTX", "boot topic preload deferred", false);
-  }
+  startDeferredBoot();
 
   render();
 }
@@ -258,27 +240,28 @@ void loop() {
     ESP.restart();
   }
 
-  if (!gBleActive) {
+  serviceDeferredBoot();
+  if (bootBackgroundAllowsConnectivity()) {
     maintainConnectivity();
-    if (kUseHubWebSocket) {
-      gWs.loop();
-    }
-    serviceOtaBootGuard();
-    syncClockFromNtp(false);
-    updateBatterySnapshot();
-    updateFocusTimer();
-    serviceFocusMetronome();
-    servicePet();
-    processCompletedTopicTask();
-    processCompletedTextTurn();
-    serviceMemoryGuard();
-    updateG0VoiceTrigger();
-    updateVoiceTrigger();
-    pollTyping();
-    serviceRealtimeVoice();
-    serviceRecordingToFile();
-    servicePlaybackStream();
   }
+  if (kUseHubWebSocket) {
+    gWs.loop();
+  }
+  serviceOtaBootGuard();
+  syncClockFromNtp(false);
+  updateBatterySnapshot();
+  updateFocusTimer();
+  serviceFocusMetronome();
+  servicePet();
+  processCompletedTopicTask();
+  processCompletedTextTurn();
+  serviceMemoryGuard();
+  updateG0VoiceTrigger();
+  updateVoiceTrigger();
+  pollTyping();
+  serviceRealtimeVoice();
+  serviceRecordingToFile();
+  servicePlaybackStream();
 
   if (gPlaybackActive && !gPlaybackStreaming && !M5Cardputer.Speaker.isPlaying()) {
     gPlaybackActive = false;

@@ -195,42 +195,48 @@ bool copyWavDataToPcmFile(fs::FS& fs, const String& wavPath, const String& pcmPa
 }
 
 bool playVoiceSmokeResponse(const String& response, const char* logPrefix) {
-  DynamicJsonDocument resp(4096);
-  auto err = deserializeJson(resp, response);
-  if (err) {
-    logf("[SMOKE] %s result ok=0 stage=json_parse response_bytes=%u err=%s",
-         logPrefix,
-         static_cast<unsigned>(response.length()),
-         err.c_str());
-    pushError("Smoke voice parse failed.");
-    setFaceMode(FaceMode::Error);
-    setStatus("Smoke parse failed", 1800);
-    return false;
-  }
-
-  String transcript = resp["transcript"] | resp["text"] | "";
-  String reply = resp["reply"] | resp["full_text"] | "";
-  String shortText = resp["short_text"] | "";
+  String transcript;
+  String reply;
+  String shortText;
   String deviceActionsJson;
-  if (!resp["device_actions"].isNull()) {
-    serializeJson(resp["device_actions"], deviceActionsJson);
-  }
-  if (reply.isEmpty()) {
-    reply = shortText;
-  }
-
   String audioUrl;
   String audioPath;
   String audioTitle;
   String audioSha;
   uint32_t audioSize = 0;
-  if (resp["audio"].is<JsonObject>()) {
-    JsonObject audio = resp["audio"].as<JsonObject>();
-    audioUrl = audio["url"] | "";
-    audioPath = audio["path"] | "";
-    audioTitle = audio["title"] | "";
-    audioSha = audio["sha256"] | "";
-    audioSize = audio["size"] | 0;
+
+  {
+    DynamicJsonDocument resp(4096);
+    auto err = deserializeJson(resp, response);
+    if (err) {
+      logf("[SMOKE] %s result ok=0 stage=json_parse response_bytes=%u err=%s",
+           logPrefix,
+           static_cast<unsigned>(response.length()),
+           err.c_str());
+      pushError("Smoke voice parse failed.");
+      setFaceMode(FaceMode::Error);
+      setStatus("Smoke parse failed", 1800);
+      return false;
+    }
+
+    transcript = resp["transcript"] | resp["text"] | "";
+    reply = resp["reply"] | resp["full_text"] | "";
+    shortText = resp["short_text"] | "";
+    if (!resp["device_actions"].isNull()) {
+      serializeJson(resp["device_actions"], deviceActionsJson);
+    }
+    if (reply.isEmpty()) {
+      reply = shortText;
+    }
+
+    if (resp["audio"].is<JsonObject>()) {
+      JsonObject audio = resp["audio"].as<JsonObject>();
+      audioUrl = audio["url"] | "";
+      audioPath = audio["path"] | "";
+      audioTitle = audio["title"] | "";
+      audioSha = audio["sha256"] | "";
+      audioSize = audio["size"] | 0;
+    }
   }
 
   if (!transcript.isEmpty()) {
@@ -826,7 +832,7 @@ void maintainConnectivity() {
     pushSystem("Wi-Fi restored: " + WiFi.localIP().toString());
     logf("[WIFI] restored ip=%s", WiFi.localIP().toString().c_str());
     syncClockFromNtp(true);
-    if (kUseHubWebSocket && !gBleActive && !gHubHost.isEmpty() && !gWsReady && !gResumeWsAfterVoice) {
+    if (kUseHubWebSocket && !gHubHost.isEmpty() && !gWsReady && !gResumeWsAfterVoice) {
       logf("[WS] restart after wifi restore");
       startHubWebSocket();
     }
@@ -865,8 +871,7 @@ bool handleLocalCommand(const String& input) {
   }
 
   if (cmd == "/btsetup") {
-    pushSystem("Switching to BLE provisioning mode.");
-    startBleProvisioning();
+    pushSystem("BLE provisioning was removed. Use compiled defaults or saved config.");
     return true;
   }
 

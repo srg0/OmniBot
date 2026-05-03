@@ -1,7 +1,7 @@
 bool ensureWifi() {
   if (gWifiSsid.isEmpty()) {
-    pushSystem("No Wi-Fi credentials. Entering BLE setup.");
-    startBleProvisioning();
+    pushError("Wi-Fi credentials are missing. Rebuild with defaults or restore saved config.");
+    setStatus("Wi-Fi config missing", 1500);
     return false;
   }
 
@@ -15,12 +15,13 @@ bool ensureWifi() {
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < kWifiConnectTimeoutMs) {
+    handleHostSerialInput();
     delay(120);
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    pushError("Wi-Fi connection failed. Entering BLE setup.");
-    startBleProvisioning();
+    pushError("Wi-Fi connection failed. Check compiled defaults or saved config.");
+    setStatus("Wi-Fi failed", 1500);
     logf("[WIFI] connect failed ssid=%s", gWifiSsid.c_str());
     return false;
   }
@@ -60,6 +61,7 @@ bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs) {
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
+    handleHostSerialInput();
     delay(120);
   }
 
@@ -71,6 +73,117 @@ bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs) {
     logf("[WIFI] reconnect failed reason=%s", reason ? reason : "http");
   }
   return gWifiReady;
+}
+
+void startDeferredBoot() {
+  gBootBackgroundActive = true;
+  gBootBackgroundStep = 1;
+  gBootBackgroundLabel = "storage";
+  gBootWifiStarted = false;
+  gBootWifiStartMs = 0;
+  gBootStepStartedMs = millis();
+  setStatus("Starting background services", 1200);
+  logf("[BOOT] background start");
+}
+
+bool bootBackgroundAllowsConnectivity() {
+  return !gBootBackgroundActive || gBootBackgroundStep >= 8;
+}
+
+void beginDeferredWifi() {
+  gBootBackgroundLabel = "wifi";
+  gBootWifiStarted = true;
+  gBootWifiStartMs = millis();
+  if (gWifiSsid.isEmpty()) {
+    pushError("Wi-Fi credentials are missing. Rebuild with defaults or restore saved config.");
+    setStatus("Wi-Fi config missing", 1500);
+    gBootBackgroundStep = 10;
+    return;
+  }
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  WiFi.begin(gWifiSsid.c_str(), gWifiPassword.c_str());
+  setStatus("Wi-Fi starting", 900);
+  logf("[WIFI] deferred connect start ssid=%s", gWifiSsid.c_str());
+}
+
+void serviceDeferredBoot() {
+  if (!gBootBackgroundActive || gOtaBootApplyMode) {
+    return;
+  }
+  switch (gBootBackgroundStep) {
+    case 1:
+      gBootBackgroundLabel = "emoji";
+      scanEmojiAssets();
+      if (gEmojiAssetCount > 0) {
+        pushSystem("Emoji SD: " + String(gEmojiAssetCount));
+      }
+      gBootBackgroundStep = 4;
+      gBootStepStartedMs = millis();
+      break;
+    case 4:
+      gBootBackgroundLabel = "manifest";
+      appendRuntimeLog("LIB", "audio scan deferred", false);
+      loadAssetManifestSummary();
+      loadOtaManifestSummary();
+      gBootBackgroundStep = 5;
+      gBootStepStartedMs = millis();
+      break;
+    case 5:
+      gBootBackgroundLabel = "topics";
+      loadConversationContexts();
+      gBootBackgroundStep = 6;
+      gBootStepStartedMs = millis();
+      break;
+    case 6:
+      beginDeferredWifi();
+      gBootBackgroundStep = 7;
+      gBootStepStartedMs = millis();
+      break;
+    case 7:
+      gBootBackgroundLabel = "wifi";
+      gWifiReady = WiFi.status() == WL_CONNECTED;
+      if (gWifiReady) {
+        setStatus("Wi-Fi connected", 1000);
+        pushSystem("Wi-Fi connected: " + WiFi.localIP().toString());
+        logf("[WIFI] connected ssid=%s ip=%s", gWifiSsid.c_str(), WiFi.localIP().toString().c_str());
+        syncClockFromNtp(true);
+        gBootBackgroundStep = 8;
+        gBootStepStartedMs = millis();
+      } else if (gBootWifiStarted && millis() - gBootWifiStartMs >= kWifiConnectTimeoutMs) {
+        pushError("Wi-Fi connection failed. Check compiled defaults or saved config.");
+        setStatus("Wi-Fi failed", 1500);
+        logf("[WIFI] deferred connect failed ssid=%s", gWifiSsid.c_str());
+        gBootBackgroundStep = 10;
+      }
+      break;
+    case 8:
+      gBootBackgroundLabel = "hub";
+      startHubWebSocket();
+      if (gOtaPendingVerify && probeOtaBridgeHealth(8000)) {
+        confirmOtaBootIfPending("bridge health");
+      }
+      if (gDeviceSettings.checkUpdatesOnBoot) {
+        appendRuntimeLog("OTA", "boot remote check deferred", true);
+        setStatus("Update check deferred", 900);
+      }
+      if (gDeviceSettings.autoUpdateFirmware && gOtaManifest.parsed &&
+          !gOtaManifest.url.isEmpty() && gOtaManifest.version != kAppVersion) {
+        applyOtaFromManifest();
+      }
+      appendRuntimeLog("CTX", "boot topic preload deferred", false);
+      gBootBackgroundStep = 10;
+      break;
+    default:
+      gBootBackgroundActive = false;
+      gBootBackgroundLabel = "";
+      setStatus("Ready", 900);
+      logf("[BOOT] background done ms=%u", static_cast<unsigned>(millis()));
+      break;
+  }
 }
 
 void sendDeviceHello() {
@@ -90,7 +203,7 @@ void sendDeviceHello() {
   caps["face_animation"] = true;
   caps["presence_scan"] = false;
   caps["face_enrollment"] = false;
-  caps["ble_provisioning"] = true;
+  caps["ble_provisioning"] = false;
   caps["device_actions"] = true;
   caps["device_actions_version"] = kDeviceActionCatalogVersion;
   caps["device_actions_count"] = static_cast<uint32_t>(kDeviceActionCatalogCount);
@@ -184,7 +297,7 @@ void startHubWebSocket() {
     return;
   }
   if (gHubHost.isEmpty()) {
-    pushError("Hub endpoint is empty. Use BLE provisioning.");
+    pushError("Hub endpoint is empty. Rebuild with defaults or restore saved config.");
     return;
   }
 
@@ -201,7 +314,7 @@ void pauseHubWebSocketForVoice() {
     gResumeWsAfterVoice = false;
     return;
   }
-  if (gBleActive || gHubHost.isEmpty()) {
+  if (gHubHost.isEmpty()) {
     return;
   }
   gResumeWsAfterVoice = true;
@@ -222,7 +335,7 @@ void resumeHubWebSocketAfterVoice() {
   }
   gResumeWsAfterVoice = false;
   gWifiReady = WiFi.status() == WL_CONNECTED;
-  if (!gBleActive && gWifiReady && !gHubHost.isEmpty()) {
+  if (gWifiReady && !gHubHost.isEmpty()) {
     logf("[WS] resume after voice");
     startHubWebSocket();
   }

@@ -205,7 +205,7 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
       if (showProgress) {
         updateTransferUi(written, progressTotal, "waiting");
       }
-      delay(2);
+      pumpBlockingNetworkUi();
       continue;
     }
     size_t chunk = min(available, sizeof(buffer));
@@ -227,6 +227,7 @@ bool downloadUrlToFile(const String& url, const String& path, const String& expe
     if (showProgress) {
       updateTransferUi(written, progressTotal, "receiving");
     }
+    pumpBlockingNetworkUi();
   }
   http.end();
   out.close();

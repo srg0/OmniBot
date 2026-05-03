@@ -49,20 +49,53 @@ void pruneVoiceNotes() {
 }
 
 void loadVoiceNotes() {
+  startVoiceNotesScan();
+  while (!serviceVoiceNotesScan(18)) {
+    pumpBlockingNetworkUi();
+  }
+}
+
+void startVoiceNotesScan() {
+  if (gVoiceNotesScanActive) {
+    gVoiceNotesScanDir.close();
+    gVoiceNotesScanActive = false;
+  }
   gVoiceNotes.clear();
+  gVoiceNotesScanCount = 0;
   fs::FS* fs = activeVoiceFs();
   if (!gStorageReady || !ensureVoiceStorage()) {
     return;
   }
-  File dir = fs->open(kVoiceDir);
-  if (!dir || !dir.isDirectory()) {
+  gVoiceNotesScanDir = fs->open(kVoiceDir);
+  if (!gVoiceNotesScanDir || !gVoiceNotesScanDir.isDirectory()) {
+    gVoiceNotesScanDir.close();
     return;
   }
+  gVoiceNotesScanActive = true;
+}
 
-  while (true) {
-    File file = dir.openNextFile();
+bool serviceVoiceNotesScan(uint32_t budgetMs) {
+  if (!gVoiceNotesScanActive) {
+    return true;
+  }
+  fs::FS* fs = activeVoiceFs();
+  if (!fs) {
+    gVoiceNotesScanDir.close();
+    gVoiceNotesScanActive = false;
+    return true;
+  }
+
+  uint32_t startMs = millis();
+  while (millis() - startMs <= budgetMs) {
+    File file = gVoiceNotesScanDir.openNextFile();
     if (!file) {
-      break;
+      gVoiceNotesScanDir.close();
+      gVoiceNotesScanActive = false;
+      sortVoiceNotesNewestFirst();
+      pruneVoiceNotes();
+      appendRuntimeLog("VOICE", "notes loaded count=" + String(gVoiceNotes.size()), false);
+      logf("[VOICE] notes loaded count=%u", static_cast<unsigned>(gVoiceNotes.size()));
+      return true;
     }
     String path = file.path();
     file.close();
@@ -85,17 +118,24 @@ void loadVoiceNotes() {
     note.id = doc["id"] | "";
     note.audioPath = doc["audio_path"] | "";
     note.metaPath = path;
-    note.title = doc["title"] | "Voice note";
-    note.preview = doc["preview"] | "";
+    note.title = trimPreview(doc["title"] | "Voice note", 40);
+    note.preview = trimPreview(doc["preview"] | "", 56);
     note.sampleRate = doc["sample_rate"] | 16000;
     note.durationMs = doc["duration_ms"] | 0;
     note.assistant = doc["assistant"] | false;
     if (!note.id.isEmpty() && !note.audioPath.isEmpty() && fsExists(*fs, note.audioPath)) {
       gVoiceNotes.push_back(note);
+      ++gVoiceNotesScanCount;
+      if (gVoiceNotes.size() > voiceNoteLimit() + 8) {
+        sortVoiceNotesNewestFirst();
+        while (gVoiceNotes.size() > voiceNoteLimit()) {
+          gVoiceNotes.pop_back();
+        }
+      }
     }
+    yield();
   }
-  sortVoiceNotesNewestFirst();
-  pruneVoiceNotes();
+  return false;
 }
 
 String filenameFromPath(const String& path) {
@@ -200,4 +240,3 @@ void moveSelectedAudioAssetInFolder(int delta) {
     }
   }
 }
-

@@ -48,7 +48,7 @@ void appendRuntimeLog(const String& area, const String& message, bool persist = 
 }
 
 void logf(const char* fmt, ...) {
-  char buf[256];
+  char buf[768];
   va_list args;
   va_start(args, fmt);
   vsnprintf(buf, sizeof(buf), fmt, args);

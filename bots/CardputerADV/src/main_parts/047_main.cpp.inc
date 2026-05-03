@@ -438,9 +438,7 @@ bool handleGlobalEscape() {
     setFaceMode(FaceMode::Idle);
   }
 
-  if (!gBleActive) {
-    setUiMode(UiMode::Home);
-  }
+  setUiMode(UiMode::Home);
   setStatus("Ready", 1000);
   setKeyDiag("esc:reset");
   appendRuntimeLog("UI", "escape reset", false);

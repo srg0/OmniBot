@@ -169,31 +169,6 @@ void renderChatUi() {
   renderDebugOverlay();
 }
 
-void renderBleUi() {
-  auto& d = gCanvas;
-  d.fillScreen(TFT_BLACK);
-  d.setFont(&fonts::Font2);
-  d.setTextSize(2);
-  d.setTextColor(TFT_CYAN, TFT_BLACK);
-  d.setCursor(18, 18);
-  d.print("BT SETUP");
-
-  d.setTextSize(1);
-  d.setTextColor(TFT_WHITE, TFT_BLACK);
-  d.setCursor(10, 52);
-  d.print("Open OmniBot hub");
-  d.setCursor(10, 64);
-  d.print("Add New Bot over BLE");
-  d.setCursor(10, 88);
-  d.print("Sends Wi-Fi + endpoint.");
-  d.setCursor(10, 100);
-  d.print("After provisioning, device reboots.");
-  d.setFont(&fonts::Font0);
-  d.setCursor(10, 124);
-  d.print("Use /clearwifi later to reset");
-  d.setFont(&fonts::Font2);
-}
-
 void renderStatusBar() {
   auto& d = gCanvas;
   d.fillRect(0, 126, 240, 9, 0x18C3);
@@ -211,9 +186,7 @@ void render() {
   uint32_t renderStartMs = millis();
   if (gStatusUntilMs != 0 && millis() > gStatusUntilMs) {
     gStatusUntilMs = 0;
-    if (gBleActive) {
-      gStatusText = "Waiting for BLE provisioning";
-    } else if (gRecording) {
+    if (gRecording) {
       gStatusText = "Listening...";
     } else if (gPlaybackActive) {
       gStatusText = "Speaking...";

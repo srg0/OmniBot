@@ -129,85 +129,25 @@
   return true;
 }
 
-class ProvisionCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* characteristic) override {
-    std::string rx = characteristic->getValue();
-    if (rx.empty() || rx.size() > 900) {
-      return;
-    }
-
-    DynamicJsonDocument doc(768);
-    DeserializationError err = deserializeJson(doc, rx);
-    if (err) {
-      return;
-    }
-
-    bool changed = false;
-
-    if (!doc["ssid"].isNull()) {
-      String ssid = doc["ssid"].as<String>();
-      ssid.trim();
-      if (!ssid.isEmpty()) {
-        saveWifiCreds(ssid, doc["password"].as<String>());
-        changed = true;
-      }
-    }
-
-    if (!doc["hub_ip"].isNull()) {
-      String host = doc["hub_ip"].as<String>();
-      host.trim();
-      uint16_t port = static_cast<uint16_t>(doc["hub_port"] | kDefaultHubPort);
-      if (!host.isEmpty()) {
-        saveHubEndpoint(host, port);
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      setStatus("Provisioning saved, rebooting...");
-      gPendingRestart = true;
-    }
-  }
-};
-
-void startBleProvisioning() {
-  if (gBleActive) {
-    return;
-  }
-
-  if (gWsReady) {
-    gWs.disconnect();
-    gWsReady = false;
-  }
-  WiFi.disconnect(true, false);
-  WiFi.mode(WIFI_OFF);
-  delay(100);
-
-  BLEDevice::init(kBleServiceName);
-  BLEServer* server = BLEDevice::createServer();
-  BLEService* service = server->createService(kBleServiceUuid);
-  BLECharacteristic* characteristic = service->createCharacteristic(
-      kBleWifiCharUuid, BLECharacteristic::PROPERTY_WRITE);
-  characteristic->setCallbacks(new ProvisionCallbacks());
-  service->start();
-
-  BLEAdvertising* advertising = BLEDevice::getAdvertising();
-  advertising->addServiceUUID(kBleServiceUuid);
-  advertising->setScanResponse(true);
-  advertising->setMinPreferred(0x06);
-  advertising->setMinPreferred(0x12);
-  BLEDevice::startAdvertising();
-
-  gBleActive = true;
-  gWifiReady = false;
-  setStatus("Waiting for BLE provisioning");
-  pushSystem("Bluetooth provisioning started.");
-}
-
 void syncClockFromNtp(bool force) {
   ensureBangkokTimezone();
   if (!gWifiReady) {
     return;
+  }
+  uint32_t now = millis();
+  if (gLastTimeSyncAttemptMs != 0 && !gTimeValid) {
+    if (hasValidSystemTime()) {
+      gTimeValid = true;
+      gLastTimeSyncMs = now;
+      persistRtcFromSystemTime();
+      setStatus("Clock synced", 1000);
+      logf("[TIME] synced epoch=%lu", static_cast<unsigned long>(time(nullptr)));
+      return;
+    }
+    if (now - gLastTimeSyncAttemptMs < 8000) {
+      return;
+    }
+    logf("[TIME] sync timed out");
   }
   if (!force) {
     if (gTimeValid && gLastTimeSyncMs != 0 && millis() - gLastTimeSyncMs < kTimeResyncMs) {
@@ -218,20 +158,12 @@ void syncClockFromNtp(bool force) {
     }
   }
 
-  gLastTimeSyncAttemptMs = millis();
-  configTzTime(kBangkokTz, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
-  uint32_t start = millis();
-  while (millis() - start < 8000) {
-    if (hasValidSystemTime()) {
-      gTimeValid = true;
-      gLastTimeSyncMs = millis();
-      persistRtcFromSystemTime();
-      setStatus("Clock synced", 1000);
-      logf("[TIME] synced epoch=%lu", static_cast<unsigned long>(time(nullptr)));
-      return;
-    }
-    delay(100);
+  gLastTimeSyncAttemptMs = now;
+  gTimeValid = hasValidSystemTime();
+  if (gTimeValid) {
+    gLastTimeSyncMs = now;
+    return;
   }
-  logf("[TIME] sync timed out");
+  configTzTime(kBangkokTz, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
+  setStatus("Clock sync...", 700);
 }
-

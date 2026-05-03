@@ -142,33 +142,19 @@ void initStorage() {
     return;
   }
 
-  Serial.println("[BOOT] storage: scan emoji");
-  scanEmojiAssets();
   gStorageReady = gSdReady || gLittleFsReady;
   gStorageLabel = activeVoiceStorageLabel();
   if (!gStorageReady) {
     setStatus("Storage unavailable", 1000);
     return;
   }
-  Serial.println("[BOOT] storage: ensure voice");
+  Serial.println("[BOOT] storage: minimal ready");
   ensureVoiceStorage();
   if (!gSdReady && gLittleFsReady) {
     ensurePomodoroStorageOn(LittleFS);
   }
-  Serial.println("[BOOT] storage: load voice notes");
-  loadVoiceNotes();
-  Serial.println("[BOOT] storage: defer audio scan");
-  appendRuntimeLog("LIB", "audio scan deferred", false);
-  Serial.println("[BOOT] storage: load manifests");
-  loadAssetManifestSummary();
-  loadOtaManifestSummary();
-  Serial.println("[BOOT] storage: load contexts");
-  loadConversationContexts();
   pushSystem("Storage: " + gStorageLabel);
-  if (gEmojiAssetCount > 0) {
-    pushSystem("Emoji SD: " + String(gEmojiAssetCount));
-  }
-  Serial.println("[BOOT] storage: ready");
+  appendRuntimeLog("BOOT", "storage background deferred", false);
 }
 
 bool remountSdStorage(const char* reason) {

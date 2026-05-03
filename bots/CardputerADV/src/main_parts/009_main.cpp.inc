@@ -199,6 +199,9 @@ String makeClientTurnId(const char* prefix) {
 }
 
 void pumpBlockingNetworkUi() {
+  if (gMainLoopTaskHandle != nullptr && xTaskGetCurrentTaskHandle() == gMainLoopTaskHandle) {
+    handleHostSerialInput();
+  }
   uint32_t now = millis();
   if (gBlockingRenderPumpEnabled && now - gLastBlockingRenderPumpMs >= kBusyRenderIntervalMs) {
     gLastBlockingRenderPumpMs = now;

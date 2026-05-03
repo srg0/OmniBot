@@ -70,8 +70,7 @@
          (contentLength < 0 || bytesRead < static_cast<size_t>(contentLength))) {
     int avail = stream->available();
     if (avail <= 0) {
-      delay(1);
-      yield();
+      pumpBlockingNetworkUi();
       continue;
     }
     size_t chunk = static_cast<size_t>(avail);
@@ -104,6 +103,7 @@
       if ((bytesRead % (16 * 1024)) == 0 || (contentLength > 0 && bytesRead == static_cast<size_t>(contentLength))) {
         setVoiceDiag("tts: rx " + String(static_cast<unsigned>(bytesRead / 1024)) + "k");
       }
+      pumpBlockingNetworkUi();
     }
   }
   pcmFile.close();

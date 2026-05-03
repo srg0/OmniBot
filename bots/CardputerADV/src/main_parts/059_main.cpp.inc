@@ -197,6 +197,21 @@
     d.setCursor(123, 13);
     d.print("agent thinking");
   }
+  if (gBootBackgroundActive) {
+    uint8_t phase = static_cast<uint8_t>((millis() / 180U) % 4U);
+    uint16_t markerBg = realtime ? rgb565_local(34, 18, 7) : rgb565_local(3, 21, 31);
+    uint16_t markerEdge = realtime ? rgb565_local(140, 76, 25) : rgb565_local(14, 71, 96);
+    d.fillRoundRect(122, 74, 92, 18, 7, markerBg);
+    d.drawRoundRect(122, 74, 92, 18, 7, markerEdge);
+    for (uint8_t i = 0; i < 4; ++i) {
+      uint16_t dot = i == phase ? c1 : (realtime ? rgb565_local(84, 45, 15) : rgb565_local(16, 52, 66));
+      d.fillCircle(132 + i * 8, 83, i == phase ? 3 : 2, dot);
+    }
+    d.setFont(&fonts::Font0);
+    d.setTextColor(realtime ? rgb565_local(255, 206, 112) : rgb565_local(147, 229, 247), markerBg);
+    d.setCursor(168, 79);
+    d.print(fitCurrentFontToWidth(gBootBackgroundLabel, 42));
+  }
   renderAssistantPulseChatHint();
   renderTopicOverlayIfVisible();
   renderLauncherOverlay();

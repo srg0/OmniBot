@@ -227,4 +227,3 @@ void renderNotesUi() {
     d.fillRoundRect(224, 48, 2, railH, 1, rgb565_local(23, 32, 42));
     d.fillRoundRect(224, knobY, 2, knobH, 1, cyan);
   }
-
