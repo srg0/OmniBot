@@ -1,4 +1,4 @@
-  constexpr uint16_t bg = rgb565_local(196, 0, 0);
+  constexpr uint16_t bg = rgb565_local(0, 132, 52);
   constexpr uint16_t white = rgb565_local(244, 251, 255);
   constexpr uint16_t cyan = rgb565_local(47, 227, 255);
   constexpr uint16_t violet = rgb565_local(157, 102, 255);
