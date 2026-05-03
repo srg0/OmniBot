@@ -268,6 +268,7 @@ void loop() {
   serviceRecordingToFile();
   servicePlaybackStream();
   serviceDeferredDeviceActions();
+  servicePendingOtaAction();
   serviceAutoInboxPoll();
 
   if (gPlaybackActive && !gPlaybackStreaming && !M5Cardputer.Speaker.isPlaying()) {

@@ -119,15 +119,22 @@
     return true;
   }
   if (type == "ota.check") {
+    gPendingOtaCheckAction = true;
+    gPendingOtaActionAfterMs = millis() + 500;
+    logf("[ACT] ota.check queued");
     setUiMode(UiMode::Ota);
     setStatus("Action: OTA check", 700);
-    return fetchRemoteOtaManifest();
+    return true;
   }
   if (type == "ota.apply") {
+    gPendingOtaCheckAction = true;
+    gPendingOtaApplyAction = true;
+    gPendingOtaActionAfterMs = millis() + 500;
+    logf("[ACT] ota.apply queued");
     setUiMode(UiMode::Ota);
     setStatus("Action: OTA apply", 700);
     appendRuntimeLog("OTA", "apply requested by device action", true);
-    return applyOtaFromManifest();
+    return true;
   }
   if (type == "topic.next") {
     return switchTopicRelative(1, true);
@@ -198,6 +205,30 @@ void serviceDeferredDeviceActions() {
   gDeferredDeviceActionsJson = "";
   logf("[ACT] run deferred bytes=%u", static_cast<unsigned>(json.length()));
   executeDeviceActionsJson(json);
+}
+
+void servicePendingOtaAction() {
+  if ((!gPendingOtaCheckAction && !gPendingOtaApplyAction) || millis() < gPendingOtaActionAfterMs ||
+      gPlaybackActive || gRecording || gSubmitting || gThinking || gOtaApplyInProgress) {
+    return;
+  }
+  bool shouldCheck = gPendingOtaCheckAction;
+  bool shouldApply = gPendingOtaApplyAction;
+  gPendingOtaCheckAction = false;
+  gPendingOtaApplyAction = false;
+  logf("[ACT] ota action run check=%d apply=%d", static_cast<int>(shouldCheck), static_cast<int>(shouldApply));
+  appendRuntimeLog("OTA", String("action run check=") + String(static_cast<int>(shouldCheck)) +
+                            " apply=" + String(static_cast<int>(shouldApply)), true);
+  setUiMode(UiMode::Ota);
+  bool checkOk = true;
+  if (shouldCheck) {
+    checkOk = fetchRemoteOtaManifest();
+    logf("[ACT] ota.check result=%d", static_cast<int>(checkOk));
+  }
+  if (shouldApply && checkOk) {
+    bool applyOk = applyOtaFromManifest();
+    logf("[ACT] ota.apply result=%d", static_cast<int>(applyOk));
+  }
 }
 
 bool findLauncherEntryForMode(UiMode mode, int& groupIndex, int& subIndex) {

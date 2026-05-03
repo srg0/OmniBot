@@ -287,6 +287,7 @@ bool executeDeviceActionsJson(const String& json);
 bool executeDeviceAction(JsonObjectConst action);
 bool executeOrDeferDeviceActionsJson(const String& json);
 void serviceDeferredDeviceActions();
+void servicePendingOtaAction();
 
 void mapTcaRawKeyToPhysical(uint8_t keyValue, uint8_t& row, uint8_t& col) {
   uint8_t unit = keyValue % 10;
