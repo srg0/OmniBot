@@ -189,11 +189,9 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
   String topicKey = currentConversationKey();
   if (topicKey != gInboxLastTopicKey) {
     gInboxLastTopicKey = topicKey;
-    gInboxLastSeq = 0;
-    logf("[INBOX] topic reset key=%s", topicKey.c_str());
+    logf("[INBOX] topic key=%s", topicKey.c_str());
   }
-  String url = hubBaseUrl() + "/api/cardputer/device-events/pending?limit=1&text_chars=1024&topic_key=" +
-               urlEncodePathSegment(topicKey);
+  String url = hubBaseUrl() + "/api/cardputer/device-events/pending?limit=1&text_chars=1024";
   if (assistantOnly) {
     url += "&sender_kind=assistant";
   }
