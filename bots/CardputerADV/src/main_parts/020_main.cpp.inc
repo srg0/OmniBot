@@ -235,7 +235,7 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
       JsonObject event = items[0].as<JsonObject>();
       eventId = String(event["event_id"] | "");
       JsonObject item = event["message"].as<JsonObject>();
-      if (handleInboxHistoryItem(item, forcePlay, assistantOnly)) {
+      if (handleInboxHistoryItem(item, true, assistantOnly)) {
         found = true;
       }
     }
