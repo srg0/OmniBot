@@ -32,7 +32,7 @@ struct DeviceActionCatalogEntry {
   const char* example;
 };
 
-constexpr const char* kDeviceActionCatalogVersion = "2026-05-03.1";
+constexpr const char* kDeviceActionCatalogVersion = "2026-05-03.2";
 constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
     {"focus.start", "start focus", "set pomodoro to 45 minutes"},
     {"focus.pause", "pause focus", "pause focus"},
@@ -52,6 +52,8 @@ constexpr DeviceActionCatalogEntry kDeviceActionCatalog[] = {
     {"settings.set_ota_auto", "OTA auto", "turn auto updates on"},
     {"settings.set_ota_boot_check", "OTA boot", "check updates on boot"},
     {"settings.set_ota_min_battery", "OTA battery", "update above 50 percent"},
+    {"ota.check", "OTA check", "check for firmware update"},
+    {"ota.apply", "OTA apply", "install firmware update"},
     {"topic.next", "next topic", "next topic"},
     {"topic.prev", "prev topic", "previous topic"},
     {"topic.open", "open topic", "open project topic"},

@@ -118,6 +118,17 @@
     setStatus("Action: OTA battery " + String(gDeviceSettings.minBatteryForUpdate) + "%", 1200);
     return true;
   }
+  if (type == "ota.check") {
+    setUiMode(UiMode::Ota);
+    setStatus("Action: OTA check", 700);
+    return fetchRemoteOtaManifest();
+  }
+  if (type == "ota.apply") {
+    setUiMode(UiMode::Ota);
+    setStatus("Action: OTA apply", 700);
+    appendRuntimeLog("OTA", "apply requested by device action", true);
+    return applyOtaFromManifest();
+  }
   if (type == "topic.next") {
     return switchTopicRelative(1, true);
   }
