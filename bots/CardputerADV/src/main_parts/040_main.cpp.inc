@@ -90,6 +90,60 @@ bool bootBackgroundAllowsConnectivity() {
   return !gBootBackgroundActive || gBootBackgroundStep >= 8;
 }
 
+void schedulePostInstallStoryIfNeeded() {
+  if (strcmp(kAppVersion, kPostInstallStoryVersion) != 0 || !gOtaPendingVerify) {
+    return;
+  }
+  gPrefs.begin(kPrefsDeviceNs, true);
+  String spokenVersion = gPrefs.getString(kPostInstallStoryPrefsKey, "");
+  gPrefs.end();
+  if (spokenVersion == kAppVersion) {
+    return;
+  }
+  gPostInstallStoryPending = true;
+  gPostInstallStoryAttempts = 0;
+  gPostInstallStoryNextMs = millis() + 15000U;
+  appendRuntimeLog("BOOT", "post-install story queued", true);
+}
+
+void servicePostInstallStory() {
+  if (!gPostInstallStoryPending || millis() < gPostInstallStoryNextMs) {
+    return;
+  }
+  if (strcmp(kAppVersion, kPostInstallStoryVersion) != 0) {
+    gPostInstallStoryPending = false;
+    return;
+  }
+  if (gOtaPendingVerify || !gOtaConfirmedThisBoot) {
+    gPostInstallStoryNextMs = millis() + 3000U;
+    return;
+  }
+  if (gBootBackgroundActive || !bootBackgroundAllowsConnectivity() || !gWifiReady || gHubHost.isEmpty() ||
+      gOtaApplyInProgress || gTransferUiActive || gRecording || gSubmitting || gThinking || gPlaybackActive ||
+      gRealtimeActive || gRealtimeConnected || gRealtimeRecording || gRealtimeAwaiting) {
+    gPostInstallStoryNextMs = millis() + 5000U;
+    return;
+  }
+
+  ++gPostInstallStoryAttempts;
+  appendRuntimeLog("BOOT", "post-install story attempt " + String(gPostInstallStoryAttempts), true);
+  bool played = requestAndPlayTts(kPostInstallStoryText);
+  if (played) {
+    gPrefs.begin(kPrefsDeviceNs, false);
+    gPrefs.putString(kPostInstallStoryPrefsKey, kAppVersion);
+    gPrefs.end();
+    gPostInstallStoryPending = false;
+    appendRuntimeLog("BOOT", "post-install story played", true);
+    return;
+  }
+  appendRuntimeLog("BOOT", "post-install story tts failed", true);
+  if (gPostInstallStoryAttempts >= 3) {
+    gPostInstallStoryPending = false;
+    return;
+  }
+  gPostInstallStoryNextMs = millis() + 60000U;
+}
+
 void beginDeferredWifi() {
   gBootBackgroundLabel = "wifi";
   gBootWifiStarted = true;

@@ -106,7 +106,6 @@
   }
 
   String hhmm = "--:--";
-  const bool showCatPictogram = state != AssistantPulseState::Recording && !realtime;
   time_t now = time(nullptr);
   if (now > 100000) {
     struct tm timeinfo;
@@ -142,38 +141,11 @@
   }
   d.fillRoundRect(128, 61, 82, 2, 1, realtime ? rgb565_local(189, 91, 24) : rgb565_local(16, 83, 112));
 
-	  if (showCatPictogram) {
-	    const int16_t kx = 171;
-	    const int16_t ky = 43;
-	    const uint16_t catFill = state == AssistantPulseState::Thinking
-	                                 ? amber
-	                                 : state == AssistantPulseState::Playback ? green : fg;
-	    const uint16_t catInner = state == AssistantPulseState::Thinking
-	                                  ? rgb565_local(255, 220, 139)
-	                                  : state == AssistantPulseState::Playback ? rgb565_local(178, 255, 205)
-	                                                                            : rgb565_local(190, 235, 246);
-	    d.fillTriangle(kx - 28, ky - 11, kx - 21, ky - 30, kx - 8, ky - 15, catFill);
-	    d.fillTriangle(kx + 8, ky - 15, kx + 21, ky - 30, kx + 28, ky - 11, catFill);
-	    d.fillTriangle(kx - 21, ky - 15, kx - 19, ky - 24, kx - 13, ky - 16, catInner);
-	    d.fillTriangle(kx + 13, ky - 16, kx + 19, ky - 24, kx + 21, ky - 15, catInner);
-	    d.fillCircle(kx, ky, 23, catFill);
-	    d.fillRoundRect(kx - 24, ky - 9, 48, 24, 10, catFill);
-	    d.fillCircle(kx - 8, ky - 2, 3, clockPanel);
-	    d.fillCircle(kx + 8, ky - 2, 3, clockPanel);
-	    d.fillCircle(kx - 7, ky - 3, 1, catInner);
-	    d.fillCircle(kx + 9, ky - 3, 1, catInner);
-	    d.fillTriangle(kx - 3, ky + 6, kx + 3, ky + 6, kx, ky + 10, red);
-	    d.drawFastHLine(kx - 18, ky + 7, 13, clockPanel);
-	    d.drawFastHLine(kx + 5, ky + 7, 13, clockPanel);
-	    d.drawFastHLine(kx - 20, ky + 12, 14, clockPanel);
-	    d.drawFastHLine(kx + 6, ky + 12, 14, clockPanel);
-	  } else {
-	    d.setFont(&fonts::Font7);
-    d.setTextColor(fg, clockPanel);
-	    int tw = d.textWidth(hhmm);
-	    d.setCursor(171 - tw / 2, state == AssistantPulseState::Recording ? 18 : 20);
-	    d.print(hhmm);
-	  }
+	  d.setFont(&fonts::Font7);
+  d.setTextColor(fg, clockPanel);
+	  int tw = d.textWidth(hhmm);
+	  d.setCursor(171 - tw / 2, state == AssistantPulseState::Recording ? 18 : 20);
+	  d.print(hhmm);
 
   int16_t waveX = state == AssistantPulseState::Ready ? 121 : 117;
   int16_t waveY = state == AssistantPulseState::Ready ? 88 : 86;

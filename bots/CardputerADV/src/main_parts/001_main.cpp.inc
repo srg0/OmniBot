@@ -42,7 +42,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.88-dev"
+#define APP_VERSION "0.2.89-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -56,6 +56,12 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
+constexpr const char* kPostInstallStoryVersion = "0.2.89-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_0289";
+constexpr const char* kPostInstallStoryText =
+    u8"Прошивка установлена. Сказка: в одном тёмном экране жил маленький синий огонёк. "
+    u8"Он тикал вместе с часами и охранял время. Когда путник уставал, огонёк говорил: "
+    u8"не спеши, сделай один верный шаг. И каждый шаг становился светлее, пока дорога сама не привела его домой.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";

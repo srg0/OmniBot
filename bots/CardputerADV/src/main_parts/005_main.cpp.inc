@@ -178,6 +178,8 @@ bool downloadAndPlayResponseAudio(const String& url, const String& localPath, co
 bool requestAndPlayTts(const String& text);
 bool fetchLatestInboxMessage(bool forcePlay = false, bool speak = true, bool quiet = false, bool assistantOnly = false);
 bool injectInboxText(const String& text, bool speakAfter = true);
+void schedulePostInstallStoryIfNeeded();
+void servicePostInstallStory();
 void saveHubEndpoint(const String& host, uint16_t port);
 void syncClockFromNtp(bool force = false);
 void flashActivityLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs = 180);

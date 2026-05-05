@@ -200,6 +200,7 @@ void setup() {
   loadDeviceSettings();
   loadAlarmSettings();
   beginOtaBootGuard();
+  schedulePostInstallStoryIfNeeded();
   if (gOtaBootApplyMode) {
     Serial.printf("[OTA] clean boot updater heap=%u largest=%u\n",
                   static_cast<unsigned>(ESP.getFreeHeap()),
@@ -272,6 +273,7 @@ void loop() {
   servicePlaybackStream();
   serviceDeferredDeviceActions();
   servicePendingOtaAction();
+  servicePostInstallStory();
   serviceAutoInboxPoll();
 
   if (gPlaybackActive && !gPlaybackStreaming && !M5Cardputer.Speaker.isPlaying()) {
