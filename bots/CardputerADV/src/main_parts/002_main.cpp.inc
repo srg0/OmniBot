@@ -169,6 +169,7 @@ enum class UiMode : uint8_t {
   Calculator,
   Alarm,
   Stopwatch,
+  Calendar,
   Logs,
 };
 

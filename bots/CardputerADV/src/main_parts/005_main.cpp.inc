@@ -228,6 +228,8 @@ void focusTone(uint16_t freq, uint16_t durationMs);
 void serviceAlarm();
 bool handleAlarmKey(char key, const Keyboard_Class::KeysState& keys);
 void renderAlarmUi();
+bool handleCalendarKey(char key, const Keyboard_Class::KeysState& keys);
+void renderCalendarUi();
 void updateBatterySnapshot(bool force = false);
 void scanAudioAssets();
 bool startPlaybackStreamFromWavFile(const String& path, const String& diag);

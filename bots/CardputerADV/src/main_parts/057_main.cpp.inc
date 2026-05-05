@@ -58,19 +58,19 @@ void renderSettingsUi() {
 
 void renderCalculatorUi() {
   auto& d = gCanvas;
-  const uint16_t bg = rgb565_local(3, 7, 11);
-  const uint16_t panel = rgb565_local(9, 17, 24);
-  const uint16_t row = rgb565_local(14, 28, 38);
+  const uint16_t bg = rgb565_local(3, 46, 21);
+  const uint16_t panel = rgb565_local(5, 69, 31);
+  const uint16_t row = rgb565_local(11, 92, 42);
   const uint16_t cyan = rgb565_local(47, 227, 255);
   const uint16_t green = rgb565_local(88, 240, 141);
   const uint16_t amber = rgb565_local(255, 194, 74);
-  const uint16_t muted = rgb565_local(126, 143, 157);
+  const uint16_t muted = rgb565_local(176, 222, 190);
   uint16_t accent = gCalcStatus == "Error" ? amber : green;
 
   d.fillScreen(bg);
   d.fillRoundRect(6, 5, 228, 124, 12, panel);
   d.drawRoundRect(6, 5, 228, 124, 12, accent);
-  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(22, 44, 57));
+  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(24, 126, 62));
 
   d.setFont(&fonts::Font2);
   d.setTextColor(cyan, panel);
@@ -88,9 +88,9 @@ void renderCalculatorUi() {
   d.setCursor(24, 41);
   d.print(expr);
 
-  d.fillRoundRect(16, 68, 208, 25, 8, rgb565_local(3, 12, 16));
+  d.fillRoundRect(16, 68, 208, 25, 8, rgb565_local(2, 37, 18));
   d.setFont(&fonts::Font4);
-  d.setTextColor(accent, rgb565_local(3, 12, 16));
+  d.setTextColor(accent, rgb565_local(2, 37, 18));
   String result = fitCurrentFontToWidth(gCalcResult, 194);
   d.setCursor(218 - d.textWidth(result), 72);
   d.print(result);
@@ -108,6 +108,136 @@ void renderCalculatorUi() {
   d.setTextColor(muted, panel);
   d.setCursor(82, 114);
   d.print("Del back  Esc home");
+  d.setFont(&fonts::Font2);
+
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
+bool calendarBaseLocalTime(tm& today, tm& monthStart) {
+  if (!hasValidSystemTime()) {
+    return false;
+  }
+  time_t now = time(nullptr);
+  localtime_r(&now, &today);
+  monthStart = today;
+  monthStart.tm_sec = 0;
+  monthStart.tm_min = 0;
+  monthStart.tm_hour = 12;
+  monthStart.tm_mday = 1;
+  monthStart.tm_mon += gCalendarMonthOffset;
+  time_t monthEpoch = mktime(&monthStart);
+  localtime_r(&monthEpoch, &monthStart);
+  return true;
+}
+
+bool calendarLeapYear(int year) {
+  return ((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0);
+}
+
+uint8_t calendarDaysInMonth(int year, int monthZero) {
+  static constexpr uint8_t kDaysByMonth[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (monthZero == 1 && calendarLeapYear(year)) {
+    return 29;
+  }
+  return kDaysByMonth[clampValue<int>(monthZero, 0, 11)];
+}
+
+const char* calendarMonthName(uint8_t monthZero) {
+  static constexpr const char* kNames[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                             "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+  return kNames[clampValue<int>(monthZero, 0, 11)];
+}
+
+void renderCalendarUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(6, 15, 22);
+  const uint16_t cell = rgb565_local(9, 22, 31);
+  const uint16_t todayBg = rgb565_local(8, 58, 46);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t muted = rgb565_local(126, 143, 157);
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, cyan);
+  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(18, 48, 62));
+
+  tm today = {};
+  tm monthStart = {};
+  if (!calendarBaseLocalTime(today, monthStart)) {
+    d.setFont(&fonts::Font2);
+    d.setTextColor(amber, panel);
+    d.setCursor(18, 18);
+    d.print("CALENDAR");
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, panel);
+    d.setCursor(22, 55);
+    d.print("Time not synced yet");
+    drawTinyFooter(panel, muted, "Wait for Wi-Fi/NTP  Esc home", 16, 116, 208);
+    d.setFont(&fonts::Font2);
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
+
+  const int year = monthStart.tm_year + 1900;
+  const uint8_t month = static_cast<uint8_t>(monthStart.tm_mon);
+  const uint8_t days = calendarDaysInMonth(year, month);
+  const uint8_t firstDowMonday = static_cast<uint8_t>((monthStart.tm_wday + 6) % 7);
+  const bool thisMonth = today.tm_year == monthStart.tm_year && today.tm_mon == monthStart.tm_mon;
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(16, 14);
+  d.print("CALENDAR");
+  String title = String(calendarMonthName(month)) + " " + String(year);
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(224 - d.textWidth(title), 14);
+  d.print(title);
+
+  d.setFont(&fonts::Font0);
+  const char* labels[7] = {"M", "T", "W", "T", "F", "S", "S"};
+  for (int i = 0; i < 7; ++i) {
+    int16_t x = 17 + i * 30;
+    d.setTextColor(i >= 5 ? amber : muted, panel);
+    d.setCursor(x + 8, 32);
+    d.print(labels[i]);
+  }
+
+  uint8_t day = 1;
+  for (int rowIdx = 0; rowIdx < 6; ++rowIdx) {
+    for (int col = 0; col < 7; ++col) {
+      const int cellIndex = rowIdx * 7 + col;
+      if (cellIndex < firstDowMonday || day > days) {
+        continue;
+      }
+      const int16_t x = 15 + col * 30;
+      const int16_t y = 42 + rowIdx * 11;
+      const bool isToday = thisMonth && day == today.tm_mday;
+      const bool weekend = col >= 5;
+      const uint16_t fill = isToday ? todayBg : cell;
+      d.fillRoundRect(x, y, 24, 9, 3, fill);
+      if (isToday) {
+        d.drawRoundRect(x, y, 24, 9, 3, green);
+      }
+      char buf[3];
+      snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(day));
+      d.setTextColor(isToday ? TFT_WHITE : (weekend ? amber : TFT_LIGHTGREY), fill);
+      d.setCursor(x + (day < 10 ? 9 : 6), y + 1);
+      d.print(buf);
+      ++day;
+    }
+  }
+
+  String todayLine = String("Today ") + calendarMonthName(static_cast<uint8_t>(today.tm_mon)) + " " +
+                     String(today.tm_mday);
+  d.setTextColor(green, panel);
+  d.setCursor(16, 109);
+  d.print(fitCurrentFontToWidth(todayLine, 86));
+  drawTinyFooter(panel, muted, "< > month   T today   Esc home", 96, 118, 126);
   d.setFont(&fonts::Font2);
 
   renderLauncherOverlay();

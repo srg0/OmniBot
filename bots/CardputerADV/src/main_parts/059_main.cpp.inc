@@ -1,11 +1,11 @@
-  constexpr uint16_t bg = rgb565_local(255, 0, 0);
+  constexpr uint16_t bg = rgb565_local(2, 7, 10);
   constexpr uint16_t white = rgb565_local(244, 251, 255);
   constexpr uint16_t cyan = rgb565_local(47, 227, 255);
   constexpr uint16_t violet = rgb565_local(157, 102, 255);
   constexpr uint16_t red = rgb565_local(255, 63, 85);
   constexpr uint16_t amber = rgb565_local(246, 194, 74);
   constexpr uint16_t green = rgb565_local(88, 240, 141);
-  constexpr uint16_t bgDecor = bg;
+  constexpr uint16_t blueFrame = rgb565_local(24, 90, 118);
   uint16_t c1 = cyan;
   uint16_t c2 = violet;
   uint16_t c3 = rgb565_local(23, 77, 90);
@@ -47,12 +47,12 @@
   d.fillScreen(bg);
   d.fillRoundRect(0, 0, 240, 135, 6, bg);
   for (int16_t y = 8; y < 132; y += 9) {
-    uint16_t line = bgDecor;
+    uint16_t line = realtime ? rgb565_local(25, 13, 5) : rgb565_local(4, 16, 31);
     d.drawFastHLine(6, y, 228, line);
   }
-  d.fillCircle(70, 58, 86, bgDecor);
-  d.fillCircle(190, 116, 70, bgDecor);
-  d.drawRoundRect(0, 0, 240, 135, 6, bgDecor);
+  d.fillCircle(70, 58, 86, realtime ? rgb565_local(20, 10, 4) : rgb565_local(4, 20, 29));
+  d.fillCircle(190, 116, 70, realtime ? rgb565_local(22, 11, 5) : rgb565_local(10, 8, 30));
+  d.drawRoundRect(0, 0, 240, 135, 6, realtime ? rgb565_local(86, 52, 24) : blueFrame);
 
   uint32_t nowMs = millis();
   float t = nowMs / 1000.0f;

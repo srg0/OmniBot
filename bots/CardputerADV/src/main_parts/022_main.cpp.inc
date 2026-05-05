@@ -222,6 +222,8 @@ bool mapActionUiMode(String mode, UiMode& out) {
   } else if (mode == "stopwatch" || mode == "stop_watch" || mode == "timer_up" ||
              mode == "chrono" || mode == "chronometer") {
     out = UiMode::Stopwatch;
+  } else if (mode == "calendar" || mode == "cal" || mode == "month") {
+    out = UiMode::Calendar;
   } else if (mode == "battery") {
     out = UiMode::Battery;
   } else if (mode == "ota" || mode == "firmware") {

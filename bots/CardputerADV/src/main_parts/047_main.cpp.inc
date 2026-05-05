@@ -589,6 +589,26 @@ bool handleAlarmKey(char key, const Keyboard_Class::KeysState& keys) {
   return true;
 }
 
+bool handleCalendarKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (key == ',' || key == '<' || key == ';' || key == '-' || key == '_' || lowerKey == 'z') {
+    gCalendarMonthOffset = max<int>(-120, gCalendarMonthOffset - 1);
+    setStatus("Calendar previous month", 700);
+    return true;
+  }
+  if (key == '.' || key == '>' || key == '/' || key == '+' || key == '=' || lowerKey == 'x') {
+    gCalendarMonthOffset = min<int>(120, gCalendarMonthOffset + 1);
+    setStatus("Calendar next month", 700);
+    return true;
+  }
+  if (keys.enter || keys.space || key == '\r' || key == '\n' || key == ' ' || lowerKey == 't' || lowerKey == 'r') {
+    gCalendarMonthOffset = 0;
+    setStatus("Calendar today", 700);
+    return true;
+  }
+  return true;
+}
+
 bool handleGlobalEscape() {
   bool changed = false;
 

@@ -982,6 +982,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/calendar" || cmd == "/cal") {
+    setUiMode(UiMode::Calendar);
+    return true;
+  }
+
   if (cmd == "/syncassets") {
     fetchRemoteAssetManifest();
     syncAssetsFromManifest();

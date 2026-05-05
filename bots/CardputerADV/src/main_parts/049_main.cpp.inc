@@ -59,6 +59,10 @@
     handleTypingKey('-', keys);
   } else if (gUiMode == UiMode::Alarm && (rightDown || downDown)) {
     handleTypingKey('+', keys);
+  } else if (gUiMode == UiMode::Calendar && (leftDown || upDown)) {
+    handleTypingKey(',', keys);
+  } else if (gUiMode == UiMode::Calendar && (rightDown || downDown)) {
+    handleTypingKey('.', keys);
   } else if (spaceDown && keys.ctrl) {
     handleTypingKey(' ', keys);
   } else if (enterDown) {

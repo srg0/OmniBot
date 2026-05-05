@@ -50,6 +50,9 @@
       case UiMode::Stopwatch:
         renderStopwatchUi();
         break;
+      case UiMode::Calendar:
+        renderCalendarUi();
+        break;
       case UiMode::Logs:
         renderLogsUi();
         break;

@@ -85,8 +85,9 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}, {"Notes", UiMode::Notes}}},
     {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
      {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice}, {"Assets", UiMode::Assets}}},
-    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 3,
-     {{"Focus Space", UiMode::Focus}, {"Alarm", UiMode::Alarm}, {"Stopwatch", UiMode::Stopwatch}}},
+    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 4,
+     {{"Focus Space", UiMode::Focus}, {"Alarm", UiMode::Alarm}, {"Stopwatch", UiMode::Stopwatch},
+      {"Calendar", UiMode::Calendar}}},
     {"OpenClaw", "OC", "Bridge runtime", rgb565_local(180, 150, 255), 2,
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}}},
     {"System", "SYS", "Power and settings", rgb565_local(203, 216, 226), 4,
@@ -184,6 +185,7 @@ uint32_t gTopicCreateArmedUntilMs = 0;
 int8_t gContextAnimDir = 0;
 int gLogScrollOffset = 0;
 int gSelectedSetting = 0;
+int gCalendarMonthOffset = 0;
 
 uint32_t gLastRenderMs = 0;
 uint32_t gLastUiSlowLogMs = 0;

@@ -107,6 +107,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Stopwatch && handleStopwatchKey(key, keys)) {
     return;
   }
+  if (gUiMode == UiMode::Calendar && handleCalendarKey(key, keys)) {
+    return;
+  }
   if (gUiMode == UiMode::Logs && handleLogsKey(key)) {
     return;
   }
