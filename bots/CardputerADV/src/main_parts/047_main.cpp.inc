@@ -635,6 +635,30 @@ constexpr uint8_t kDaikinAcFanAuto = 0xA;
 constexpr uint8_t kDaikinAcFanQuiet = 0xB;
 constexpr uint8_t kDaikinAcSwingOff = 0x0;
 constexpr uint8_t kDaikinAcSwingOn = 0xF;
+constexpr uint8_t kIrRemoteSlotDaikin = 0;
+constexpr uint8_t kIrRemoteSlotHisense = 1;
+constexpr uint8_t kIrRemotePresetCount = 2;
+constexpr uint16_t kHisenseTvNecAddress = 0xFD00;  // Emits NEC bytes 00 FD, used by common Hisense remotes.
+constexpr uint8_t kHisensePowerToggle = 0xB0;
+constexpr uint8_t kHisensePowerOn = 0x0B;
+constexpr uint8_t kHisensePowerOff = 0x8B;
+constexpr uint8_t kHisenseInput = 0x48;
+constexpr uint8_t kHisenseHome = 0x04;
+constexpr uint8_t kHisenseBack = 0x12;
+constexpr uint8_t kHisenseSettings = 0x28;
+constexpr uint8_t kHisenseExit = 0x3A;
+constexpr uint8_t kHisenseUp = 0x68;
+constexpr uint8_t kHisenseDown = 0xE8;
+constexpr uint8_t kHisenseLeft = 0x18;
+constexpr uint8_t kHisenseRight = 0x98;
+constexpr uint8_t kHisenseOk = 0xA8;
+constexpr uint8_t kHisenseMute = 0x70;
+constexpr uint8_t kHisenseVolUp = 0x22;
+constexpr uint8_t kHisenseVolDown = 0xC2;
+constexpr uint8_t kHisenseChUp = 0x52;
+constexpr uint8_t kHisenseChDown = 0xD2;
+constexpr uint8_t kHisenseYouTube = 0x55;
+constexpr uint8_t kHisenseNetflix = 0xE2;
 
 bool gDaikinPower = false;
 uint8_t gDaikinMode = kDaikinAcCool;
@@ -644,6 +668,8 @@ bool gDaikinSwingV = false;
 bool gDaikinQuiet = false;
 bool gDaikinPowerful = false;
 String gDaikinLastCommand = "Ready";
+uint8_t gHisenseLastCommand = kHisensePowerToggle;
+String gHisenseLastCommandLabel = "Ready";
 
 uint8_t daikinSumBytes(const uint8_t* data, uint8_t len) {
   uint16_t sum = 0;
@@ -750,6 +776,25 @@ String daikinStateSummary() {
          String(gDaikinTempC) + "C F" + daikinFanName();
 }
 
+bool isHisenseRemoteSlot() {
+  return gSelectedIrRemoteSlot == kIrRemoteSlotHisense;
+}
+
+const char* irRemotePresetName(uint8_t slotIndex) {
+  return slotIndex == kIrRemoteSlotHisense ? "Hisense TV" : "Daikin AC";
+}
+
+void selectIrRemoteSlot(uint8_t slotIndex) {
+  gSelectedIrRemoteSlot = clampValue<int>(slotIndex, 0, kIrRemotePresetCount - 1);
+  gIrRemoteStatus = String("Slot ") + String(gSelectedIrRemoteSlot + 1) + ": " + irRemotePresetName(gSelectedIrRemoteSlot);
+  setStatus(gIrRemoteStatus, 850);
+}
+
+void cycleIrRemoteSlot(int delta) {
+  int next = (gSelectedIrRemoteSlot + delta + kIrRemotePresetCount) % kIrRemotePresetCount;
+  selectIrRemoteSlot(static_cast<uint8_t>(next));
+}
+
 void initIrRemote() {
   if (gIrRemoteReady) {
     return;
@@ -759,8 +804,8 @@ void initIrRemote() {
   gIrRemoteReady = true;
   gIrRemoteLearning = false;
   gIrRemoteAutoLearning = false;
-  gSelectedIrRemoteSlot = 0;
-  gIrRemoteStatus = "Slot 1: Daikin AC TX preset";
+  gSelectedIrRemoteSlot = kIrRemoteSlotDaikin;
+  gIrRemoteStatus = "Slot 1 Daikin, Slot 2 Hisense TV";
   appendRuntimeLog("IR", gIrRemoteStatus, true);
 }
 
@@ -813,6 +858,108 @@ void cycleDaikinFanAndSend() {
   sendDaikinAcState(String("Fan ") + daikinFanName());
 }
 
+void sendHisenseTvCommand(uint8_t command, const String& label) {
+  initIrRemote();
+  IrSender.sendNEC(kHisenseTvNecAddress, command, NO_REPEATS);
+  IrSender.IRLedOff();
+  gHisenseLastCommand = command;
+  gHisenseLastCommandLabel = label;
+  gIrRemoteStatus = String("Hisense ") + label;
+  setStatus(gIrRemoteStatus, 950);
+  appendRuntimeLog("IR", gIrRemoteStatus, true);
+  flashActivityLed(80, 190, 255, 110);
+}
+
+bool handleHisenseTvRemoteKey(char key, char lowerKey, const Keyboard_Class::KeysState& keys) {
+  if (lowerKey == 'q') {
+    sendHisenseTvCommand(kHisensePowerToggle, "Power");
+    return true;
+  }
+  if (lowerKey == 'w') {
+    sendHisenseTvCommand(kHisenseUp, "Up");
+    return true;
+  }
+  if (lowerKey == 'a') {
+    sendHisenseTvCommand(kHisenseLeft, "Left");
+    return true;
+  }
+  if (lowerKey == 's') {
+    sendHisenseTvCommand(kHisenseDown, "Down");
+    return true;
+  }
+  if (lowerKey == 'd') {
+    sendHisenseTvCommand(kHisenseRight, "Right");
+    return true;
+  }
+  if (keys.enter || keys.space || key == ' ' || key == '\r' || key == '\n') {
+    sendHisenseTvCommand(kHisenseOk, "OK");
+    return true;
+  }
+  if (lowerKey == 'e') {
+    sendHisenseTvCommand(kHisenseInput, "Input");
+    return true;
+  }
+  if (lowerKey == 'r') {
+    sendHisenseTvCommand(kHisenseBack, "Back");
+    return true;
+  }
+  if (lowerKey == 't') {
+    sendHisenseTvCommand(kHisenseHome, "Home");
+    return true;
+  }
+  if (lowerKey == 'y') {
+    sendHisenseTvCommand(kHisenseSettings, "Menu");
+    return true;
+  }
+  if (lowerKey == 'f') {
+    sendHisenseTvCommand(kHisenseMute, "Mute");
+    return true;
+  }
+  if (lowerKey == 'g') {
+    sendHisenseTvCommand(kHisenseChDown, "Ch -");
+    return true;
+  }
+  if (lowerKey == 'h') {
+    sendHisenseTvCommand(kHisenseChUp, "Ch +");
+    return true;
+  }
+  if (lowerKey == 'z' || key == '-' || key == '_') {
+    sendHisenseTvCommand(kHisenseVolDown, "Vol -");
+    return true;
+  }
+  if (lowerKey == 'x' || key == '+' || key == '=') {
+    sendHisenseTvCommand(kHisenseVolUp, "Vol +");
+    return true;
+  }
+  if (lowerKey == 'c') {
+    sendHisenseTvCommand(kHisenseExit, "Exit");
+    return true;
+  }
+  if (lowerKey == 'v') {
+    sendHisenseTvCommand(kHisenseYouTube, "YouTube");
+    return true;
+  }
+  if (lowerKey == 'b') {
+    sendHisenseTvCommand(kHisenseNetflix, "Netflix");
+    return true;
+  }
+  if (keys.del || key == '\b') {
+    sendHisenseTvCommand(kHisensePowerOff, "Power off");
+    return true;
+  }
+  if (lowerKey == 'o') {
+    sendHisenseTvCommand(kHisensePowerOn, "Power on");
+    return true;
+  }
+  if (lowerKey == 'p') {
+    sendHisenseTvCommand(kHisensePowerOff, "Power off");
+    return true;
+  }
+  gIrRemoteStatus = "Hisense keys: WASD nav, Enter OK, Z/X volume";
+  setStatus("Hisense: WASD Enter Z/X E/R/T/Y", 1200);
+  return true;
+}
+
 void serviceIrRemote() {
   if (gUiMode == UiMode::IrRemote) {
     initIrRemote();
@@ -823,11 +970,21 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
   initIrRemote();
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
 
-  if (key >= '1' && key <= '6') {
-    gSelectedIrRemoteSlot = 0;
-    setStatus(key == '1' ? "Slot 1: Daikin AC" : "Only slot 1 is Daikin", 900);
-    gIrRemoteStatus = "Programmable slots removed; slot 1 is Daikin AC";
+  if (key == '1' || key == '2') {
+    selectIrRemoteSlot(static_cast<uint8_t>(key - '1'));
     return true;
+  }
+  if (key == ',' || key == '<' || key == ';') {
+    cycleIrRemoteSlot(-1);
+    return true;
+  }
+  if (key == '.' || key == '>' || key == '/') {
+    cycleIrRemoteSlot(1);
+    return true;
+  }
+
+  if (isHisenseRemoteSlot()) {
+    return handleHisenseTvRemoteKey(key, lowerKey, keys);
   }
 
   if (lowerKey == 'q') {
@@ -912,7 +1069,7 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
   }
 
   gIrRemoteStatus = "Daikin keys: Q power, W cool, E fan, A/S temp";
-  setStatus("Q/W/E/R/T/Y A/S D/F/G/H", 1200);
+  setStatus("Daikin: 1/2 slots Q/W/E/R/T/Y A/S", 1200);
   return true;
 }
 

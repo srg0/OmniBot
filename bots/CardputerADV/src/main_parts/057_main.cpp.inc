@@ -128,41 +128,45 @@ void renderIrRemoteButton(int16_t x, int16_t y, const char* keyLabel, const char
   d.print(fitCurrentFontToWidth(actionLabel, 28));
 }
 
-void renderIrRemoteUi() {
-  initIrRemote();
+void renderIrRemoteSlotTabs(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t amber, uint16_t muted) {
   auto& d = gCanvas;
-  const uint16_t bg = rgb565_local(4, 5, 12);
-  const uint16_t panel = rgb565_local(12, 13, 24);
-  const uint16_t panel2 = rgb565_local(6, 8, 17);
-  const uint16_t cyan = rgb565_local(47, 227, 255);
-  const uint16_t green = rgb565_local(88, 240, 141);
-  const uint16_t amber = rgb565_local(255, 194, 74);
-  const uint16_t muted = rgb565_local(132, 148, 162);
-  const uint16_t red = rgb565_local(255, 82, 82);
+  const char* labels[] = {"1 Daikin", "2 Hisense"};
+  for (uint8_t i = 0; i < kIrRemotePresetCount; ++i) {
+    int16_t x = 18 + i * 77;
+    bool selected = gSelectedIrRemoteSlot == i;
+    uint16_t fill = selected ? rgb565_local(29, 43, 64) : panel2;
+    uint16_t line = selected ? amber : rgb565_local(48, 55, 70);
+    d.fillRoundRect(x, 31, 70, 12, 4, fill);
+    d.drawRoundRect(x, 31, 70, 12, 4, line);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(selected ? cyan : muted, fill);
+    d.setCursor(x + 5, 34);
+    d.print(labels[i]);
+  }
+  d.setTextColor(muted, panel);
+  d.setCursor(174, 34);
+  d.print(",/. swap");
+}
 
-  d.fillScreen(bg);
-  d.fillRoundRect(6, 5, 228, 124, 12, panel);
-  d.drawRoundRect(6, 5, 228, 124, 12, cyan);
-  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(28, 34, 54));
-
+void renderDaikinRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t green, uint16_t amber,
+                          uint16_t muted, uint16_t red) {
+  auto& d = gCanvas;
   d.setFont(&fonts::Font2);
   d.setTextColor(cyan, panel);
   d.setCursor(16, 13);
-  d.print("DAIKIN AC");
+  d.print("IR REMOTE");
   String io = String("IRG") + String(kIrSendPin) + " TX";
   d.setTextColor(green, panel);
   d.setCursor(224 - d.textWidth(io), 16);
   d.print(io);
 
-  d.setFont(&fonts::Font0);
-  d.setTextColor(muted, panel);
-  d.setCursor(18, 29);
-  d.print(fitCurrentFontToWidth("Slot 1 preset; no learning/receiver", 200));
+  renderIrRemoteSlotTabs(panel, panel2, cyan, amber, muted);
 
   String state = daikinStateSummary();
-  d.fillRoundRect(17, 40, 206, 15, 5, rgb565_local(6, 10, 18));
+  d.fillRoundRect(17, 46, 206, 12, 5, rgb565_local(6, 10, 18));
+  d.setFont(&fonts::Font0);
   d.setTextColor(gDaikinPower ? green : red, rgb565_local(6, 10, 18));
-  d.setCursor(23, 44);
+  d.setCursor(23, 49);
   d.print(fitCurrentFontToWidth(state, 194));
 
   const char* keys[] = {"Q", "W", "E", "R", "T", "Y", "A", "S", "D", "F", "G", "H"};
@@ -177,14 +181,74 @@ void renderIrRemoteUi() {
         (i == 9 && gDaikinSwingV) || (i == 10 && gDaikinQuiet) || (i == 11 && gDaikinPowerful)) {
       line = amber;
     }
-    renderIrRemoteButton(18 + col * 53, 60 + row * 19, keys[i], labels[i], panel2, line, cyan, TFT_LIGHTGREY);
+    renderIrRemoteButton(18 + col * 53, 62 + row * 18, keys[i], labels[i], panel2, line, cyan, TFT_LIGHTGREY);
   }
 
   d.fillRoundRect(17, 116, 206, 9, 4, rgb565_local(6, 10, 18));
   d.setFont(&fonts::Font0);
   d.setTextColor(TFT_LIGHTGREY, rgb565_local(6, 10, 18));
   d.setCursor(22, 118);
-  d.print(fitCurrentFontToWidth(String(gDaikinLastCommand) + " | Enter resend", 196));
+  d.print(fitCurrentFontToWidth(String(gDaikinLastCommand) + " | 1/2 slots", 196));
+}
+
+void renderHisenseRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t green, uint16_t amber,
+                           uint16_t muted) {
+  auto& d = gCanvas;
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(16, 13);
+  d.print("HISENSE TV");
+  String io = String("IRG") + String(kIrSendPin) + " TX";
+  d.setTextColor(green, panel);
+  d.setCursor(224 - d.textWidth(io), 16);
+  d.print(io);
+
+  renderIrRemoteSlotTabs(panel, panel2, cyan, amber, muted);
+
+  d.fillRoundRect(17, 46, 206, 12, 5, rgb565_local(6, 10, 18));
+  d.setFont(&fonts::Font0);
+  d.setTextColor(green, rgb565_local(6, 10, 18));
+  d.setCursor(23, 49);
+  d.print(fitCurrentFontToWidth(String("Last ") + gHisenseLastCommandLabel + " | Enter OK", 194));
+
+  const char* keys[] = {"Q", "W", "E", "R", "T", "Y", "A", "S", "D", "F", "Z", "X"};
+  const char* labels[] = {"Power", "Up", "Input", "Back", "Home", "Menu", "Left", "Down", "Right", "Mute", "Vol-", "Vol+"};
+  for (uint8_t i = 0; i < 12; ++i) {
+    const int col = i % 4;
+    const int row = i / 4;
+    uint16_t line = (i == 0 || i == 1 || i == 6 || i == 7 || i == 8 || i == 10 || i == 11) ? amber : muted;
+    renderIrRemoteButton(18 + col * 53, 62 + row * 18, keys[i], labels[i], panel2, line, cyan, TFT_LIGHTGREY);
+  }
+
+  d.fillRoundRect(17, 116, 206, 9, 4, rgb565_local(6, 10, 18));
+  d.setFont(&fonts::Font0);
+  d.setTextColor(TFT_LIGHTGREY, rgb565_local(6, 10, 18));
+  d.setCursor(22, 118);
+  d.print(fitCurrentFontToWidth("G/H Ch-/+  C Exit  O/P On/Off", 196));
+}
+
+void renderIrRemoteUi() {
+  initIrRemote();
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(4, 5, 12);
+  const uint16_t panel = rgb565_local(12, 13, 24);
+  const uint16_t panel2 = rgb565_local(6, 8, 17);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t muted = rgb565_local(132, 148, 162);
+  const uint16_t red = rgb565_local(255, 82, 82);
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, isHisenseRemoteSlot() ? green : cyan);
+  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(28, 34, 54));
+
+  if (isHisenseRemoteSlot()) {
+    renderHisenseRemoteUi(panel, panel2, cyan, green, amber, muted);
+  } else {
+    renderDaikinRemoteUi(panel, panel2, cyan, green, amber, muted, red);
+  }
 
   d.setFont(&fonts::Font2);
   renderLauncherOverlay();
