@@ -152,9 +152,14 @@ bool addDefaultContext(const String& label, const String& key, const String& sho
 
 void loadDefaultConversationContexts() {
   gContexts.clear();
-  addDefaultContext("Помощник", "tg:root-main:default:-1003665527854:54", "TG");
-  addDefaultContext("Marathon", "tg:root-main:default:-1003665527854:741", "RUN");
   addDefaultContext("Cardputer", "tg:root-main:default:-1003665527854:323", "ADV");
+}
+
+bool isPrimaryCardputerContext(const ConversationContext& ctx) {
+  return ctx.threadId == 323 ||
+         ctx.key == "tg:root-main:default:-1003665527854:323" ||
+         ctx.topicKey == "tg:root-main:default:-1003665527854:323" ||
+         normalizeTopicTitleForDisplay(ctx.label, false) == "Cardputer";
 }
 
 void selectSavedContextOrDefault(const String& savedKey) {
@@ -205,7 +210,9 @@ void loadConversationContexts() {
             ctx.headSeq = item["head_seq"] | 0;
             ctx.unread = item["unread"] | 0;
             ctx.remote = item["remote"] | false;
-            loaded.push_back(ctx);
+            if (isPrimaryCardputerContext(ctx)) {
+              loaded.push_back(ctx);
+            }
           }
         }
         if (!loaded.empty()) {

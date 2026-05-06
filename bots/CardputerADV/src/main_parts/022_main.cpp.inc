@@ -82,6 +82,7 @@ void servicePlaybackStream() {
     return;
   }
   constexpr int kPlaybackChannel = 0;
+  constexpr uint32_t kPlaybackFinishGraceMs = 2500;
   while (gPlaybackStreamRemainingBytes > 0 && M5Cardputer.Speaker.isPlaying(kPlaybackChannel) < 2) {
     size_t chunk = gPlaybackStreamRemainingBytes;
     if (chunk > kPlaybackChunkBytes) {
@@ -126,7 +127,15 @@ void servicePlaybackStream() {
     gPlaybackStreamNextBuffer = (gPlaybackStreamNextBuffer + 1) % kPlaybackBufferCount;
   }
 
-  if (gPlaybackStreamRemainingBytes == 0 && M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0) {
+  const bool speakerDone = M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0;
+  const bool playbackTimedOut =
+    gPlaybackStreamRemainingBytes == 0 &&
+    gPlaybackStartedMs != 0 &&
+    millis() - gPlaybackStartedMs > gPlaybackDurationMs + kPlaybackFinishGraceMs;
+  if (gPlaybackStreamRemainingBytes == 0 && (speakerDone || playbackTimedOut)) {
+    if (playbackTimedOut && !speakerDone) {
+      appendRuntimeLog("AUDIO", "playback forced finish after speaker busy", true);
+    }
     bool removeTempPcm = gPlaybackStreamPath == kActiveTtsPcmPath;
     fs::FS* fs = activeVoiceFs();
     stopPlaybackStream();

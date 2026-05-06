@@ -212,10 +212,17 @@ void handleRealtimeJson(const JsonDocument& doc) {
     closeRealtimeReplyFile();
     if (gRealtimeReplyBytes > 0) {
       appendRuntimeLog("RT", "audio bytes=" + String(static_cast<unsigned>(gRealtimeReplyBytes)), false);
-      startPlaybackStreamFromRawPcmFile(kRealtimeReplyPcmPath,
-                                        kRealtimeModelSampleRate,
-                                        gRealtimeReplyBytes,
-                                        "realtime reply");
+      if (!startPlaybackStreamFromRawPcmFile(kRealtimeReplyPcmPath,
+                                             kRealtimeModelSampleRate,
+                                             gRealtimeReplyBytes,
+                                             "realtime reply")) {
+        gRealtimeGotAudio = false;
+        gRealtimeAwaiting = false;
+        gRealtimeRestartAfterPlayback = false;
+        setFaceMode(FaceMode::Idle);
+        setStatus("Realtime audio failed", 1400);
+        appendRuntimeLog("RT", "audio playback failed", true);
+      }
     } else {
       appendRuntimeLog("RT", "audio done empty", true);
     }

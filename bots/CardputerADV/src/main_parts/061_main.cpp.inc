@@ -195,7 +195,6 @@ void setup() {
     gImuEnabled = M5.Imu.isEnabled();
     logf("[IMU] enabled=%d type=%d", gImuEnabled, static_cast<int>(M5.Imu.getType()));
     setupKeyboardInput();
-    initIrRemote();
     gTimeValid = hasValidSystemTime();
   }
 
@@ -265,7 +264,9 @@ void loop() {
   updateFocusTimer();
   serviceFocusMetronome();
   serviceAlarm();
-  serviceIrRemote();
+  if (gUiMode == UiMode::IrRemote || gIrRemoteLearning) {
+    serviceIrRemote();
+  }
   servicePet();
   processCompletedTopicTask();
   processCompletedTextTurn();
