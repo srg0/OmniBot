@@ -50,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.93-dev"
+#define APP_VERSION "0.2.94-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,11 +64,11 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.93-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_0293";
+constexpr const char* kPostInstallStoryVersion = "0.2.94-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_0294";
 constexpr const char* kPostInstallStoryText =
-    u8"Прошивка установлена. Важно: IRG44 на корпусе — это инфракрасный передатчик, не приёмник. "
-    u8"Обучение L слушает внешний Grove IR receiver на G2 или G1, а отправка идёт через IRG44.";
+    u8"Прошивка установлена. IR Remote теперь простой Daikin AC-пульт на IRG44: "
+    u8"Q питание, W охлаждение, E вентилятор, A/S температура. Обучение и Grove RX убраны.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";

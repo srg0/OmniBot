@@ -613,339 +613,306 @@ String irRemoteSlotKey(uint8_t slot) {
   return String("slot") + String(slot);
 }
 
-uint8_t currentIrReceivePin() {
-  return kIrReceivePins[clampValue<int>(gIrReceivePinIndex, 0, kIrReceivePinCount - 1)];
+namespace {
+constexpr uint8_t kDaikinAcStateLength = 35;
+constexpr uint8_t kDaikinAcSection1Length = 8;
+constexpr uint8_t kDaikinAcSection2Length = 8;
+constexpr uint8_t kDaikinAcSection3Length = kDaikinAcStateLength - kDaikinAcSection1Length - kDaikinAcSection2Length;
+constexpr uint16_t kDaikinAcHdrMark = 3650;
+constexpr uint16_t kDaikinAcHdrSpace = 1623;
+constexpr uint16_t kDaikinAcBitMark = 428;
+constexpr uint16_t kDaikinAcZeroSpace = 428;
+constexpr uint16_t kDaikinAcOneSpace = 1280;
+constexpr uint16_t kDaikinAcGap = 29000;
+constexpr uint8_t kDaikinAcAuto = 0;
+constexpr uint8_t kDaikinAcDry = 2;
+constexpr uint8_t kDaikinAcCool = 3;
+constexpr uint8_t kDaikinAcHeat = 4;
+constexpr uint8_t kDaikinAcFanOnly = 6;
+constexpr uint8_t kDaikinAcTempMin = 18;
+constexpr uint8_t kDaikinAcTempMax = 30;
+constexpr uint8_t kDaikinAcFanAuto = 0xA;
+constexpr uint8_t kDaikinAcFanQuiet = 0xB;
+constexpr uint8_t kDaikinAcSwingOff = 0x0;
+constexpr uint8_t kDaikinAcSwingOn = 0xF;
+
+bool gDaikinPower = false;
+uint8_t gDaikinMode = kDaikinAcCool;
+uint8_t gDaikinTempC = 24;
+uint8_t gDaikinFan = kDaikinAcFanAuto;
+bool gDaikinSwingV = false;
+bool gDaikinQuiet = false;
+bool gDaikinPowerful = false;
+String gDaikinLastCommand = "Ready";
+
+uint8_t daikinSumBytes(const uint8_t* data, uint8_t len) {
+  uint16_t sum = 0;
+  for (uint8_t i = 0; i < len; ++i) {
+    sum += data[i];
+  }
+  return static_cast<uint8_t>(sum & 0xFF);
 }
 
-String irRemoteReceivePinsLabel() {
-  String label;
-  for (uint8_t i = 0; i < kIrReceivePinCount; ++i) {
-    if (!label.isEmpty()) {
-      label += "/";
+void daikinResetState(uint8_t state[kDaikinAcStateLength]) {
+  memset(state, 0, kDaikinAcStateLength);
+  state[0] = 0x11;
+  state[1] = 0xDA;
+  state[2] = 0x27;
+  state[4] = 0xC5;
+  state[8] = 0x11;
+  state[9] = 0xDA;
+  state[10] = 0x27;
+  state[12] = 0x42;
+  state[16] = 0x11;
+  state[17] = 0xDA;
+  state[18] = 0x27;
+  state[21] = 0x08;
+  state[22] = 24 * 2;
+  state[24] = 0xB0;
+  state[27] = 0x06;
+  state[28] = 0x60;
+  state[31] = 0xC0;
+}
+
+void daikinApplyState(uint8_t state[kDaikinAcStateLength]) {
+  state[21] = static_cast<uint8_t>((state[21] & 0x8E) | (gDaikinPower ? 0x01 : 0x00) |
+                                   ((gDaikinMode & 0x07) << 4));
+  state[22] = static_cast<uint8_t>(clampValue<int>(gDaikinTempC, kDaikinAcTempMin, kDaikinAcTempMax) * 2);
+  state[24] = static_cast<uint8_t>(((gDaikinFan & 0x0F) << 4) | (gDaikinSwingV ? kDaikinAcSwingOn : kDaikinAcSwingOff));
+  state[29] = static_cast<uint8_t>((state[29] & 0xDE) | (gDaikinPowerful ? 0x01 : 0x00) |
+                                   (gDaikinQuiet ? 0x20 : 0x00));
+  state[7] = daikinSumBytes(state, kDaikinAcSection1Length - 1);
+  state[15] = daikinSumBytes(state + kDaikinAcSection1Length, kDaikinAcSection2Length - 1);
+  state[34] = daikinSumBytes(state + kDaikinAcSection1Length + kDaikinAcSection2Length,
+                             kDaikinAcSection3Length - 1);
+}
+
+void daikinSendBit(bool one) {
+  IrSender.mark(kDaikinAcBitMark);
+  IrSender.space(one ? kDaikinAcOneSpace : kDaikinAcZeroSpace);
+}
+
+void daikinSendBytes(const uint8_t* data, uint8_t len) {
+  for (uint8_t i = 0; i < len; ++i) {
+    for (uint8_t mask = 0x01; mask != 0; mask <<= 1) {
+      daikinSendBit((data[i] & mask) != 0);
     }
-    label += "G";
-    label += String(kIrReceivePins[i]);
   }
-  return label;
 }
 
-String irRemoteCurrentReceivePinLabel() {
-  return String("G") + String(currentIrReceivePin());
+void daikinSendLeadIn() {
+  for (uint8_t i = 0; i < 5; ++i) {
+    daikinSendBit(false);
+  }
+  IrSender.mark(kDaikinAcBitMark);
+  IrSender.space(kDaikinAcZeroSpace + kDaikinAcGap);
 }
 
-void configureIrReceivePinPullup(uint8_t pin) {
-  pinMode(pin, INPUT_PULLUP);
+void daikinSendSection(const uint8_t* data, uint8_t len) {
+  IrSender.mark(kDaikinAcHdrMark);
+  IrSender.space(kDaikinAcHdrSpace);
+  daikinSendBytes(data, len);
+  IrSender.mark(kDaikinAcBitMark);
+  IrSender.space(kDaikinAcZeroSpace + kDaikinAcGap);
+}
+}  // namespace
+
+const char* daikinModeName(uint8_t mode) {
+  switch (mode) {
+    case kDaikinAcCool:
+      return "Cool";
+    case kDaikinAcFanOnly:
+      return "Fan";
+    case kDaikinAcDry:
+      return "Dry";
+    case kDaikinAcHeat:
+      return "Heat";
+    case kDaikinAcAuto:
+      return "Auto";
+    default:
+      return "AC";
+  }
 }
 
-void setIrReceivePinIndex(uint8_t pinIndex) {
-  if (pinIndex >= kIrReceivePinCount || pinIndex == gIrReceivePinIndex) {
-    return;
+String daikinFanName() {
+  if (gDaikinFan == kDaikinAcFanAuto) {
+    return "Auto";
   }
-  bool wasReady = gIrRemoteReady;
-  if (wasReady) {
-    IrReceiver.stop();
+  if (gDaikinFan == kDaikinAcFanQuiet) {
+    return "Quiet";
   }
-  gIrReceivePinIndex = pinIndex;
-  if (wasReady) {
-    IrReceiver.setReceivePin(currentIrReceivePin());
-    configureIrReceivePinPullup(currentIrReceivePin());
-    IrReceiver.start();
-  }
-  gIrLastReceivePinProbeMs = millis();
+  int speed = static_cast<int>(gDaikinFan) - 2;
+  return String(clampValue<int>(speed, 1, 5));
 }
 
-void probeNextIrReceivePinIfLearning() {
-  if (!gIrRemoteLearning || kIrReceivePinCount < 2 || !IrReceiver.isIdle()) {
-    return;
-  }
-  uint32_t now = millis();
-  if (now - gIrLastReceivePinProbeMs < kIrReceivePinProbeMs) {
-    return;
-  }
-  uint8_t nextIndex = (gIrReceivePinIndex + 1) % kIrReceivePinCount;
-  setIrReceivePinIndex(nextIndex);
-  gIrRemoteStatus = String("Listening slot ") + String(gSelectedIrRemoteSlot + 1) + " on RX " +
-                    irRemoteCurrentReceivePinLabel() + " (" + irRemoteReceivePinsLabel() + ")";
-}
-
-bool irRemoteSlotUsesRaw(const IrRemoteSlot& slot) {
-  decode_type_t protocol = slot.receivedIRData.protocol;
-  return protocol == UNKNOWN || protocol == PULSE_WIDTH || protocol == PULSE_DISTANCE;
-}
-
-String irRemoteProtocolName(decode_type_t protocol) {
-  const char* name = getProtocolString(protocol);
-  return name && name[0] ? String(name) : String("UNKNOWN");
-}
-
-String irRemoteSlotSummary(const IrRemoteSlot& slot) {
-  if (!slot.learned) {
-    return "empty";
-  }
-  String proto = irRemoteProtocolName(slot.receivedIRData.protocol);
-  if (irRemoteSlotUsesRaw(slot)) {
-    return proto + " raw " + String(slot.rawCodeLength);
-  }
-  String address = String(slot.receivedIRData.address, HEX);
-  String command = String(slot.receivedIRData.command, HEX);
-  address.toUpperCase();
-  command.toUpperCase();
-  return proto + " A" + address + " C" + command;
-}
-
-void saveIrRemoteSlot(uint8_t slotIndex) {
-  if (slotIndex >= kIrRemoteSlotCount) {
-    return;
-  }
-  if (!gPrefs.begin(kPrefsIrRemoteNs, false)) {
-    return;
-  }
-  const IrRemoteSlot& slot = gIrRemoteSlots[slotIndex];
-  IrRemotePersistSlot stored;
-  stored.learned = slot.learned ? 1 : 0;
-  stored.rawCodeLength = min<uint16_t>(slot.rawCodeLength, RAW_BUFFER_LENGTH);
-  stored.receivedIRData = slot.receivedIRData;
-  memcpy(stored.rawCode, slot.rawCode, stored.rawCodeLength);
-  String key = irRemoteSlotKey(slotIndex);
-  gPrefs.putBytes(key.c_str(), &stored, sizeof(stored));
-  gPrefs.end();
-}
-
-void loadIrRemoteSlots() {
-  if (!gPrefs.begin(kPrefsIrRemoteNs, true)) {
-    return;
-  }
-  for (uint8_t i = 0; i < kIrRemoteSlotCount; ++i) {
-    String key = irRemoteSlotKey(i);
-    if (gPrefs.getBytesLength(key.c_str()) != sizeof(IrRemotePersistSlot)) {
-      continue;
-    }
-    IrRemotePersistSlot stored;
-    size_t bytes = gPrefs.getBytes(key.c_str(), &stored, sizeof(stored));
-    if (bytes != sizeof(stored) || stored.magic != kIrPersistMagic) {
-      continue;
-    }
-    IrRemoteSlot& slot = gIrRemoteSlots[i];
-    slot.learned = stored.learned != 0;
-    slot.rawCodeLength = min<uint16_t>(stored.rawCodeLength, RAW_BUFFER_LENGTH);
-    slot.receivedIRData = stored.receivedIRData;
-    memcpy(slot.rawCode, stored.rawCode, slot.rawCodeLength);
-  }
-  gPrefs.end();
-}
-
-void clearIrRemoteSlot(uint8_t slotIndex) {
-  if (slotIndex >= kIrRemoteSlotCount) {
-    return;
-  }
-  gIrRemoteSlots[slotIndex] = IrRemoteSlot{};
-  saveIrRemoteSlot(slotIndex);
-  gIrRemoteStatus = String("Cleared slot ") + String(slotIndex + 1);
-  setStatus(gIrRemoteStatus, 900);
-  appendRuntimeLog("IR", gIrRemoteStatus, true);
+String daikinStateSummary() {
+  return String(gDaikinPower ? "ON" : "OFF") + " " + daikinModeName(gDaikinMode) + " " +
+         String(gDaikinTempC) + "C F" + daikinFanName();
 }
 
 void initIrRemote() {
   if (gIrRemoteReady) {
     return;
   }
-  loadIrRemoteSlots();
-  for (uint8_t i = 0; i < kIrReceivePinCount; ++i) {
-    configureIrReceivePinPullup(kIrReceivePins[i]);
-  }
   pinMode(kIrSendPin, OUTPUT);
   IrSender.begin(kIrSendPin);
-  IrReceiver.begin(currentIrReceivePin(), false);
-  configureIrReceivePinPullup(currentIrReceivePin());
-  IrReceiver.resume();
   gIrRemoteReady = true;
-  gIrLastReceivePinProbeMs = millis();
-  gIrRemoteStatus = String("IRG") + String(kIrSendPin) + " sends only; Learn uses Grove RX " + irRemoteReceivePinsLabel();
-  appendRuntimeLog("IR", gIrRemoteStatus, true);
-}
-
-void startIrRemoteLearn(uint8_t slotIndex, bool automatic = false) {
-  initIrRemote();
-  if (slotIndex >= kIrRemoteSlotCount) {
-    return;
-  }
-  gSelectedIrRemoteSlot = slotIndex;
-  gIrRemoteLearning = true;
-  gIrRemoteAutoLearning = automatic;
-  gIrRemoteLearnStartedMs = millis();
-  gIrLastReceivePinProbeMs = millis();
-  IrReceiver.resume();
-  gIrRemoteStatus = String(automatic ? "Auto-learning slot " : "Learning slot ") + String(slotIndex + 1) +
-                    " on Grove RX " + irRemoteReceivePinsLabel() + " (IRG44 TX only)";
-  setStatus(automatic ? "Empty slot: aim at Grove RX" : "Aim remote at Grove RX, not IRG44", 1800);
-  appendRuntimeLog("IR", gIrRemoteStatus, true);
-}
-
-void autoStartIrRemoteLearnIfNeeded() {
-  initIrRemote();
-  uint8_t slotIndex = static_cast<uint8_t>(clampValue<int>(gSelectedIrRemoteSlot, 0, kIrRemoteSlotCount - 1));
-  if (gIrRemoteLearning || gIrRemoteSlots[slotIndex].learned) {
-    return;
-  }
-  startIrRemoteLearn(slotIndex, true);
-}
-
-bool storeIrRemoteCode(uint8_t slotIndex) {
-  if (slotIndex >= kIrRemoteSlotCount) {
-    return false;
-  }
-  if (IrReceiver.irparams.rawlen < 4) {
-    gIrRemoteStatus = "Ignored short IR frame";
-    return false;
-  }
-  uint8_t flags = IrReceiver.decodedIRData.flags;
-  if (flags & IRDATA_FLAGS_WAS_OVERFLOW) {
-    gIrRemoteStatus = "IR frame too long";
-    setStatus(gIrRemoteStatus, 1200);
-    return false;
-  }
-  if (flags & (IRDATA_FLAGS_IS_REPEAT | IRDATA_FLAGS_IS_AUTO_REPEAT | IRDATA_FLAGS_PARITY_FAILED)) {
-    gIrRemoteStatus = "Ignored repeat/parity frame";
-    return false;
-  }
-
-  IrRemoteSlot& slot = gIrRemoteSlots[slotIndex];
-  slot = IrRemoteSlot{};
-  slot.receivedIRData = IrReceiver.decodedIRData;
-  slot.receivedIRData.flags = 0;
-  slot.receivedIRData.rawlen = IrReceiver.irparams.rawlen;
-  slot.learned = true;
-  slot.learnedAtMs = millis();
-
-  if (irRemoteSlotUsesRaw(slot)) {
-    slot.rawCodeLength = min<uint16_t>(IrReceiver.irparams.rawlen - 1, RAW_BUFFER_LENGTH);
-    IrReceiver.compensateAndStoreIRResultInArray(slot.rawCode);
-  }
-
-  saveIrRemoteSlot(slotIndex);
   gIrRemoteLearning = false;
   gIrRemoteAutoLearning = false;
-  gIrRemoteStatus = String("Saved slot ") + String(slotIndex + 1) + " via Grove RX " + irRemoteCurrentReceivePinLabel() +
-                    ": " + irRemoteSlotSummary(slot);
-  setStatus(gIrRemoteStatus, 1500);
+  gSelectedIrRemoteSlot = 0;
+  gIrRemoteStatus = "Slot 1: Daikin AC TX preset";
   appendRuntimeLog("IR", gIrRemoteStatus, true);
-  return true;
 }
 
-void sendIrRemoteSlot(uint8_t slotIndex) {
+void sendDaikinAcState(const String& commandLabel) {
   initIrRemote();
-  if (slotIndex >= kIrRemoteSlotCount) {
-    return;
-  }
-  IrRemoteSlot& slot = gIrRemoteSlots[slotIndex];
-  if (!slot.learned) {
-    gIrRemoteStatus = String("Slot ") + String(slotIndex + 1) + " is empty";
-    setStatus(gIrRemoteStatus, 900);
-    return;
-  }
-  gIrRemoteLearning = false;
-  gIrRemoteAutoLearning = false;
-  IrReceiver.stop();
-  if (irRemoteSlotUsesRaw(slot)) {
-    if (slot.rawCodeLength == 0) {
-      gIrRemoteStatus = "No raw IR data";
-      setStatus(gIrRemoteStatus, 900);
-      IrReceiver.start();
-      return;
-    }
-    IrSender.sendRaw(slot.rawCode, slot.rawCodeLength, 38);
-  } else {
-    IRData data = slot.receivedIRData;
-    data.flags = 0;
-    IrSender.write(&data, NO_REPEATS);
-  }
-  IrReceiver.restartAfterSend();
-  IrReceiver.start();
-  gIrRemoteStatus = String("Sent slot ") + String(slotIndex + 1) + " via IRG" + String(kIrSendPin) + ": " + irRemoteSlotSummary(slot);
-  setStatus(gIrRemoteStatus, 1000);
+  uint8_t state[kDaikinAcStateLength];
+  daikinResetState(state);
+  daikinApplyState(state);
+
+  IrSender.enableIROut(38);
+  daikinSendLeadIn();
+  daikinSendSection(state, kDaikinAcSection1Length);
+  daikinSendSection(state + kDaikinAcSection1Length, kDaikinAcSection2Length);
+  daikinSendSection(state + kDaikinAcSection1Length + kDaikinAcSection2Length, kDaikinAcSection3Length);
+  IrSender.IRLedOff();
+
+  gDaikinLastCommand = commandLabel;
+  gIrRemoteStatus = String("Daikin ") + commandLabel + ": " + daikinStateSummary();
+  setStatus(gIrRemoteStatus, 1100);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
   flashActivityLed(255, 80, 20, 120);
 }
 
-void serviceIrRemote() {
-  if (!gIrRemoteReady) {
-    return;
+void setDaikinModeAndSend(uint8_t mode, const String& label) {
+  gDaikinPower = true;
+  gDaikinMode = mode;
+  if (mode == kDaikinAcFanOnly) {
+    gDaikinFan = kDaikinAcFanAuto;
   }
-  if (IrReceiver.decode()) {
-    uint8_t slotIndex = static_cast<uint8_t>(clampValue<int>(gSelectedIrRemoteSlot, 0, kIrRemoteSlotCount - 1));
-    if (gIrRemoteLearning || (gUiMode == UiMode::IrRemote && !gIrRemoteSlots[slotIndex].learned)) {
-      if (!gIrRemoteLearning) {
-        gIrRemoteAutoLearning = true;
-        gIrRemoteLearnStartedMs = millis();
-      }
-      storeIrRemoteCode(static_cast<uint8_t>(clampValue<int>(gSelectedIrRemoteSlot, 0, kIrRemoteSlotCount - 1)));
+  sendDaikinAcState(label);
+}
+
+void cycleDaikinFanAndSend() {
+  gDaikinPower = true;
+  static constexpr uint8_t kFanCycle[] = {kDaikinAcFanAuto, 3, 4, 5, 6, 7, kDaikinAcFanQuiet};
+  uint8_t next = 0;
+  for (uint8_t i = 0; i < sizeof(kFanCycle); ++i) {
+    if (gDaikinFan == kFanCycle[i]) {
+      next = static_cast<uint8_t>((i + 1) % sizeof(kFanCycle));
+      break;
     }
-    IrReceiver.resume();
-  } else {
-    probeNextIrReceivePinIfLearning();
   }
-  if (gIrRemoteLearning && millis() - gIrRemoteLearnStartedMs > kIrLearnTimeoutMs) {
-    gIrRemoteLearning = false;
-    gIrRemoteAutoLearning = false;
-    gIrRemoteStatus = String("No Grove RX signal on ") + irRemoteReceivePinsLabel() + "; IRG44 sends only";
-    setStatus("Need Grove IR receiver", 1300);
-    appendRuntimeLog("IR", gIrRemoteStatus, true);
+  gDaikinFan = kFanCycle[next];
+  if (gDaikinFan == kDaikinAcFanQuiet) {
+    gDaikinQuiet = true;
+    gDaikinPowerful = false;
+  } else {
+    gDaikinQuiet = false;
+  }
+  sendDaikinAcState(String("Fan ") + daikinFanName());
+}
+
+void serviceIrRemote() {
+  if (gUiMode == UiMode::IrRemote) {
+    initIrRemote();
   }
 }
 
 bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
   initIrRemote();
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+
   if (key >= '1' && key <= '6') {
-    gSelectedIrRemoteSlot = key - '1';
-    if (gIrRemoteLearning && !gIrRemoteSlots[gSelectedIrRemoteSlot].learned) {
-      startIrRemoteLearn(static_cast<uint8_t>(gSelectedIrRemoteSlot), true);
-    } else if (gIrRemoteLearning && gIrRemoteAutoLearning) {
-      gIrRemoteLearning = false;
-      gIrRemoteAutoLearning = false;
-    }
-    setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 700);
+    gSelectedIrRemoteSlot = 0;
+    setStatus(key == '1' ? "Slot 1: Daikin AC" : "Only slot 1 is Daikin", 900);
+    gIrRemoteStatus = "Programmable slots removed; slot 1 is Daikin AC";
     return true;
   }
-  if (key == ',' || key == '<' || key == ';' || key == '-' || key == '_' || lowerKey == 'z') {
-    gSelectedIrRemoteSlot = (gSelectedIrRemoteSlot + kIrRemoteSlotCount - 1) % kIrRemoteSlotCount;
-    if (gIrRemoteLearning && !gIrRemoteSlots[gSelectedIrRemoteSlot].learned) {
-      startIrRemoteLearn(static_cast<uint8_t>(gSelectedIrRemoteSlot), true);
-    } else if (gIrRemoteLearning && gIrRemoteAutoLearning) {
-      gIrRemoteLearning = false;
-      gIrRemoteAutoLearning = false;
-    }
-    setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 600);
+
+  if (lowerKey == 'q') {
+    gDaikinPower = !gDaikinPower;
+    sendDaikinAcState(gDaikinPower ? "Power on" : "Power off");
     return true;
   }
-  if (key == '.' || key == '>' || key == '/' || key == '+' || key == '=' || lowerKey == 'x') {
-    gSelectedIrRemoteSlot = (gSelectedIrRemoteSlot + 1) % kIrRemoteSlotCount;
-    if (gIrRemoteLearning && !gIrRemoteSlots[gSelectedIrRemoteSlot].learned) {
-      startIrRemoteLearn(static_cast<uint8_t>(gSelectedIrRemoteSlot), true);
-    } else if (gIrRemoteLearning && gIrRemoteAutoLearning) {
-      gIrRemoteLearning = false;
-      gIrRemoteAutoLearning = false;
-    }
-    setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 600);
+  if (lowerKey == 'w') {
+    setDaikinModeAndSend(kDaikinAcCool, "Cool");
     return true;
   }
-  if (lowerKey == 'l' || keys.space || key == ' ') {
-    startIrRemoteLearn(static_cast<uint8_t>(gSelectedIrRemoteSlot));
-    return true;
-  }
-  if (keys.enter || key == '\r' || key == '\n' || lowerKey == 's') {
-    sendIrRemoteSlot(static_cast<uint8_t>(gSelectedIrRemoteSlot));
-    return true;
-  }
-  if (keys.del || key == '\b' || lowerKey == 'c') {
-    clearIrRemoteSlot(static_cast<uint8_t>(gSelectedIrRemoteSlot));
+  if (lowerKey == 'e') {
+    setDaikinModeAndSend(kDaikinAcFanOnly, "Fan only");
     return true;
   }
   if (lowerKey == 'r') {
-    gIrRemoteStatus = String("IRG") + String(kIrSendPin) + " sends only; Learn needs Grove RX " + irRemoteReceivePinsLabel();
-    setStatus("IR ready", 700);
+    setDaikinModeAndSend(kDaikinAcDry, "Dry");
     return true;
   }
+  if (lowerKey == 't') {
+    setDaikinModeAndSend(kDaikinAcHeat, "Heat");
+    return true;
+  }
+  if (lowerKey == 'y') {
+    setDaikinModeAndSend(kDaikinAcAuto, "Auto");
+    return true;
+  }
+  if (lowerKey == 'a' || key == '-' || key == '_') {
+    gDaikinPower = true;
+    gDaikinTempC = static_cast<uint8_t>(clampValue<int>(gDaikinTempC - 1, kDaikinAcTempMin, kDaikinAcTempMax));
+    sendDaikinAcState("Temp -");
+    return true;
+  }
+  if (lowerKey == 's' || key == '+' || key == '=') {
+    gDaikinPower = true;
+    gDaikinTempC = static_cast<uint8_t>(clampValue<int>(gDaikinTempC + 1, kDaikinAcTempMin, kDaikinAcTempMax));
+    sendDaikinAcState("Temp +");
+    return true;
+  }
+  if (lowerKey == 'd') {
+    cycleDaikinFanAndSend();
+    return true;
+  }
+  if (lowerKey == 'f') {
+    gDaikinPower = true;
+    gDaikinSwingV = !gDaikinSwingV;
+    sendDaikinAcState(gDaikinSwingV ? "Swing on" : "Swing off");
+    return true;
+  }
+  if (lowerKey == 'g') {
+    gDaikinPower = true;
+    gDaikinQuiet = !gDaikinQuiet;
+    if (gDaikinQuiet) {
+      gDaikinPowerful = false;
+      gDaikinFan = kDaikinAcFanQuiet;
+    } else if (gDaikinFan == kDaikinAcFanQuiet) {
+      gDaikinFan = kDaikinAcFanAuto;
+    }
+    sendDaikinAcState(gDaikinQuiet ? "Quiet on" : "Quiet off");
+    return true;
+  }
+  if (lowerKey == 'h') {
+    gDaikinPower = true;
+    gDaikinPowerful = !gDaikinPowerful;
+    if (gDaikinPowerful) {
+      gDaikinQuiet = false;
+      if (gDaikinFan == kDaikinAcFanQuiet) {
+        gDaikinFan = kDaikinAcFanAuto;
+      }
+    }
+    sendDaikinAcState(gDaikinPowerful ? "Powerful on" : "Powerful off");
+    return true;
+  }
+  if (keys.enter || keys.space || key == ' ' || key == '\r' || key == '\n') {
+    sendDaikinAcState("Resend");
+    return true;
+  }
+  if (keys.del || key == '\b') {
+    gDaikinPower = false;
+    sendDaikinAcState("Power off");
+    return true;
+  }
+
+  gIrRemoteStatus = "Daikin keys: Q power, W cool, E fan, A/S temp";
+  setStatus("Q/W/E/R/T/Y A/S D/F/G/H", 1200);
   return true;
 }
 

@@ -114,9 +114,22 @@ void renderCalculatorUi() {
   renderDebugOverlay();
 }
 
+void renderIrRemoteButton(int16_t x, int16_t y, const char* keyLabel, const char* actionLabel, uint16_t fill,
+                          uint16_t line, uint16_t keyColor, uint16_t textColor) {
+  auto& d = gCanvas;
+  d.fillRoundRect(x, y, 48, 17, 5, fill);
+  d.drawRoundRect(x, y, 48, 17, 5, line);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(keyColor, fill);
+  d.setCursor(x + 4, y + 4);
+  d.print(keyLabel);
+  d.setTextColor(textColor, fill);
+  d.setCursor(x + 16, y + 4);
+  d.print(fitCurrentFontToWidth(actionLabel, 28));
+}
+
 void renderIrRemoteUi() {
   initIrRemote();
-  autoStartIrRemoteLearnIfNeeded();
   auto& d = gCanvas;
   const uint16_t bg = rgb565_local(4, 5, 12);
   const uint16_t panel = rgb565_local(12, 13, 24);
@@ -124,68 +137,55 @@ void renderIrRemoteUi() {
   const uint16_t cyan = rgb565_local(47, 227, 255);
   const uint16_t green = rgb565_local(88, 240, 141);
   const uint16_t amber = rgb565_local(255, 194, 74);
-  const uint16_t red = rgb565_local(255, 82, 82);
   const uint16_t muted = rgb565_local(132, 148, 162);
-  uint16_t accent = gIrRemoteLearning ? amber : cyan;
+  const uint16_t red = rgb565_local(255, 82, 82);
 
   d.fillScreen(bg);
   d.fillRoundRect(6, 5, 228, 124, 12, panel);
-  d.drawRoundRect(6, 5, 228, 124, 12, accent);
+  d.drawRoundRect(6, 5, 228, 124, 12, cyan);
   d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(28, 34, 54));
 
   d.setFont(&fonts::Font2);
   d.setTextColor(cyan, panel);
-  d.setCursor(16, 14);
-  d.print("IR REMOTE");
-  String io = String("IRG") + String(kIrSendPin) + " TX  RX " + irRemoteReceivePinsLabel();
-  d.setTextColor(gIrRemoteLearning ? amber : green, panel);
-  d.setCursor(224 - d.textWidth(io), 17);
+  d.setCursor(16, 13);
+  d.print("DAIKIN AC");
+  String io = String("IRG") + String(kIrSendPin) + " TX";
+  d.setTextColor(green, panel);
+  d.setCursor(224 - d.textWidth(io), 16);
   d.print(io);
 
   d.setFont(&fonts::Font0);
   d.setTextColor(muted, panel);
   d.setCursor(18, 29);
-  d.print(fitCurrentFontToWidth("IRG44 TX only; Learn needs Grove RX", 200));
+  d.print(fitCurrentFontToWidth("Slot 1 preset; no learning/receiver", 200));
 
-  for (int i = 0; i < kIrRemoteSlotCount; ++i) {
-    const int col = i % 3;
-    const int row = i / 3;
-    const int16_t x = 17 + col * 69;
-    const int16_t y = 43 + row * 30;
-    bool selected = i == gSelectedIrRemoteSlot;
-    const IrRemoteSlot& slot = gIrRemoteSlots[i];
-    uint16_t fill = selected ? rgb565_local(30, 44, 66) : panel2;
-    uint16_t line = selected ? accent : (slot.learned ? green : rgb565_local(48, 55, 70));
-    d.fillRoundRect(x, y, 62, 24, 7, fill);
-    d.drawRoundRect(x, y, 62, 24, 7, line);
-    d.setFont(&fonts::Font2);
-    d.setTextColor(selected ? TFT_WHITE : (slot.learned ? green : muted), fill);
-    d.setCursor(x + 6, y + 4);
-    d.print("S");
-    d.print(i + 1);
-    d.setFont(&fonts::Font0);
-    d.setTextColor(slot.learned ? TFT_LIGHTGREY : muted, fill);
-    String label = slot.learned ? irRemoteProtocolName(slot.receivedIRData.protocol) : "empty";
-    d.setCursor(x + 6, y + 15);
-    d.print(fitCurrentFontToWidth(label, 50));
+  String state = daikinStateSummary();
+  d.fillRoundRect(17, 40, 206, 15, 5, rgb565_local(6, 10, 18));
+  d.setTextColor(gDaikinPower ? green : red, rgb565_local(6, 10, 18));
+  d.setCursor(23, 44);
+  d.print(fitCurrentFontToWidth(state, 194));
+
+  const char* keys[] = {"Q", "W", "E", "R", "T", "Y", "A", "S", "D", "F", "G", "H"};
+  const char* labels[] = {"Power", "Cool", "Fan", "Dry", "Heat", "Auto", "Temp-", "Temp+", "FanSp", "Swing", "Quiet", "Turbo"};
+  for (uint8_t i = 0; i < 12; ++i) {
+    const int col = i % 4;
+    const int row = i / 4;
+    uint16_t line = muted;
+    if ((i == 0 && gDaikinPower) || (i == 1 && gDaikinMode == kDaikinAcCool) ||
+        (i == 2 && gDaikinMode == kDaikinAcFanOnly) || (i == 3 && gDaikinMode == kDaikinAcDry) ||
+        (i == 4 && gDaikinMode == kDaikinAcHeat) || (i == 5 && gDaikinMode == kDaikinAcAuto) ||
+        (i == 9 && gDaikinSwingV) || (i == 10 && gDaikinQuiet) || (i == 11 && gDaikinPowerful)) {
+      line = amber;
+    }
+    renderIrRemoteButton(18 + col * 53, 60 + row * 19, keys[i], labels[i], panel2, line, cyan, TFT_LIGHTGREY);
   }
 
-  d.fillRoundRect(17, 104, 206, 13, 5, rgb565_local(6, 10, 18));
+  d.fillRoundRect(17, 116, 206, 9, 4, rgb565_local(6, 10, 18));
   d.setFont(&fonts::Font0);
-  d.setTextColor(gIrRemoteLearning ? amber : TFT_LIGHTGREY, rgb565_local(6, 10, 18));
-  String status = gIrRemoteLearning ? String("Aim at Grove RX ") + irRemoteCurrentReceivePinLabel() +
-                                         "; not IRG44"
-                                     : gIrRemoteStatus;
-  d.setCursor(23, 108);
-  d.print(fitCurrentFontToWidth(status, 194));
+  d.setTextColor(TFT_LIGHTGREY, rgb565_local(6, 10, 18));
+  d.setCursor(22, 118);
+  d.print(fitCurrentFontToWidth(String(gDaikinLastCommand) + " | Enter resend", 196));
 
-  d.setTextColor(gIrRemoteSlots[gSelectedIrRemoteSlot].learned ? green : red, panel);
-  d.setCursor(18, 92);
-  d.print(fitCurrentFontToWidth(String("Slot ") + String(gSelectedIrRemoteSlot + 1) + ": " +
-                                    irRemoteSlotSummary(gIrRemoteSlots[gSelectedIrRemoteSlot]),
-                                204));
-
-  drawTinyFooter(panel, muted, "1-6 slot  L learn  Enter send  Del clear", 10, 122, 220);
   d.setFont(&fonts::Font2);
   renderLauncherOverlay();
   renderDebugOverlay();
