@@ -760,7 +760,7 @@ void initIrRemote() {
   IrReceiver.resume();
   gIrRemoteReady = true;
   gIrLastReceivePinProbeMs = millis();
-  gIrRemoteStatus = String("TX G") + String(kIrSendPin) + " RX " + irRemoteReceivePinsLabel();
+  gIrRemoteStatus = String("IRG") + String(kIrSendPin) + " sends only; Learn uses Grove RX " + irRemoteReceivePinsLabel();
   appendRuntimeLog("IR", gIrRemoteStatus, true);
 }
 
@@ -776,8 +776,8 @@ void startIrRemoteLearn(uint8_t slotIndex, bool automatic = false) {
   gIrLastReceivePinProbeMs = millis();
   IrReceiver.resume();
   gIrRemoteStatus = String(automatic ? "Auto-learning slot " : "Learning slot ") + String(slotIndex + 1) +
-                    " on RX " + irRemoteReceivePinsLabel();
-  setStatus(automatic ? "Empty IR slot is listening" : "Point remote at Grove IR RX", 1600);
+                    " on Grove RX " + irRemoteReceivePinsLabel() + " (IRG44 TX only)";
+  setStatus(automatic ? "Empty slot: aim at Grove RX" : "Aim remote at Grove RX, not IRG44", 1800);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
 }
 
@@ -825,7 +825,7 @@ bool storeIrRemoteCode(uint8_t slotIndex) {
   saveIrRemoteSlot(slotIndex);
   gIrRemoteLearning = false;
   gIrRemoteAutoLearning = false;
-  gIrRemoteStatus = String("Saved slot ") + String(slotIndex + 1) + " via " + irRemoteCurrentReceivePinLabel() +
+  gIrRemoteStatus = String("Saved slot ") + String(slotIndex + 1) + " via Grove RX " + irRemoteCurrentReceivePinLabel() +
                     ": " + irRemoteSlotSummary(slot);
   setStatus(gIrRemoteStatus, 1500);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
@@ -861,7 +861,7 @@ void sendIrRemoteSlot(uint8_t slotIndex) {
   }
   IrReceiver.restartAfterSend();
   IrReceiver.start();
-  gIrRemoteStatus = String("Sent slot ") + String(slotIndex + 1) + ": " + irRemoteSlotSummary(slot);
+  gIrRemoteStatus = String("Sent slot ") + String(slotIndex + 1) + " via IRG" + String(kIrSendPin) + ": " + irRemoteSlotSummary(slot);
   setStatus(gIrRemoteStatus, 1000);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
   flashActivityLed(255, 80, 20, 120);
@@ -887,8 +887,8 @@ void serviceIrRemote() {
   if (gIrRemoteLearning && millis() - gIrRemoteLearnStartedMs > kIrLearnTimeoutMs) {
     gIrRemoteLearning = false;
     gIrRemoteAutoLearning = false;
-    gIrRemoteStatus = String("Learn timeout on RX ") + irRemoteReceivePinsLabel();
-    setStatus("IR learn timeout", 1000);
+    gIrRemoteStatus = String("No Grove RX signal on ") + irRemoteReceivePinsLabel() + "; IRG44 sends only";
+    setStatus("Need Grove IR receiver", 1300);
     appendRuntimeLog("IR", gIrRemoteStatus, true);
   }
 }
@@ -942,7 +942,7 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
     return true;
   }
   if (lowerKey == 'r') {
-    gIrRemoteStatus = String("Ready TX G") + String(kIrSendPin) + " RX " + irRemoteReceivePinsLabel();
+    gIrRemoteStatus = String("IRG") + String(kIrSendPin) + " sends only; Learn needs Grove RX " + irRemoteReceivePinsLabel();
     setStatus("IR ready", 700);
     return true;
   }

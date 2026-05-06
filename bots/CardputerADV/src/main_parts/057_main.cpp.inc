@@ -137,7 +137,7 @@ void renderIrRemoteUi() {
   d.setTextColor(cyan, panel);
   d.setCursor(16, 14);
   d.print("IR REMOTE");
-  String io = String("TX G") + String(kIrSendPin) + " RX " + irRemoteReceivePinsLabel();
+  String io = String("IRG") + String(kIrSendPin) + " TX  RX " + irRemoteReceivePinsLabel();
   d.setTextColor(gIrRemoteLearning ? amber : green, panel);
   d.setCursor(224 - d.textWidth(io), 17);
   d.print(io);
@@ -145,7 +145,7 @@ void renderIrRemoteUi() {
   d.setFont(&fonts::Font0);
   d.setTextColor(muted, panel);
   d.setCursor(18, 29);
-  d.print("Empty slot listens; Grove IR RX on G2/G1");
+  d.print(fitCurrentFontToWidth("IRG44 TX only; Learn needs Grove RX", 200));
 
   for (int i = 0; i < kIrRemoteSlotCount; ++i) {
     const int col = i % 3;
@@ -173,8 +173,8 @@ void renderIrRemoteUi() {
   d.fillRoundRect(17, 104, 206, 13, 5, rgb565_local(6, 10, 18));
   d.setFont(&fonts::Font0);
   d.setTextColor(gIrRemoteLearning ? amber : TFT_LIGHTGREY, rgb565_local(6, 10, 18));
-  String status = gIrRemoteLearning ? String("Listening ") + irRemoteCurrentReceivePinLabel() +
-                                         ": press original remote"
+  String status = gIrRemoteLearning ? String("Aim at Grove RX ") + irRemoteCurrentReceivePinLabel() +
+                                         "; not IRG44"
                                      : gIrRemoteStatus;
   d.setCursor(23, 108);
   d.print(fitCurrentFontToWidth(status, 194));
@@ -185,7 +185,7 @@ void renderIrRemoteUi() {
                                     irRemoteSlotSummary(gIrRemoteSlots[gSelectedIrRemoteSlot]),
                                 204));
 
-  drawTinyFooter(panel, muted, "1-6 slot  empty auto-learn  L overwrite", 10, 122, 220);
+  drawTinyFooter(panel, muted, "1-6 slot  L learn  Enter send  Del clear", 10, 122, 220);
   d.setFont(&fonts::Font2);
   renderLauncherOverlay();
   renderDebugOverlay();
