@@ -22,6 +22,14 @@
 #include <freertos/task.h>
 #include <mbedtls/sha256.h>
 
+#ifndef RAW_BUFFER_LENGTH
+#define RAW_BUFFER_LENGTH 180
+#endif
+#ifndef NO_LED_FEEDBACK_CODE
+#define NO_LED_FEEDBACK_CODE
+#endif
+#include <IRremote.hpp>
+
 extern "C" {
 #include "libb64/cdecode.h"
 }
@@ -42,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.89-dev"
+#define APP_VERSION "0.2.90-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -56,12 +64,11 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.89-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_0289";
+constexpr const char* kPostInstallStoryVersion = "0.2.90-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_0290";
 constexpr const char* kPostInstallStoryText =
-    u8"Прошивка установлена. Сказка: в одном тёмном экране жил маленький синий огонёк. "
-    u8"Он тикал вместе с часами и охранял время. Когда путник уставал, огонёк говорил: "
-    u8"не спеши, сделай один верный шаг. И каждый шаг становился светлее, пока дорога сама не привела его домой.";
+    u8"Прошивка установлена. Теперь внутри меню есть IR Remote: он учит кнопки через внешний приёмник "
+    u8"и повторяет команды встроенным инфракрасным светодиодом. Маленький пульт проснулся и запомнил первый световой язык.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
@@ -81,6 +88,7 @@ constexpr const char* kPrefsContextNs = "ctx_cfg";
 constexpr const char* kPrefsOtaGuardNs = "ota_guard";
 constexpr const char* kPrefsPetNs = "pet_v1";
 constexpr const char* kPrefsAlarmNs = "alarm_cfg";
+constexpr const char* kPrefsIrRemoteNs = "ir_remote";
 constexpr const char* kLegacyBridgeHost = "109.199.103.176";
 constexpr uint16_t kLegacyBridgePort = 31889;
 constexpr const char* kProdBridgeHost = "bridge.ai.k-digital.pro";
@@ -219,6 +227,11 @@ constexpr const char* kContextRegistryPath = "/pomodoro/contexts.json";
 constexpr const char* kEmojiDir = "/emoji";
 constexpr const char* kRuntimeLogPath = "/pomodoro/logs/runtime.ndjson";
 constexpr const char* kOtaTempPath = "/pomodoro/firmware.tmp.bin";
+constexpr uint8_t kIrSendPin = 44;       // Built-in Cardputer-ADV IR transmitter.
+constexpr uint8_t kIrReceivePin = 1;     // External Grove/HY2.0 receiver on G1.
+constexpr uint8_t kIrRemoteSlotCount = 6;
+constexpr uint32_t kIrLearnTimeoutMs = 15000;
+constexpr uint32_t kIrPersistMagic = 0x49523031;  // "IR01"
 constexpr const char* kFocusCuePath = "/pomodoro/audio/focus_ru.wav";
 constexpr const char* kBreakCuePath = "/pomodoro/audio/break_ru.wav";
 constexpr const char* kReflectionCuePath = "/pomodoro/audio/reflection_ru.wav";

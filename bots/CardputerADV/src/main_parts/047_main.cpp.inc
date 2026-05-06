@@ -609,6 +609,245 @@ bool handleCalendarKey(char key, const Keyboard_Class::KeysState& keys) {
   return true;
 }
 
+String irRemoteSlotKey(uint8_t slot) {
+  return String("slot") + String(slot);
+}
+
+bool irRemoteSlotUsesRaw(const IrRemoteSlot& slot) {
+  decode_type_t protocol = slot.receivedIRData.protocol;
+  return protocol == UNKNOWN || protocol == PULSE_WIDTH || protocol == PULSE_DISTANCE;
+}
+
+String irRemoteProtocolName(decode_type_t protocol) {
+  const char* name = getProtocolString(protocol);
+  return name && name[0] ? String(name) : String("UNKNOWN");
+}
+
+String irRemoteSlotSummary(const IrRemoteSlot& slot) {
+  if (!slot.learned) {
+    return "empty";
+  }
+  String proto = irRemoteProtocolName(slot.receivedIRData.protocol);
+  if (irRemoteSlotUsesRaw(slot)) {
+    return proto + " raw " + String(slot.rawCodeLength);
+  }
+  String address = String(slot.receivedIRData.address, HEX);
+  String command = String(slot.receivedIRData.command, HEX);
+  address.toUpperCase();
+  command.toUpperCase();
+  return proto + " A" + address + " C" + command;
+}
+
+void saveIrRemoteSlot(uint8_t slotIndex) {
+  if (slotIndex >= kIrRemoteSlotCount) {
+    return;
+  }
+  if (!gPrefs.begin(kPrefsIrRemoteNs, false)) {
+    return;
+  }
+  const IrRemoteSlot& slot = gIrRemoteSlots[slotIndex];
+  IrRemotePersistSlot stored;
+  stored.learned = slot.learned ? 1 : 0;
+  stored.rawCodeLength = min<uint16_t>(slot.rawCodeLength, RAW_BUFFER_LENGTH);
+  stored.receivedIRData = slot.receivedIRData;
+  memcpy(stored.rawCode, slot.rawCode, stored.rawCodeLength);
+  String key = irRemoteSlotKey(slotIndex);
+  gPrefs.putBytes(key.c_str(), &stored, sizeof(stored));
+  gPrefs.end();
+}
+
+void loadIrRemoteSlots() {
+  if (!gPrefs.begin(kPrefsIrRemoteNs, true)) {
+    return;
+  }
+  for (uint8_t i = 0; i < kIrRemoteSlotCount; ++i) {
+    String key = irRemoteSlotKey(i);
+    if (gPrefs.getBytesLength(key.c_str()) != sizeof(IrRemotePersistSlot)) {
+      continue;
+    }
+    IrRemotePersistSlot stored;
+    size_t bytes = gPrefs.getBytes(key.c_str(), &stored, sizeof(stored));
+    if (bytes != sizeof(stored) || stored.magic != kIrPersistMagic) {
+      continue;
+    }
+    IrRemoteSlot& slot = gIrRemoteSlots[i];
+    slot.learned = stored.learned != 0;
+    slot.rawCodeLength = min<uint16_t>(stored.rawCodeLength, RAW_BUFFER_LENGTH);
+    slot.receivedIRData = stored.receivedIRData;
+    memcpy(slot.rawCode, stored.rawCode, slot.rawCodeLength);
+  }
+  gPrefs.end();
+}
+
+void clearIrRemoteSlot(uint8_t slotIndex) {
+  if (slotIndex >= kIrRemoteSlotCount) {
+    return;
+  }
+  gIrRemoteSlots[slotIndex] = IrRemoteSlot{};
+  saveIrRemoteSlot(slotIndex);
+  gIrRemoteStatus = String("Cleared slot ") + String(slotIndex + 1);
+  setStatus(gIrRemoteStatus, 900);
+  appendRuntimeLog("IR", gIrRemoteStatus, true);
+}
+
+void initIrRemote() {
+  if (gIrRemoteReady) {
+    return;
+  }
+  loadIrRemoteSlots();
+  pinMode(kIrSendPin, OUTPUT);
+  IrSender.begin(kIrSendPin);
+  IrReceiver.begin(kIrReceivePin, false);
+  IrReceiver.resume();
+  gIrRemoteReady = true;
+  gIrRemoteStatus = String("TX G") + String(kIrSendPin) + " RX G" + String(kIrReceivePin);
+  appendRuntimeLog("IR", gIrRemoteStatus, true);
+}
+
+void startIrRemoteLearn(uint8_t slotIndex) {
+  initIrRemote();
+  if (slotIndex >= kIrRemoteSlotCount) {
+    return;
+  }
+  gSelectedIrRemoteSlot = slotIndex;
+  gIrRemoteLearning = true;
+  gIrRemoteLearnStartedMs = millis();
+  IrReceiver.resume();
+  gIrRemoteStatus = String("Learning slot ") + String(slotIndex + 1) + " on RX G" + String(kIrReceivePin);
+  setStatus("Point remote at RX and press", 1600);
+  appendRuntimeLog("IR", gIrRemoteStatus, true);
+}
+
+bool storeIrRemoteCode(uint8_t slotIndex) {
+  if (slotIndex >= kIrRemoteSlotCount) {
+    return false;
+  }
+  if (IrReceiver.irparams.rawlen < 4) {
+    gIrRemoteStatus = "Ignored short IR frame";
+    return false;
+  }
+  uint8_t flags = IrReceiver.decodedIRData.flags;
+  if (flags & IRDATA_FLAGS_WAS_OVERFLOW) {
+    gIrRemoteStatus = "IR frame too long";
+    setStatus(gIrRemoteStatus, 1200);
+    return false;
+  }
+  if (flags & (IRDATA_FLAGS_IS_REPEAT | IRDATA_FLAGS_IS_AUTO_REPEAT | IRDATA_FLAGS_PARITY_FAILED)) {
+    gIrRemoteStatus = "Ignored repeat/parity frame";
+    return false;
+  }
+
+  IrRemoteSlot& slot = gIrRemoteSlots[slotIndex];
+  slot = IrRemoteSlot{};
+  slot.receivedIRData = IrReceiver.decodedIRData;
+  slot.receivedIRData.flags = 0;
+  slot.receivedIRData.rawlen = IrReceiver.irparams.rawlen;
+  slot.learned = true;
+  slot.learnedAtMs = millis();
+
+  if (irRemoteSlotUsesRaw(slot)) {
+    slot.rawCodeLength = min<uint16_t>(IrReceiver.irparams.rawlen - 1, RAW_BUFFER_LENGTH);
+    IrReceiver.compensateAndStoreIRResultInArray(slot.rawCode);
+  }
+
+  saveIrRemoteSlot(slotIndex);
+  gIrRemoteLearning = false;
+  gIrRemoteStatus = String("Saved slot ") + String(slotIndex + 1) + ": " + irRemoteSlotSummary(slot);
+  setStatus(gIrRemoteStatus, 1500);
+  appendRuntimeLog("IR", gIrRemoteStatus, true);
+  return true;
+}
+
+void sendIrRemoteSlot(uint8_t slotIndex) {
+  initIrRemote();
+  if (slotIndex >= kIrRemoteSlotCount) {
+    return;
+  }
+  IrRemoteSlot& slot = gIrRemoteSlots[slotIndex];
+  if (!slot.learned) {
+    gIrRemoteStatus = String("Slot ") + String(slotIndex + 1) + " is empty";
+    setStatus(gIrRemoteStatus, 900);
+    return;
+  }
+  gIrRemoteLearning = false;
+  IrReceiver.stop();
+  if (irRemoteSlotUsesRaw(slot)) {
+    if (slot.rawCodeLength == 0) {
+      gIrRemoteStatus = "No raw IR data";
+      setStatus(gIrRemoteStatus, 900);
+      IrReceiver.start();
+      return;
+    }
+    IrSender.sendRaw(slot.rawCode, slot.rawCodeLength, 38);
+  } else {
+    IRData data = slot.receivedIRData;
+    data.flags = 0;
+    IrSender.write(&data, NO_REPEATS);
+  }
+  IrReceiver.restartAfterSend();
+  IrReceiver.start();
+  gIrRemoteStatus = String("Sent slot ") + String(slotIndex + 1) + ": " + irRemoteSlotSummary(slot);
+  setStatus(gIrRemoteStatus, 1000);
+  appendRuntimeLog("IR", gIrRemoteStatus, true);
+  flashActivityLed(255, 80, 20, 120);
+}
+
+void serviceIrRemote() {
+  if (!gIrRemoteReady) {
+    return;
+  }
+  if (IrReceiver.decode()) {
+    if (gIrRemoteLearning) {
+      storeIrRemoteCode(static_cast<uint8_t>(clampValue<int>(gSelectedIrRemoteSlot, 0, kIrRemoteSlotCount - 1)));
+    }
+    IrReceiver.resume();
+  }
+  if (gIrRemoteLearning && millis() - gIrRemoteLearnStartedMs > kIrLearnTimeoutMs) {
+    gIrRemoteLearning = false;
+    gIrRemoteStatus = "Learn timeout";
+    setStatus("IR learn timeout", 1000);
+    appendRuntimeLog("IR", gIrRemoteStatus, true);
+  }
+}
+
+bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
+  initIrRemote();
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (key >= '1' && key <= '6') {
+    gSelectedIrRemoteSlot = key - '1';
+    setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 700);
+    return true;
+  }
+  if (key == ',' || key == '<' || key == ';' || key == '-' || key == '_' || lowerKey == 'z') {
+    gSelectedIrRemoteSlot = (gSelectedIrRemoteSlot + kIrRemoteSlotCount - 1) % kIrRemoteSlotCount;
+    setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 600);
+    return true;
+  }
+  if (key == '.' || key == '>' || key == '/' || key == '+' || key == '=' || lowerKey == 'x') {
+    gSelectedIrRemoteSlot = (gSelectedIrRemoteSlot + 1) % kIrRemoteSlotCount;
+    setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 600);
+    return true;
+  }
+  if (lowerKey == 'l' || keys.space || key == ' ') {
+    startIrRemoteLearn(static_cast<uint8_t>(gSelectedIrRemoteSlot));
+    return true;
+  }
+  if (keys.enter || key == '\r' || key == '\n' || lowerKey == 's') {
+    sendIrRemoteSlot(static_cast<uint8_t>(gSelectedIrRemoteSlot));
+    return true;
+  }
+  if (keys.del || key == '\b' || lowerKey == 'c') {
+    clearIrRemoteSlot(static_cast<uint8_t>(gSelectedIrRemoteSlot));
+    return true;
+  }
+  if (lowerKey == 'r') {
+    gIrRemoteStatus = String("Ready TX G") + String(kIrSendPin) + " RX G" + String(kIrReceivePin);
+    setStatus("IR ready", 700);
+    return true;
+  }
+  return true;
+}
+
 bool handleGlobalEscape() {
   bool changed = false;
 

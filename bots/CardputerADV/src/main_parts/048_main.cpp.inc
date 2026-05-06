@@ -110,6 +110,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Calendar && handleCalendarKey(key, keys)) {
     return;
   }
+  if (gUiMode == UiMode::IrRemote && handleIrRemoteKey(key, keys)) {
+    return;
+  }
   if (gUiMode == UiMode::Logs && handleLogsKey(key)) {
     return;
   }

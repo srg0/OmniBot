@@ -70,6 +70,23 @@ struct LauncherGroup {
   LauncherSubItem items[kLauncherMaxSubItems];
 };
 
+struct IrRemoteSlot {
+  IRData receivedIRData = {};
+  uint8_t rawCode[RAW_BUFFER_LENGTH] = {};
+  uint16_t rawCodeLength = 0;
+  bool learned = false;
+  uint32_t learnedAtMs = 0;
+};
+
+struct IrRemotePersistSlot {
+  uint32_t magic = kIrPersistMagic;
+  uint8_t learned = 0;
+  uint8_t reserved = 0;
+  uint16_t rawCodeLength = 0;
+  IRData receivedIRData = {};
+  uint8_t rawCode[RAW_BUFFER_LENGTH] = {};
+};
+
 struct EmojiCacheEntry {
   uint32_t codepoint = 0;
   uint8_t* data = nullptr;
@@ -91,7 +108,7 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
     {"OpenClaw", "OC", "Bridge runtime", rgb565_local(180, 150, 255), 2,
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}}},
     {"System", "SYS", "Power and settings", rgb565_local(203, 216, 226), 4,
-     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Calculator", UiMode::Calculator}, {"Firmware", UiMode::Ota}}},
+     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Calculator", UiMode::Calculator}, {"IR Remote", UiMode::IrRemote}}},
 };
 
 Preferences gPrefs;
@@ -115,6 +132,7 @@ String gStatusText = "Booting";
 String gCalcExpression;
 String gCalcResult = "0";
 String gCalcStatus = "Ready";
+String gIrRemoteStatus = "IR idle";
 String gStopwatchStatus = "Ready";
 String gAlarmStatus = "Ready";
 String gAlarmEditBuffer;
@@ -129,6 +147,7 @@ std::vector<AudioFolder> gAudioFolders;
 std::vector<ConversationContext> gContexts;
 std::deque<ContextPreviewLine> gContextPreview;
 std::deque<String> gRuntimeLogs;
+IrRemoteSlot gIrRemoteSlots[kIrRemoteSlotCount];
 
 bool gWifiReady = false;
 bool gWsReady = false;
@@ -189,6 +208,7 @@ int8_t gContextAnimDir = 0;
 int gLogScrollOffset = 0;
 int gSelectedSetting = 0;
 int gCalendarMonthOffset = 0;
+int gSelectedIrRemoteSlot = 0;
 
 uint32_t gLastRenderMs = 0;
 uint32_t gLastUiSlowLogMs = 0;
@@ -214,8 +234,11 @@ uint32_t gStopwatchElapsedMs = 0;
 uint32_t gStopwatchStartedMs = 0;
 uint32_t gStopwatchLapMs = 0;
 bool gAlarmRinging = false;
+bool gIrRemoteReady = false;
+bool gIrRemoteLearning = false;
 uint32_t gAlarmTriggeredAtMs = 0;
 uint32_t gAlarmNextBeepMs = 0;
+uint32_t gIrRemoteLearnStartedMs = 0;
 time_t gAlarmSnoozeEpoch = 0;
 int16_t gAlarmLastTriggerYear = -1;
 int16_t gAlarmLastTriggerYday = -1;

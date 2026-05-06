@@ -114,6 +114,80 @@ void renderCalculatorUi() {
   renderDebugOverlay();
 }
 
+void renderIrRemoteUi() {
+  initIrRemote();
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(4, 5, 12);
+  const uint16_t panel = rgb565_local(12, 13, 24);
+  const uint16_t panel2 = rgb565_local(6, 8, 17);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t red = rgb565_local(255, 82, 82);
+  const uint16_t muted = rgb565_local(132, 148, 162);
+  uint16_t accent = gIrRemoteLearning ? amber : cyan;
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, accent);
+  d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(28, 34, 54));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(16, 14);
+  d.print("IR REMOTE");
+  String io = String("TX G") + String(kIrSendPin) + " RX G" + String(kIrReceivePin);
+  d.setTextColor(gIrRemoteLearning ? amber : green, panel);
+  d.setCursor(224 - d.textWidth(io), 17);
+  d.print(io);
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(18, 29);
+  d.print("Learn via external receiver on Grove G1");
+
+  for (int i = 0; i < kIrRemoteSlotCount; ++i) {
+    const int col = i % 3;
+    const int row = i / 3;
+    const int16_t x = 17 + col * 69;
+    const int16_t y = 43 + row * 30;
+    bool selected = i == gSelectedIrRemoteSlot;
+    const IrRemoteSlot& slot = gIrRemoteSlots[i];
+    uint16_t fill = selected ? rgb565_local(30, 44, 66) : panel2;
+    uint16_t line = selected ? accent : (slot.learned ? green : rgb565_local(48, 55, 70));
+    d.fillRoundRect(x, y, 62, 24, 7, fill);
+    d.drawRoundRect(x, y, 62, 24, 7, line);
+    d.setFont(&fonts::Font2);
+    d.setTextColor(selected ? TFT_WHITE : (slot.learned ? green : muted), fill);
+    d.setCursor(x + 6, y + 4);
+    d.print("S");
+    d.print(i + 1);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(slot.learned ? TFT_LIGHTGREY : muted, fill);
+    String label = slot.learned ? irRemoteProtocolName(slot.receivedIRData.protocol) : "empty";
+    d.setCursor(x + 6, y + 15);
+    d.print(fitCurrentFontToWidth(label, 50));
+  }
+
+  d.fillRoundRect(17, 104, 206, 13, 5, rgb565_local(6, 10, 18));
+  d.setFont(&fonts::Font0);
+  d.setTextColor(gIrRemoteLearning ? amber : TFT_LIGHTGREY, rgb565_local(6, 10, 18));
+  String status = gIrRemoteLearning ? String("Listening: press original remote now") : gIrRemoteStatus;
+  d.setCursor(23, 108);
+  d.print(fitCurrentFontToWidth(status, 194));
+
+  d.setTextColor(gIrRemoteSlots[gSelectedIrRemoteSlot].learned ? green : red, panel);
+  d.setCursor(18, 92);
+  d.print(fitCurrentFontToWidth(String("Slot ") + String(gSelectedIrRemoteSlot + 1) + ": " +
+                                    irRemoteSlotSummary(gIrRemoteSlots[gSelectedIrRemoteSlot]),
+                                204));
+
+  drawTinyFooter(panel, muted, "1-6 slot  L learn  Enter send  C clear", 10, 122, 220);
+  d.setFont(&fonts::Font2);
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 bool calendarBaseLocalTime(tm& today, tm& monthStart) {
   if (!hasValidSystemTime()) {
     return false;

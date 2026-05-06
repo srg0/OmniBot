@@ -53,6 +53,9 @@
       case UiMode::Calendar:
         renderCalendarUi();
         break;
+      case UiMode::IrRemote:
+        renderIrRemoteUi();
+        break;
       case UiMode::Logs:
         renderLogsUi();
         break;
@@ -192,6 +195,7 @@ void setup() {
     gImuEnabled = M5.Imu.isEnabled();
     logf("[IMU] enabled=%d type=%d", gImuEnabled, static_cast<int>(M5.Imu.getType()));
     setupKeyboardInput();
+    initIrRemote();
     gTimeValid = hasValidSystemTime();
   }
 
@@ -261,6 +265,7 @@ void loop() {
   updateFocusTimer();
   serviceFocusMetronome();
   serviceAlarm();
+  serviceIrRemote();
   servicePet();
   processCompletedTopicTask();
   processCompletedTextTurn();

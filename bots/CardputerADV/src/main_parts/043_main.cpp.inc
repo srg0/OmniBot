@@ -987,6 +987,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/ir" || cmd == "/remote" || cmd == "/irremote") {
+    setUiMode(UiMode::IrRemote);
+    return true;
+  }
+
   if (cmd == "/syncassets") {
     fetchRemoteAssetManifest();
     syncAssetsFromManifest();

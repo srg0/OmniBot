@@ -38,6 +38,8 @@ const char* uiModeName(UiMode mode) {
       return "Stopwatch";
     case UiMode::Calendar:
       return "Calendar";
+    case UiMode::IrRemote:
+      return "IR Remote";
     case UiMode::Logs:
       return "Logs";
     case UiMode::ChatFace:
