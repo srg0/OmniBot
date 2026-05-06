@@ -50,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.90-dev"
+#define APP_VERSION "0.2.92-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,11 +64,11 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.90-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_0290";
+constexpr const char* kPostInstallStoryVersion = "0.2.92-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_0292";
 constexpr const char* kPostInstallStoryText =
-    u8"Прошивка установлена. Теперь внутри меню есть IR Remote: он учит кнопки через внешний приёмник "
-    u8"и повторяет команды встроенным инфракрасным светодиодом. Маленький пульт проснулся и запомнил первый световой язык.";
+    u8"Прошивка установлена. IR Remote теперь сам слушает пустой слот, принимает Grove-приёмник на G2 или G1 "
+    u8"и передаёт команды встроенным инфракрасным светодиодом.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
@@ -227,10 +227,14 @@ constexpr const char* kContextRegistryPath = "/pomodoro/contexts.json";
 constexpr const char* kEmojiDir = "/emoji";
 constexpr const char* kRuntimeLogPath = "/pomodoro/logs/runtime.ndjson";
 constexpr const char* kOtaTempPath = "/pomodoro/firmware.tmp.bin";
-constexpr uint8_t kIrSendPin = 44;       // Built-in Cardputer-ADV IR transmitter.
-constexpr uint8_t kIrReceivePin = 1;     // External Grove/HY2.0 receiver on G1.
+constexpr uint8_t kIrSendPin = 44;          // Built-in Cardputer-ADV IR transmitter.
+constexpr uint8_t kIrReceivePin = 2;        // Primary Grove/HY2.0 receiver signal on yellow G2.
+constexpr uint8_t kIrReceiveAltPin = 1;     // Secondary Grove/HY2.0 receiver signal on white G1.
+constexpr uint8_t kIrReceivePins[] = {kIrReceivePin, kIrReceiveAltPin};
+constexpr uint8_t kIrReceivePinCount = sizeof(kIrReceivePins) / sizeof(kIrReceivePins[0]);
 constexpr uint8_t kIrRemoteSlotCount = 6;
 constexpr uint32_t kIrLearnTimeoutMs = 15000;
+constexpr uint32_t kIrReceivePinProbeMs = 650;
 constexpr uint32_t kIrPersistMagic = 0x49523031;  // "IR01"
 constexpr const char* kFocusCuePath = "/pomodoro/audio/focus_ru.wav";
 constexpr const char* kBreakCuePath = "/pomodoro/audio/break_ru.wav";

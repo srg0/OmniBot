@@ -613,6 +613,61 @@ String irRemoteSlotKey(uint8_t slot) {
   return String("slot") + String(slot);
 }
 
+uint8_t currentIrReceivePin() {
+  return kIrReceivePins[clampValue<int>(gIrReceivePinIndex, 0, kIrReceivePinCount - 1)];
+}
+
+String irRemoteReceivePinsLabel() {
+  String label;
+  for (uint8_t i = 0; i < kIrReceivePinCount; ++i) {
+    if (!label.isEmpty()) {
+      label += "/";
+    }
+    label += "G";
+    label += String(kIrReceivePins[i]);
+  }
+  return label;
+}
+
+String irRemoteCurrentReceivePinLabel() {
+  return String("G") + String(currentIrReceivePin());
+}
+
+void configureIrReceivePinPullup(uint8_t pin) {
+  pinMode(pin, INPUT_PULLUP);
+}
+
+void setIrReceivePinIndex(uint8_t pinIndex) {
+  if (pinIndex >= kIrReceivePinCount || pinIndex == gIrReceivePinIndex) {
+    return;
+  }
+  bool wasReady = gIrRemoteReady;
+  if (wasReady) {
+    IrReceiver.stop();
+  }
+  gIrReceivePinIndex = pinIndex;
+  if (wasReady) {
+    IrReceiver.setReceivePin(currentIrReceivePin());
+    configureIrReceivePinPullup(currentIrReceivePin());
+    IrReceiver.start();
+  }
+  gIrLastReceivePinProbeMs = millis();
+}
+
+void probeNextIrReceivePinIfLearning() {
+  if (!gIrRemoteLearning || kIrReceivePinCount < 2 || !IrReceiver.isIdle()) {
+    return;
+  }
+  uint32_t now = millis();
+  if (now - gIrLastReceivePinProbeMs < kIrReceivePinProbeMs) {
+    return;
+  }
+  uint8_t nextIndex = (gIrReceivePinIndex + 1) % kIrReceivePinCount;
+  setIrReceivePinIndex(nextIndex);
+  gIrRemoteStatus = String("Listening slot ") + String(gSelectedIrRemoteSlot + 1) + " on RX " +
+                    irRemoteCurrentReceivePinLabel() + " (" + irRemoteReceivePinsLabel() + ")";
+}
+
 bool irRemoteSlotUsesRaw(const IrRemoteSlot& slot) {
   decode_type_t protocol = slot.receivedIRData.protocol;
   return protocol == UNKNOWN || protocol == PULSE_WIDTH || protocol == PULSE_DISTANCE;
@@ -695,27 +750,44 @@ void initIrRemote() {
     return;
   }
   loadIrRemoteSlots();
+  for (uint8_t i = 0; i < kIrReceivePinCount; ++i) {
+    configureIrReceivePinPullup(kIrReceivePins[i]);
+  }
   pinMode(kIrSendPin, OUTPUT);
   IrSender.begin(kIrSendPin);
-  IrReceiver.begin(kIrReceivePin, false);
+  IrReceiver.begin(currentIrReceivePin(), false);
+  configureIrReceivePinPullup(currentIrReceivePin());
   IrReceiver.resume();
   gIrRemoteReady = true;
-  gIrRemoteStatus = String("TX G") + String(kIrSendPin) + " RX G" + String(kIrReceivePin);
+  gIrLastReceivePinProbeMs = millis();
+  gIrRemoteStatus = String("TX G") + String(kIrSendPin) + " RX " + irRemoteReceivePinsLabel();
   appendRuntimeLog("IR", gIrRemoteStatus, true);
 }
 
-void startIrRemoteLearn(uint8_t slotIndex) {
+void startIrRemoteLearn(uint8_t slotIndex, bool automatic = false) {
   initIrRemote();
   if (slotIndex >= kIrRemoteSlotCount) {
     return;
   }
   gSelectedIrRemoteSlot = slotIndex;
   gIrRemoteLearning = true;
+  gIrRemoteAutoLearning = automatic;
   gIrRemoteLearnStartedMs = millis();
+  gIrLastReceivePinProbeMs = millis();
   IrReceiver.resume();
-  gIrRemoteStatus = String("Learning slot ") + String(slotIndex + 1) + " on RX G" + String(kIrReceivePin);
-  setStatus("Point remote at RX and press", 1600);
+  gIrRemoteStatus = String(automatic ? "Auto-learning slot " : "Learning slot ") + String(slotIndex + 1) +
+                    " on RX " + irRemoteReceivePinsLabel();
+  setStatus(automatic ? "Empty IR slot is listening" : "Point remote at Grove IR RX", 1600);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
+}
+
+void autoStartIrRemoteLearnIfNeeded() {
+  initIrRemote();
+  uint8_t slotIndex = static_cast<uint8_t>(clampValue<int>(gSelectedIrRemoteSlot, 0, kIrRemoteSlotCount - 1));
+  if (gIrRemoteLearning || gIrRemoteSlots[slotIndex].learned) {
+    return;
+  }
+  startIrRemoteLearn(slotIndex, true);
 }
 
 bool storeIrRemoteCode(uint8_t slotIndex) {
@@ -752,7 +824,9 @@ bool storeIrRemoteCode(uint8_t slotIndex) {
 
   saveIrRemoteSlot(slotIndex);
   gIrRemoteLearning = false;
-  gIrRemoteStatus = String("Saved slot ") + String(slotIndex + 1) + ": " + irRemoteSlotSummary(slot);
+  gIrRemoteAutoLearning = false;
+  gIrRemoteStatus = String("Saved slot ") + String(slotIndex + 1) + " via " + irRemoteCurrentReceivePinLabel() +
+                    ": " + irRemoteSlotSummary(slot);
   setStatus(gIrRemoteStatus, 1500);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
   return true;
@@ -770,6 +844,7 @@ void sendIrRemoteSlot(uint8_t slotIndex) {
     return;
   }
   gIrRemoteLearning = false;
+  gIrRemoteAutoLearning = false;
   IrReceiver.stop();
   if (irRemoteSlotUsesRaw(slot)) {
     if (slot.rawCodeLength == 0) {
@@ -797,14 +872,22 @@ void serviceIrRemote() {
     return;
   }
   if (IrReceiver.decode()) {
-    if (gIrRemoteLearning) {
+    uint8_t slotIndex = static_cast<uint8_t>(clampValue<int>(gSelectedIrRemoteSlot, 0, kIrRemoteSlotCount - 1));
+    if (gIrRemoteLearning || (gUiMode == UiMode::IrRemote && !gIrRemoteSlots[slotIndex].learned)) {
+      if (!gIrRemoteLearning) {
+        gIrRemoteAutoLearning = true;
+        gIrRemoteLearnStartedMs = millis();
+      }
       storeIrRemoteCode(static_cast<uint8_t>(clampValue<int>(gSelectedIrRemoteSlot, 0, kIrRemoteSlotCount - 1)));
     }
     IrReceiver.resume();
+  } else {
+    probeNextIrReceivePinIfLearning();
   }
   if (gIrRemoteLearning && millis() - gIrRemoteLearnStartedMs > kIrLearnTimeoutMs) {
     gIrRemoteLearning = false;
-    gIrRemoteStatus = "Learn timeout";
+    gIrRemoteAutoLearning = false;
+    gIrRemoteStatus = String("Learn timeout on RX ") + irRemoteReceivePinsLabel();
     setStatus("IR learn timeout", 1000);
     appendRuntimeLog("IR", gIrRemoteStatus, true);
   }
@@ -815,16 +898,34 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
   if (key >= '1' && key <= '6') {
     gSelectedIrRemoteSlot = key - '1';
+    if (gIrRemoteLearning && !gIrRemoteSlots[gSelectedIrRemoteSlot].learned) {
+      startIrRemoteLearn(static_cast<uint8_t>(gSelectedIrRemoteSlot), true);
+    } else if (gIrRemoteLearning && gIrRemoteAutoLearning) {
+      gIrRemoteLearning = false;
+      gIrRemoteAutoLearning = false;
+    }
     setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 700);
     return true;
   }
   if (key == ',' || key == '<' || key == ';' || key == '-' || key == '_' || lowerKey == 'z') {
     gSelectedIrRemoteSlot = (gSelectedIrRemoteSlot + kIrRemoteSlotCount - 1) % kIrRemoteSlotCount;
+    if (gIrRemoteLearning && !gIrRemoteSlots[gSelectedIrRemoteSlot].learned) {
+      startIrRemoteLearn(static_cast<uint8_t>(gSelectedIrRemoteSlot), true);
+    } else if (gIrRemoteLearning && gIrRemoteAutoLearning) {
+      gIrRemoteLearning = false;
+      gIrRemoteAutoLearning = false;
+    }
     setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 600);
     return true;
   }
   if (key == '.' || key == '>' || key == '/' || key == '+' || key == '=' || lowerKey == 'x') {
     gSelectedIrRemoteSlot = (gSelectedIrRemoteSlot + 1) % kIrRemoteSlotCount;
+    if (gIrRemoteLearning && !gIrRemoteSlots[gSelectedIrRemoteSlot].learned) {
+      startIrRemoteLearn(static_cast<uint8_t>(gSelectedIrRemoteSlot), true);
+    } else if (gIrRemoteLearning && gIrRemoteAutoLearning) {
+      gIrRemoteLearning = false;
+      gIrRemoteAutoLearning = false;
+    }
     setStatus(String("IR slot ") + String(gSelectedIrRemoteSlot + 1), 600);
     return true;
   }
@@ -841,7 +942,7 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
     return true;
   }
   if (lowerKey == 'r') {
-    gIrRemoteStatus = String("Ready TX G") + String(kIrSendPin) + " RX G" + String(kIrReceivePin);
+    gIrRemoteStatus = String("Ready TX G") + String(kIrSendPin) + " RX " + irRemoteReceivePinsLabel();
     setStatus("IR ready", 700);
     return true;
   }
