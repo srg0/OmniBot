@@ -50,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.95-dev"
+#define APP_VERSION "0.2.96-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,11 +64,11 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.95-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_0295";
+constexpr const char* kPostInstallStoryVersion = "0.2.96-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_0296";
 constexpr const char* kPostInstallStoryText =
-    u8"Прошивка установлена. IR Remote теперь имеет пресеты: слот 1 Daikin AC, слот 2 Hisense TV. "
-    u8"Переключение 1/2 или ,/.; на Hisense WASD навигация, Enter OK, Z/X громкость.";
+    u8"Прошивка установлена. IR Remote: слот 1 Daikin AC, слот 2 ERF3W80H 4K. "
+    u8"Переключение 1/2 или ,/.; ERF3W80H: WASD навигация, Enter OK, Z/X громкость, M Assistant.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";

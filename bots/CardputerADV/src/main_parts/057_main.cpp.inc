@@ -130,7 +130,7 @@ void renderIrRemoteButton(int16_t x, int16_t y, const char* keyLabel, const char
 
 void renderIrRemoteSlotTabs(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t amber, uint16_t muted) {
   auto& d = gCanvas;
-  const char* labels[] = {"1 Daikin", "2 Hisense"};
+  const char* labels[] = {"1 Daikin", "2 ERF3"};
   for (uint8_t i = 0; i < kIrRemotePresetCount; ++i) {
     int16_t x = 18 + i * 77;
     bool selected = gSelectedIrRemoteSlot == i;
@@ -197,7 +197,7 @@ void renderHisenseRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint1
   d.setFont(&fonts::Font2);
   d.setTextColor(cyan, panel);
   d.setCursor(16, 13);
-  d.print("HISENSE TV");
+  d.print("ERF3W80H 4K");
   String io = String("IRG") + String(kIrSendPin) + " TX";
   d.setTextColor(green, panel);
   d.setCursor(224 - d.textWidth(io), 16);
@@ -224,7 +224,7 @@ void renderHisenseRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint1
   d.setFont(&fonts::Font0);
   d.setTextColor(TFT_LIGHTGREY, rgb565_local(6, 10, 18));
   d.setCursor(22, 118);
-  d.print(fitCurrentFontToWidth("G/H Ch-/+  C Exit  O/P On/Off", 196));
+  d.print(fitCurrentFontToWidth("G/H Ch  M Assist  V/B/N Apps", 196));
 }
 
 void renderIrRemoteUi() {

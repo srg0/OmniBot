@@ -638,27 +638,29 @@ constexpr uint8_t kDaikinAcSwingOn = 0xF;
 constexpr uint8_t kIrRemoteSlotDaikin = 0;
 constexpr uint8_t kIrRemoteSlotHisense = 1;
 constexpr uint8_t kIrRemotePresetCount = 2;
-constexpr uint16_t kHisenseTvNecAddress = 0xFD00;  // Emits NEC bytes 00 FD, used by common Hisense remotes.
-constexpr uint8_t kHisensePowerToggle = 0xB0;
-constexpr uint8_t kHisensePowerOn = 0x0B;
-constexpr uint8_t kHisensePowerOff = 0x8B;
-constexpr uint8_t kHisenseInput = 0x48;
-constexpr uint8_t kHisenseHome = 0x04;
-constexpr uint8_t kHisenseBack = 0x12;
-constexpr uint8_t kHisenseSettings = 0x28;
-constexpr uint8_t kHisenseExit = 0x3A;
-constexpr uint8_t kHisenseUp = 0x68;
-constexpr uint8_t kHisenseDown = 0xE8;
-constexpr uint8_t kHisenseLeft = 0x18;
-constexpr uint8_t kHisenseRight = 0x98;
-constexpr uint8_t kHisenseOk = 0xA8;
-constexpr uint8_t kHisenseMute = 0x70;
-constexpr uint8_t kHisenseVolUp = 0x22;
-constexpr uint8_t kHisenseVolDown = 0xC2;
-constexpr uint8_t kHisenseChUp = 0x52;
-constexpr uint8_t kHisenseChDown = 0xD2;
-constexpr uint8_t kHisenseYouTube = 0x55;
-constexpr uint8_t kHisenseNetflix = 0xE2;
+constexpr uint16_t kHisenseTvNecAddress = 0x0004;  // ERF3W80H 4K/A6G/U6K family: NEC bytes 04 FB.
+constexpr uint8_t kHisensePowerToggle = 0x08;
+constexpr uint8_t kHisensePowerOn = 0x71;   // Hisense discrete power-on in the same 04 FB family.
+constexpr uint8_t kHisensePowerOff = 0x72;  // Hisense discrete power-off in the same 04 FB family.
+constexpr uint8_t kHisenseInput = 0x0B;
+constexpr uint8_t kHisenseHome = 0x4A;
+constexpr uint8_t kHisenseBack = 0x04;
+constexpr uint8_t kHisenseSettings = 0x43;
+constexpr uint8_t kHisenseExit = 0x4D;
+constexpr uint8_t kHisenseUp = 0x56;
+constexpr uint8_t kHisenseDown = 0x57;
+constexpr uint8_t kHisenseLeft = 0x58;
+constexpr uint8_t kHisenseRight = 0x59;
+constexpr uint8_t kHisenseOk = 0x5A;
+constexpr uint8_t kHisenseMute = 0x09;
+constexpr uint8_t kHisenseVolUp = 0x02;
+constexpr uint8_t kHisenseVolDown = 0x03;
+constexpr uint8_t kHisenseChUp = 0x00;
+constexpr uint8_t kHisenseChDown = 0x01;
+constexpr uint8_t kHisenseYouTube = 0x49;
+constexpr uint8_t kHisenseNetflix = 0x4C;
+constexpr uint8_t kHisensePrimeVideo = 0x47;
+constexpr uint8_t kHisenseAssistant = 0x1E;
 
 bool gDaikinPower = false;
 uint8_t gDaikinMode = kDaikinAcCool;
@@ -781,7 +783,7 @@ bool isHisenseRemoteSlot() {
 }
 
 const char* irRemotePresetName(uint8_t slotIndex) {
-  return slotIndex == kIrRemoteSlotHisense ? "Hisense TV" : "Daikin AC";
+  return slotIndex == kIrRemoteSlotHisense ? "ERF3W80H 4K" : "Daikin AC";
 }
 
 void selectIrRemoteSlot(uint8_t slotIndex) {
@@ -805,7 +807,7 @@ void initIrRemote() {
   gIrRemoteLearning = false;
   gIrRemoteAutoLearning = false;
   gSelectedIrRemoteSlot = kIrRemoteSlotDaikin;
-  gIrRemoteStatus = "Slot 1 Daikin, Slot 2 Hisense TV";
+  gIrRemoteStatus = "Slot 1 Daikin, Slot 2 ERF3W80H 4K";
   appendRuntimeLog("IR", gIrRemoteStatus, true);
 }
 
@@ -864,7 +866,7 @@ void sendHisenseTvCommand(uint8_t command, const String& label) {
   IrSender.IRLedOff();
   gHisenseLastCommand = command;
   gHisenseLastCommandLabel = label;
-  gIrRemoteStatus = String("Hisense ") + label;
+  gIrRemoteStatus = String("ERF3W80H ") + label;
   setStatus(gIrRemoteStatus, 950);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
   flashActivityLed(80, 190, 255, 110);
@@ -943,6 +945,14 @@ bool handleHisenseTvRemoteKey(char key, char lowerKey, const Keyboard_Class::Key
     sendHisenseTvCommand(kHisenseNetflix, "Netflix");
     return true;
   }
+  if (lowerKey == 'n') {
+    sendHisenseTvCommand(kHisensePrimeVideo, "Prime Video");
+    return true;
+  }
+  if (lowerKey == 'm') {
+    sendHisenseTvCommand(kHisenseAssistant, "Assistant");
+    return true;
+  }
   if (keys.del || key == '\b') {
     sendHisenseTvCommand(kHisensePowerOff, "Power off");
     return true;
@@ -955,8 +965,8 @@ bool handleHisenseTvRemoteKey(char key, char lowerKey, const Keyboard_Class::Key
     sendHisenseTvCommand(kHisensePowerOff, "Power off");
     return true;
   }
-  gIrRemoteStatus = "Hisense keys: WASD nav, Enter OK, Z/X volume";
-  setStatus("Hisense: WASD Enter Z/X E/R/T/Y", 1200);
+  gIrRemoteStatus = "ERF3W80H keys: WASD nav, Enter OK, Z/X volume";
+  setStatus("ERF3W80H: WASD Enter Z/X E/R/T/Y", 1200);
   return true;
 }
 
