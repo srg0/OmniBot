@@ -248,6 +248,7 @@ uint32_t gTetrisLastDropMs = 0;
 bool gTetrisStarted = false;
 bool gTetrisPaused = false;
 bool gTetrisGameOver = false;
+bool gTetrisRightHandPortrait = true;
 bool gAlarmRinging = false;
 bool gIrRemoteReady = false;
 bool gIrRemoteLearning = false;

@@ -130,8 +130,113 @@ void renderTetrisPreview(uint8_t piece, int16_t x0, int16_t y0, int16_t cell, ui
   }
 }
 
+void renderTetrisRightHandPortraitUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 6, 12);
+  const uint16_t panel = rgb565_local(7, 14, 23);
+  const uint16_t panel2 = rgb565_local(4, 10, 17);
+  const uint16_t grid = rgb565_local(18, 30, 40);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t muted = rgb565_local(128, 145, 155);
+  const uint16_t red = rgb565_local(255, 82, 82);
+  const int16_t vw = 135;
+  const int16_t vh = 240;
+  const int16_t cell = 11;
+  const int16_t boardX = (vw - kTetrisCols * cell) / 2;
+  const int16_t boardY = 31;
+  const int16_t boardW = kTetrisCols * cell;
+  const int16_t boardH = kTetrisRows * cell;
+
+  d.setRotation(3);
+  d.fillScreen(bg);
+  d.fillRoundRect(4, 3, vw - 8, vh - 6, 12, panel);
+  d.drawRoundRect(4, 3, vw - 8, vh - 6, 12, gTetrisGameOver ? red : cyan);
+  d.drawRoundRect(8, 7, vw - 16, vh - 14, 9, rgb565_local(18, 38, 54));
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(13, 13);
+  d.print("TETRIS");
+  String state = gTetrisGameOver ? "OVER" : (gTetrisPaused ? "PAUSE" : (gTetrisStarted ? "RUN" : "READY"));
+  d.setTextColor(gTetrisGameOver ? red : (gTetrisStarted ? green : amber), panel);
+  d.setCursor(vw - 12 - d.textWidth(state), 13);
+  d.print(state);
+
+  d.fillRoundRect(boardX - 3, boardY - 3, boardW + 6, boardH + 6, 7, panel2);
+  d.drawRoundRect(boardX - 3, boardY - 3, boardW + 6, boardH + 6, 7, rgb565_local(34, 55, 69));
+  for (uint8_t y = 0; y < kTetrisRows; ++y) {
+    for (uint8_t x = 0; x < kTetrisCols; ++x) {
+      uint8_t cellValue = gTetrisBoard[y][x];
+      uint8_t activeValue = 0;
+      if (tetrisActiveCellAt(x, y, activeValue)) {
+        cellValue = activeValue;
+      }
+      uint16_t fill = cellValue ? tetrisPieceColor(cellValue) : rgb565_local(8, 17, 24);
+      int16_t px = boardX + x * cell;
+      int16_t py = boardY + y * cell;
+      d.fillRoundRect(px, py, cell - 1, cell - 1, 2, fill);
+      if (!cellValue && ((x + y) % 2 == 0)) {
+        d.drawPixel(px + cell / 2, py + cell / 2, grid);
+      }
+    }
+  }
+
+  const int16_t statsY = boardY + boardH + 11;
+  d.fillRoundRect(11, statsY, vw - 22, 21, 6, rgb565_local(5, 12, 19));
+  d.drawRoundRect(11, statsY, vw - 22, 21, 6, rgb565_local(30, 52, 66));
+  d.setFont(&fonts::Font0);
+  d.setTextColor(green, rgb565_local(5, 12, 19));
+  d.setCursor(17, statsY + 4);
+  d.print("S ");
+  d.print(gTetrisScore);
+  d.setTextColor(amber, rgb565_local(5, 12, 19));
+  d.setCursor(17, statsY + 13);
+  d.print("L ");
+  d.print(gTetrisLines);
+  d.setTextColor(cyan, rgb565_local(5, 12, 19));
+  d.setCursor(73, statsY + 13);
+  d.print("Lv ");
+  d.print(gTetrisLevel);
+
+  d.setTextColor(muted, rgb565_local(5, 12, 19));
+  d.setCursor(73, statsY + 4);
+  d.print("Next");
+  d.fillRoundRect(101, statsY + 3, 22, 16, 4, panel2);
+  renderTetrisPreview(gTetrisNextPiece, 103, statsY + 5, 4, panel2);
+
+  d.setTextColor(gTetrisGameOver ? red : amber, panel);
+  d.setCursor(12, vh - 25);
+  d.print(fitCurrentFontToWidth(gTetrisStatus, vw - 24));
+  d.setTextColor(muted, panel);
+  d.setCursor(12, vh - 14);
+  d.print(fitCurrentFontToWidth("Right grip: H/L Krot Jdrop", vw - 24));
+
+  if (!gTetrisStarted || gTetrisGameOver) {
+    d.fillRoundRect(15, 91, vw - 30, 47, 9, rgb565_local(3, 8, 14));
+    d.drawRoundRect(15, 91, vw - 30, 47, 9, gTetrisGameOver ? red : amber);
+    d.setFont(&fonts::Font2);
+    d.setTextColor(gTetrisGameOver ? red : amber, rgb565_local(3, 8, 14));
+    String prompt = gTetrisGameOver ? "GAME OVER" : "PRESS ENTER";
+    d.setCursor((vw - d.textWidth(prompt)) / 2, 101);
+    d.print(prompt);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, rgb565_local(3, 8, 14));
+    d.setCursor(25, 120);
+    d.print("Enter/R new game");
+  }
+  d.setRotation(0);
+}
+
 void renderTetrisUi() {
   auto& d = gCanvas;
+  if (gTetrisRightHandPortrait) {
+    renderTetrisRightHandPortraitUi();
+    renderLauncherOverlay();
+    renderDebugOverlay();
+    return;
+  }
   const uint16_t bg = rgb565_local(2, 6, 12);
   const uint16_t panel = rgb565_local(7, 14, 23);
   const uint16_t panel2 = rgb565_local(4, 10, 17);
@@ -229,7 +334,7 @@ void renderTetrisUi() {
   }
 
   d.setFont(&fonts::Font0);
-  drawTinyFooter(panel, muted, "A/D move  W rot  S drop  Enter hard", 13, 120, 214);
+  drawTinyFooter(panel, muted, "A/D move  W rot  S drop  Enter hard  G grip", 13, 120, 214);
   d.setFont(&fonts::Font2);
 
   renderLauncherOverlay();

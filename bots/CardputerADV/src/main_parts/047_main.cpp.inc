@@ -552,6 +552,12 @@ bool tetrisActiveCellAt(uint8_t boardX, uint8_t boardY, uint8_t& cell) {
 
 bool handleTetrisKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'g') {
+    gTetrisRightHandPortrait = !gTetrisRightHandPortrait;
+    gTetrisStatus = gTetrisRightHandPortrait ? "Right grip" : "Landscape";
+    setStatus(gTetrisRightHandPortrait ? "Tetris right grip" : "Tetris landscape", 900);
+    return true;
+  }
   if (!gTetrisStarted || gTetrisGameOver) {
     if (keys.enter || keys.space || key == '\r' || key == '\n' || key == ' ' || lowerKey == 'r') {
       tetrisResetGame();
