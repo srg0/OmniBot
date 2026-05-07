@@ -620,7 +620,8 @@ bool runHostOtaApply(bool refreshManifest) {
 }
 
 void printHostDiag() {
-  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d voice=%s http=%s",
+  updateBatterySnapshot(true);
+  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%%/%dmV/%ldmA/%s vbus=%dmV voice=%s http=%s",
        kAppVersion,
        kBuildGitSha,
        static_cast<unsigned>(ESP.getFreeHeap()),
@@ -641,8 +642,23 @@ void printHostDiag() {
        gOtaBootState.c_str(),
        static_cast<int>(gOtaPendingVerify),
        static_cast<int>(gOtaApplyInProgress),
+       static_cast<long>(gBatterySnapshot.level),
+       static_cast<int>(gBatterySnapshot.voltageMv),
+       static_cast<long>(gBatterySnapshot.currentMa),
+       batteryChargeLabel(gBatterySnapshot.charging),
+       static_cast<int>(M5.Power.getVBUSVoltage()),
        gLastVoiceDiag.c_str(),
        gLastHttpDiag.c_str());
+}
+
+void printHostBatteryStatus() {
+  updateBatterySnapshot(true);
+  logf("[HOST] battery.status level=%ld voltage_mv=%d current_ma=%ld charging=%s vbus_mv=%d",
+       static_cast<long>(gBatterySnapshot.level),
+       static_cast<int>(gBatterySnapshot.voltageMv),
+       static_cast<long>(gBatterySnapshot.currentMa),
+       batteryChargeLabel(gBatterySnapshot.charging),
+       static_cast<int>(M5.Power.getVBUSVoltage()));
 }
 
 bool handleHostSerialCommand(String line) {
@@ -655,6 +671,12 @@ bool handleHostSerialCommand(String line) {
   cmd.toLowerCase();
   if (cmd == "diag" || cmd == "/diag" || cmd == "dbg" || cmd == "/dbg") {
     printHostDiag();
+    return true;
+  }
+  if (cmd == "battery.status" || cmd == "/battery.status" || cmd == "battery" || cmd == "/battery" ||
+      cmd == "power.status" || cmd == "/power.status") {
+    printHostBatteryStatus();
+    setUiMode(UiMode::Battery);
     return true;
   }
   if (cmd == "ota.status" || cmd == "/ota.status" || cmd == "fw.status" || cmd == "/fw.status") {
