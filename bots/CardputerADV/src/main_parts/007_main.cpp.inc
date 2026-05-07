@@ -40,6 +40,8 @@ const char* uiModeName(UiMode mode) {
       return "Calendar";
     case UiMode::IrRemote:
       return "IR Remote";
+    case UiMode::Tetris:
+      return "Tetris";
     case UiMode::Logs:
       return "Logs";
     case UiMode::ChatFace:

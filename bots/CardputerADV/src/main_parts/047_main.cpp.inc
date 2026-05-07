@@ -317,6 +317,292 @@ bool handleCalculatorKey(char key, const Keyboard_Class::KeysState& keys) {
   return true;
 }
 
+constexpr uint8_t kTetrisCols = 10;
+constexpr uint8_t kTetrisRows = 16;
+constexpr uint8_t kTetrisPieceCount = 7;
+constexpr uint16_t kTetrisShapes[kTetrisPieceCount][4] = {
+    {0x0F00, 0x2222, 0x0F00, 0x2222},  // I
+    {0x0660, 0x0660, 0x0660, 0x0660},  // O
+    {0x4E00, 0x4640, 0x0E40, 0x4C40},  // T
+    {0x6C00, 0x4620, 0x6C00, 0x4620},  // S
+    {0xC600, 0x2640, 0xC600, 0x2640},  // Z
+    {0x8E00, 0x6440, 0xE200, 0x44C0},  // J
+    {0x2E00, 0x4460, 0xE800, 0xC440},  // L
+};
+
+const char* tetrisPieceName(uint8_t piece) {
+  static constexpr const char* kNames[kTetrisPieceCount] = {"I", "O", "T", "S", "Z", "J", "L"};
+  return kNames[piece % kTetrisPieceCount];
+}
+
+uint16_t tetrisPieceColor(uint8_t cell) {
+  switch (cell) {
+    case 1:
+      return rgb565_local(47, 227, 255);
+    case 2:
+      return rgb565_local(255, 214, 88);
+    case 3:
+      return rgb565_local(177, 113, 255);
+    case 4:
+      return rgb565_local(88, 240, 141);
+    case 5:
+      return rgb565_local(255, 82, 82);
+    case 6:
+      return rgb565_local(88, 151, 255);
+    case 7:
+      return rgb565_local(255, 150, 80);
+    default:
+      return rgb565_local(15, 25, 34);
+  }
+}
+
+bool tetrisShapeCell(uint8_t piece, uint8_t rotation, uint8_t x, uint8_t y) {
+  if (x >= 4 || y >= 4) {
+    return false;
+  }
+  uint16_t mask = kTetrisShapes[piece % kTetrisPieceCount][rotation % 4];
+  uint8_t bit = static_cast<uint8_t>(15 - (y * 4 + x));
+  return (mask & (1U << bit)) != 0;
+}
+
+bool tetrisCanPlace(uint8_t piece, uint8_t rotation, int8_t px, int8_t py) {
+  for (uint8_t y = 0; y < 4; ++y) {
+    for (uint8_t x = 0; x < 4; ++x) {
+      if (!tetrisShapeCell(piece, rotation, x, y)) {
+        continue;
+      }
+      int8_t bx = px + static_cast<int8_t>(x);
+      int8_t by = py + static_cast<int8_t>(y);
+      if (bx < 0 || bx >= static_cast<int8_t>(kTetrisCols) || by >= static_cast<int8_t>(kTetrisRows)) {
+        return false;
+      }
+      if (by >= 0 && gTetrisBoard[by][bx] != 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+uint8_t tetrisRandomPiece() {
+  return static_cast<uint8_t>(random(kTetrisPieceCount));
+}
+
+uint16_t tetrisDropIntervalMs() {
+  int interval = 660 - static_cast<int>(gTetrisLevel - 1) * 45;
+  return static_cast<uint16_t>(max<int>(170, interval));
+}
+
+void tetrisSpawnPiece() {
+  gTetrisPiece = gTetrisNextPiece % kTetrisPieceCount;
+  gTetrisNextPiece = tetrisRandomPiece();
+  gTetrisRotation = 0;
+  gTetrisX = 3;
+  gTetrisY = 0;
+  gTetrisLastDropMs = millis();
+  if (!tetrisCanPlace(gTetrisPiece, gTetrisRotation, gTetrisX, gTetrisY)) {
+    gTetrisGameOver = true;
+    gTetrisPaused = false;
+    gTetrisStatus = "Game over";
+    setStatus("Tetris game over", 1000);
+  } else {
+    gTetrisStatus = String("Piece ") + tetrisPieceName(gTetrisPiece);
+  }
+}
+
+void tetrisResetGame() {
+  memset(gTetrisBoard, 0, sizeof(gTetrisBoard));
+  gTetrisScore = 0;
+  gTetrisLines = 0;
+  gTetrisLevel = 1;
+  gTetrisStarted = true;
+  gTetrisPaused = false;
+  gTetrisGameOver = false;
+  gTetrisNextPiece = tetrisRandomPiece();
+  tetrisSpawnPiece();
+  gTetrisStatus = "New game";
+  setStatus("Tetris started", 900);
+}
+
+bool tetrisMovePiece(int8_t dx, int8_t dy) {
+  int8_t nx = static_cast<int8_t>(gTetrisX + dx);
+  int8_t ny = static_cast<int8_t>(gTetrisY + dy);
+  if (!tetrisCanPlace(gTetrisPiece, gTetrisRotation, nx, ny)) {
+    return false;
+  }
+  gTetrisX = nx;
+  gTetrisY = ny;
+  return true;
+}
+
+bool tetrisRotatePiece() {
+  uint8_t nr = static_cast<uint8_t>((gTetrisRotation + 1) % 4);
+  if (tetrisCanPlace(gTetrisPiece, nr, gTetrisX, gTetrisY)) {
+    gTetrisRotation = nr;
+    return true;
+  }
+  if (tetrisCanPlace(gTetrisPiece, nr, static_cast<int8_t>(gTetrisX - 1), gTetrisY)) {
+    gTetrisX--;
+    gTetrisRotation = nr;
+    return true;
+  }
+  if (tetrisCanPlace(gTetrisPiece, nr, static_cast<int8_t>(gTetrisX + 1), gTetrisY)) {
+    gTetrisX++;
+    gTetrisRotation = nr;
+    return true;
+  }
+  return false;
+}
+
+void tetrisMergePiece() {
+  for (uint8_t y = 0; y < 4; ++y) {
+    for (uint8_t x = 0; x < 4; ++x) {
+      if (!tetrisShapeCell(gTetrisPiece, gTetrisRotation, x, y)) {
+        continue;
+      }
+      int8_t bx = gTetrisX + static_cast<int8_t>(x);
+      int8_t by = gTetrisY + static_cast<int8_t>(y);
+      if (bx >= 0 && bx < static_cast<int8_t>(kTetrisCols) && by >= 0 && by < static_cast<int8_t>(kTetrisRows)) {
+        gTetrisBoard[by][bx] = static_cast<uint8_t>(gTetrisPiece + 1);
+      }
+    }
+  }
+}
+
+uint8_t tetrisClearFullLines() {
+  uint8_t cleared = 0;
+  for (int8_t y = static_cast<int8_t>(kTetrisRows) - 1; y >= 0; --y) {
+    bool full = true;
+    for (uint8_t x = 0; x < kTetrisCols; ++x) {
+      if (gTetrisBoard[y][x] == 0) {
+        full = false;
+        break;
+      }
+    }
+    if (!full) {
+      continue;
+    }
+    for (int8_t yy = y; yy > 0; --yy) {
+      memcpy(gTetrisBoard[yy], gTetrisBoard[yy - 1], kTetrisCols);
+    }
+    memset(gTetrisBoard[0], 0, kTetrisCols);
+    ++cleared;
+    ++y;
+  }
+  if (cleared > 0) {
+    static constexpr uint16_t kLineScore[5] = {0, 40, 100, 300, 1200};
+    gTetrisLines += cleared;
+    gTetrisScore += static_cast<uint32_t>(kLineScore[min<uint8_t>(cleared, 4)]) * gTetrisLevel;
+    gTetrisLevel = static_cast<uint8_t>(1 + min<uint16_t>(8, gTetrisLines / 10));
+    gTetrisStatus = String("Lines +") + String(cleared);
+    setStatus(gTetrisStatus, 700);
+  }
+  return cleared;
+}
+
+void tetrisLockPiece() {
+  tetrisMergePiece();
+  tetrisClearFullLines();
+  tetrisSpawnPiece();
+}
+
+void tetrisHardDrop() {
+  if (!gTetrisStarted || gTetrisPaused || gTetrisGameOver) {
+    return;
+  }
+  while (tetrisMovePiece(0, 1)) {
+    gTetrisScore += 1;
+  }
+  tetrisLockPiece();
+}
+
+void serviceTetris() {
+  if (gUiMode != UiMode::Tetris || !gTetrisStarted || gTetrisPaused || gTetrisGameOver) {
+    return;
+  }
+  uint32_t now = millis();
+  if (now - gTetrisLastDropMs < tetrisDropIntervalMs()) {
+    return;
+  }
+  gTetrisLastDropMs = now;
+  if (!tetrisMovePiece(0, 1)) {
+    tetrisLockPiece();
+  }
+}
+
+bool tetrisActiveCellAt(uint8_t boardX, uint8_t boardY, uint8_t& cell) {
+  if (!gTetrisStarted || gTetrisGameOver) {
+    return false;
+  }
+  for (uint8_t y = 0; y < 4; ++y) {
+    for (uint8_t x = 0; x < 4; ++x) {
+      if (!tetrisShapeCell(gTetrisPiece, gTetrisRotation, x, y)) {
+        continue;
+      }
+      int8_t bx = gTetrisX + static_cast<int8_t>(x);
+      int8_t by = gTetrisY + static_cast<int8_t>(y);
+      if (bx == static_cast<int8_t>(boardX) && by == static_cast<int8_t>(boardY)) {
+        cell = static_cast<uint8_t>(gTetrisPiece + 1);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool handleTetrisKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (!gTetrisStarted || gTetrisGameOver) {
+    if (keys.enter || keys.space || key == '\r' || key == '\n' || key == ' ' || lowerKey == 'r') {
+      tetrisResetGame();
+    } else {
+      setStatus("Enter starts Tetris", 800);
+    }
+    return true;
+  }
+  if (lowerKey == 'p') {
+    gTetrisPaused = !gTetrisPaused;
+    gTetrisStatus = gTetrisPaused ? "Paused" : "Running";
+    setStatus(gTetrisStatus, 700);
+    return true;
+  }
+  if (lowerKey == 'r') {
+    tetrisResetGame();
+    return true;
+  }
+  if (gTetrisPaused) {
+    return true;
+  }
+  if (key == ',' || key == ';' || lowerKey == 'a' || lowerKey == 'h') {
+    tetrisMovePiece(-1, 0);
+    return true;
+  }
+  if (key == '.' || key == '/' || lowerKey == 'd' || lowerKey == 'l') {
+    tetrisMovePiece(1, 0);
+    return true;
+  }
+  if (lowerKey == 'w' || lowerKey == 'k') {
+    if (tetrisRotatePiece()) {
+      gTetrisStatus = "Rotated";
+    }
+    return true;
+  }
+  if (lowerKey == 's' || lowerKey == 'j') {
+    if (tetrisMovePiece(0, 1)) {
+      gTetrisScore += 1;
+      gTetrisLastDropMs = millis();
+    } else {
+      tetrisLockPiece();
+    }
+    return true;
+  }
+  if (keys.enter || keys.space || key == '\r' || key == '\n' || key == ' ') {
+    tetrisHardDrop();
+    return true;
+  }
+  return true;
+}
+
 uint32_t stopwatchElapsedMs() {
   if (!gStopwatchRunning) {
     return gStopwatchElapsedMs;

@@ -1009,6 +1009,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/tetris" || cmd == "/game") {
+    setUiMode(UiMode::Tetris);
+    return true;
+  }
+
   if (cmd == "/ir" || cmd == "/remote" || cmd == "/irremote") {
     setUiMode(UiMode::IrRemote);
     return true;

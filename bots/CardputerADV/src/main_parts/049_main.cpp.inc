@@ -67,6 +67,14 @@
     handleTypingKey(',', keys);
   } else if (gUiMode == UiMode::IrRemote && (rightDown || downDown)) {
     handleTypingKey('.', keys);
+  } else if (gUiMode == UiMode::Tetris && leftDown) {
+    handleTypingKey(',', keys);
+  } else if (gUiMode == UiMode::Tetris && rightDown) {
+    handleTypingKey('.', keys);
+  } else if (gUiMode == UiMode::Tetris && upDown) {
+    handleTypingKey('w', keys);
+  } else if (gUiMode == UiMode::Tetris && downDown) {
+    handleTypingKey('s', keys);
   } else if (spaceDown && keys.ctrl) {
     handleTypingKey(' ', keys);
   } else if (enterDown) {

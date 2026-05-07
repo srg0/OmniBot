@@ -233,6 +233,8 @@ bool mapActionUiMode(String mode, UiMode& out) {
     out = UiMode::Stopwatch;
   } else if (mode == "calendar" || mode == "cal" || mode == "month") {
     out = UiMode::Calendar;
+  } else if (mode == "tetris" || mode == "game" || mode == "blocks") {
+    out = UiMode::Tetris;
   } else if (mode == "battery") {
     out = UiMode::Battery;
   } else if (mode == "ota" || mode == "firmware") {

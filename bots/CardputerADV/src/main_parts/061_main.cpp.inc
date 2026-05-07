@@ -56,6 +56,9 @@
       case UiMode::IrRemote:
         renderIrRemoteUi();
         break;
+      case UiMode::Tetris:
+        renderTetrisUi();
+        break;
       case UiMode::Logs:
         renderLogsUi();
         break;
@@ -264,6 +267,7 @@ void loop() {
   updateFocusTimer();
   serviceFocusMetronome();
   serviceAlarm();
+  serviceTetris();
   if (gUiMode == UiMode::IrRemote || gIrRemoteLearning) {
     serviceIrRemote();
   }

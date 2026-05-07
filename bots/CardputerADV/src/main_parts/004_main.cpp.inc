@@ -102,13 +102,14 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}, {"Notes", UiMode::Notes}}},
     {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
      {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice}, {"Assets", UiMode::Assets}}},
-    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 4,
-     {{"Focus Space", UiMode::Focus}, {"Alarm", UiMode::Alarm}, {"Stopwatch", UiMode::Stopwatch},
-      {"Calendar", UiMode::Calendar}}},
-    {"OpenClaw", "OC", "Bridge runtime", rgb565_local(180, 150, 255), 2,
+    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 3,
+     {{"Focus Space", UiMode::Focus}, {"Alarm", UiMode::Alarm}, {"Stopwatch", UiMode::Stopwatch}}},
+    {"System", "SYS", "Bridge and firmware", rgb565_local(180, 150, 255), 2,
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}}},
-    {"System", "SYS", "Power and settings", rgb565_local(203, 216, 226), 4,
-     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Calculator", UiMode::Calculator}, {"IR Remote", UiMode::IrRemote}}},
+    {"Device", "DEV", "Power and settings", rgb565_local(203, 216, 226), 2,
+     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}}},
+    {"Utilities", "UTIL", "Tools and games", rgb565_local(255, 150, 80), 4,
+     {{"Calculator", UiMode::Calculator}, {"IR Remote", UiMode::IrRemote}, {"Tetris", UiMode::Tetris}, {"Calendar", UiMode::Calendar}}},
 };
 
 Preferences gPrefs;
@@ -134,6 +135,7 @@ String gCalcResult = "0";
 String gCalcStatus = "Ready";
 String gIrRemoteStatus = "IR idle";
 String gStopwatchStatus = "Ready";
+String gTetrisStatus = "Ready";
 String gAlarmStatus = "Ready";
 String gAlarmEditBuffer;
 String gDeferredDeviceActionsJson;
@@ -233,6 +235,19 @@ bool gStopwatchRunning = false;
 uint32_t gStopwatchElapsedMs = 0;
 uint32_t gStopwatchStartedMs = 0;
 uint32_t gStopwatchLapMs = 0;
+uint8_t gTetrisBoard[16][10] = {};
+uint8_t gTetrisPiece = 0;
+uint8_t gTetrisRotation = 0;
+uint8_t gTetrisNextPiece = 1;
+int8_t gTetrisX = 3;
+int8_t gTetrisY = 0;
+uint32_t gTetrisScore = 0;
+uint16_t gTetrisLines = 0;
+uint8_t gTetrisLevel = 1;
+uint32_t gTetrisLastDropMs = 0;
+bool gTetrisStarted = false;
+bool gTetrisPaused = false;
+bool gTetrisGameOver = false;
 bool gAlarmRinging = false;
 bool gIrRemoteReady = false;
 bool gIrRemoteLearning = false;

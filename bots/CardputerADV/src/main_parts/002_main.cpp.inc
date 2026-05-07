@@ -171,6 +171,7 @@ enum class UiMode : uint8_t {
   Stopwatch,
   Calendar,
   IrRemote,
+  Tetris,
   Logs,
 };
 
