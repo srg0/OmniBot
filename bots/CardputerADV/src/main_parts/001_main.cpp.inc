@@ -50,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.96-dev"
+#define APP_VERSION "0.2.98-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,11 +64,11 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.96-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_0296";
+constexpr const char* kPostInstallStoryVersion = "0.2.98-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_0298";
 constexpr const char* kPostInstallStoryText =
-    u8"Прошивка установлена. IR Remote: слот 1 Daikin AC, слот 2 ERF3W80H 4K. "
-    u8"Переключение 1/2 или ,/.; ERF3W80H: WASD навигация, Enter OK, Z/X громкость, M Assistant.";
+    "Firmware installed. Open IR Remote, slot 1 for Daikin AC. "
+    "Point the top IR window at the air conditioner: Q toggles power, W cool, E fan, R dry, T heat, Y auto, A and S adjust temperature, D changes fan speed.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
