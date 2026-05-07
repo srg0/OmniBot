@@ -552,19 +552,30 @@ bool tetrisActiveCellAt(uint8_t boardX, uint8_t boardY, uint8_t& cell) {
 
 bool handleTetrisKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (keys.tab || key == '\t' || lowerKey == '?') {
+    gLauncherVisible = false;
+    gTetrisHelpVisible = !gTetrisHelpVisible;
+    setStatus(gTetrisHelpVisible ? "Tetris help" : "Tetris game", 700);
+    return true;
+  }
   if (lowerKey == 'g') {
     gTetrisRightHandPortrait = !gTetrisRightHandPortrait;
+    gTetrisHelpVisible = false;
     gTetrisStatus = gTetrisRightHandPortrait ? "Right grip" : "Landscape";
     setStatus(gTetrisRightHandPortrait ? "Tetris right grip" : "Tetris landscape", 900);
     return true;
   }
   if (!gTetrisStarted || gTetrisGameOver) {
     if (keys.enter || keys.space || key == '\r' || key == '\n' || key == ' ' || lowerKey == 'r') {
+      gTetrisHelpVisible = false;
       tetrisResetGame();
     } else {
-      setStatus("Enter starts Tetris", 800);
+      setStatus("Enter starts, Tab helps", 800);
     }
     return true;
+  }
+  if (gTetrisHelpVisible) {
+    gTetrisHelpVisible = false;
   }
   if (lowerKey == 'p') {
     gTetrisPaused = !gTetrisPaused;
@@ -579,7 +590,7 @@ bool handleTetrisKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gTetrisPaused) {
     return true;
   }
-  if (key == ',' || key == ';' || lowerKey == 'a' || lowerKey == 'h') {
+  if (key == ',' || key == ';' || lowerKey == 'a' || lowerKey == 'h' || lowerKey == 'j') {
     tetrisMovePiece(-1, 0);
     return true;
   }
@@ -587,13 +598,13 @@ bool handleTetrisKey(char key, const Keyboard_Class::KeysState& keys) {
     tetrisMovePiece(1, 0);
     return true;
   }
-  if (lowerKey == 'w' || lowerKey == 'k') {
+  if (lowerKey == 'w' || lowerKey == 'i') {
     if (tetrisRotatePiece()) {
       gTetrisStatus = "Rotated";
     }
     return true;
   }
-  if (lowerKey == 's' || lowerKey == 'j') {
+  if (lowerKey == 's' || lowerKey == 'k') {
     if (tetrisMovePiece(0, 1)) {
       gTetrisScore += 1;
       gTetrisLastDropMs = millis();
@@ -1402,6 +1413,10 @@ bool handleGlobalEscape() {
   }
   if (gLauncherVisible) {
     gLauncherVisible = false;
+    changed = true;
+  }
+  if (gTetrisHelpVisible) {
+    gTetrisHelpVisible = false;
     changed = true;
   }
   if (gFocus.helpVisible) {

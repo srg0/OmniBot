@@ -258,6 +258,9 @@ void syncLauncherToMode(UiMode mode) {
 void setUiMode(UiMode mode) {
   gUiMode = mode;
   gLauncherVisible = false;
+  if (mode != UiMode::Tetris) {
+    gTetrisHelpVisible = false;
+  }
   if (gLauncherSelection >= 0 && gLauncherSelection < kLauncherGroupCount &&
       gLauncherSubSelection >= 0 && gLauncherSubSelection < kLauncherGroups[gLauncherSelection].count &&
       kLauncherGroups[gLauncherSelection].items[gLauncherSubSelection].mode == mode) {

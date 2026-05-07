@@ -50,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.100-dev"
+#define APP_VERSION "0.2.101-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,11 +64,11 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.100-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02100";
+constexpr const char* kPostInstallStoryVersion = "0.2.101-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02101";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. Tetris now opens in right hand portrait grip for one handed play. "
-    "Hold the screen sideways in your right hand. Use H and L to move, K to rotate, J to drop, Enter to hard drop, R to restart, and G to toggle landscape.";
+    "Firmware installed. Tetris now uses a fullscreen right hand portrait layout. "
+    "Hold the keyboard side in your right hand. Use J and L to move, I to rotate, K to drop, Enter to hard drop, R to restart, and Tab for the help overlay.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";

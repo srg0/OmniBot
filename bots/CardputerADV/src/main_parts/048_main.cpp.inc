@@ -43,6 +43,12 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (keys.ctrl && lowerKey == 'l') {
+    if (gUiMode == UiMode::Tetris && gTetrisRightHandPortrait) {
+      gLauncherVisible = false;
+      gTetrisHelpVisible = !gTetrisHelpVisible;
+      setStatus(gTetrisHelpVisible ? "Tetris help" : "Tetris game", 700);
+      return;
+    }
     uint32_t now = millis();
     if (now - gLastLauncherToggleMs < kLauncherToggleDebounceMs) {
       return;
@@ -50,6 +56,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     gLastLauncherToggleMs = now;
     gLauncherVisible = !gLauncherVisible;
     setStatus(gLauncherVisible ? "Launcher" : "Launcher closed", 700);
+    return;
+  }
+  if (gUiMode == UiMode::Tetris && handleTetrisKey(key, keys)) {
     return;
   }
   if (keys.tab) {
@@ -99,9 +108,6 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (gUiMode == UiMode::Calculator && handleCalculatorKey(key, keys)) {
-    return;
-  }
-  if (gUiMode == UiMode::Tetris && handleTetrisKey(key, keys)) {
     return;
   }
   if (gUiMode == UiMode::Alarm && handleAlarmKey(key, keys)) {

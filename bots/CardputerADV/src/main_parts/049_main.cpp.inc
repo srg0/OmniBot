@@ -12,6 +12,8 @@
 	    }
   } else if (optionViewToggle) {
     togglePulseChatDisplay();
+	  } else if (gUiMode == UiMode::Tetris && (tabDown || tabPrevCombo || tabNextCombo)) {
+	    handleTypingKey('\t', keys);
 	  } else if (tabPrevCombo) {
 	    switchLauncherGroupAndApply(-1);
   } else if (tabNextCombo) {
