@@ -571,13 +571,15 @@ void runRealtimeUpgradeProbe(bool verifyTls = true) {
 }
 
 void printHostOtaStatus() {
-  logf("[HOST] ota.status app=%s manifest_present=%d parsed=%d version=%s size=%u min_battery=%u confirm=%d pending_verify=%d boot_state=%s running_slot=%s apply_in_progress=%d url=%d sha=%s",
+  logf("[HOST] ota.status app=%s manifest_present=%d parsed=%d version=%s size=%u min_battery=%u local_min_battery=%u effective_min_battery=%u confirm=%d pending_verify=%d boot_state=%s running_slot=%s apply_in_progress=%d url=%d sha=%s",
        kAppVersion,
        static_cast<int>(gOtaManifest.present),
        static_cast<int>(gOtaManifest.parsed),
        gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version.c_str(),
        static_cast<unsigned>(gOtaManifest.size),
        static_cast<unsigned>(gOtaManifest.minBattery),
+       static_cast<unsigned>(gDeviceSettings.minBatteryForUpdate),
+       static_cast<unsigned>(max<uint8_t>(gDeviceSettings.minBatteryForUpdate, gOtaManifest.minBattery)),
        static_cast<int>(gOtaManifest.confirmRequired),
        static_cast<int>(gOtaPendingVerify),
        gOtaBootState.c_str(),
@@ -661,6 +663,25 @@ void printHostBatteryStatus() {
        static_cast<int>(M5.Power.getVBUSVoltage()));
 }
 
+bool handleHostOtaMinBatteryCommand(const String& line) {
+  int separator = line.indexOf(' ');
+  if (separator < 0) {
+    separator = line.indexOf('=');
+  }
+  if (separator < 0 || separator + 1 >= line.length()) {
+    logf("[HOST] ota.min_battery value required current=%u", static_cast<unsigned>(gDeviceSettings.minBatteryForUpdate));
+    return true;
+  }
+  String valueText = line.substring(separator + 1);
+  valueText.trim();
+  int value = clampValue<int>(valueText.toInt(), 5, 95);
+  gDeviceSettings.minBatteryForUpdate = static_cast<uint8_t>(value);
+  saveDeviceSettings();
+  logf("[HOST] ota.min_battery set=%u", static_cast<unsigned>(gDeviceSettings.minBatteryForUpdate));
+  setStatus("OTA battery " + String(gDeviceSettings.minBatteryForUpdate) + "%", 1200);
+  return true;
+}
+
 bool handleHostSerialCommand(String line) {
   line.trim();
   if (line.isEmpty()) {
@@ -682,6 +703,12 @@ bool handleHostSerialCommand(String line) {
   if (cmd == "ota.status" || cmd == "/ota.status" || cmd == "fw.status" || cmd == "/fw.status") {
     printHostOtaStatus();
     return true;
+  }
+  if (cmd.startsWith("ota.min_battery ") || cmd.startsWith("/ota.min_battery ") ||
+      cmd.startsWith("ota.min_battery=") || cmd.startsWith("/ota.min_battery=") ||
+      cmd.startsWith("settings.ota.min_battery ") || cmd.startsWith("/settings.ota.min_battery ") ||
+      cmd.startsWith("settings.ota.min_battery=") || cmd.startsWith("/settings.ota.min_battery=")) {
+    return handleHostOtaMinBatteryCommand(line);
   }
   if (cmd == "ota.check" || cmd == "/ota.check" || cmd == "ota.fetch" || cmd == "/ota.fetch" ||
       cmd == "fw.check" || cmd == "/fw.check") {
