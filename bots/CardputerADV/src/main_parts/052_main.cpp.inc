@@ -200,7 +200,7 @@ void renderLauncherOverlay() {
   d.setFont(&fonts::Font2);
 
   d.fillRoundRect(10, 116, 220, 10, 4, panel);
-  drawTinyFooter(panel, muted, "Up/Down app  Left/Right screen  Ent", 15, 118, 210);
+  drawTinyFooter(panel, muted, "Up/Down group  Left/Right item  Enter", 15, 118, 210);
 }
 
 void renderBatteryUi() {
@@ -230,4 +230,3 @@ void renderBatteryUi() {
   d.drawRoundRect(barX, barY, barW, barH, 8, TFT_LIGHTGREY);
   d.fillRect(barX + barW, barY + 8, 6, 12, TFT_LIGHTGREY);
   d.fillRoundRect(barX + 4, barY + 4, max(0, fillW), barH - 8, 5, barColor);
-

@@ -125,6 +125,7 @@ String gWifiSsid;
 String gWifiPassword;
 String gHubHost;
 String gDeviceToken;
+String gRealtimeExtraHeaders;
 uint16_t gHubPort = kDefaultHubPort;
 
 std::deque<ChatLine> gChatLines;

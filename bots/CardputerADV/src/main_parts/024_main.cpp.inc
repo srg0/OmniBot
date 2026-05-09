@@ -255,7 +255,24 @@ void syncLauncherToMode(UiMode mode) {
   gLauncherLastSub[groupIndex] = subIndex;
 }
 
+bool uiModeInterruptsRealtime(UiMode mode) {
+  switch (mode) {
+    case UiMode::Home:
+    case UiMode::ChatFace:
+    case UiMode::Face:
+    case UiMode::Hero:
+    case UiMode::ChatFull:
+      return false;
+    default:
+      return true;
+  }
+}
+
 void setUiMode(UiMode mode) {
+  if (mode != gUiMode && uiModeInterruptsRealtime(mode) &&
+      (gRealtimeActive || gRealtimeConnected || gRealtimeRecording || gRealtimeAwaiting)) {
+    closeRealtimeSession("mode change");
+  }
   gUiMode = mode;
   gLauncherVisible = false;
   if (mode != UiMode::Tetris) {

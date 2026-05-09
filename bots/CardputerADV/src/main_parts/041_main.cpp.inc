@@ -149,6 +149,8 @@ void closeRealtimeSession(const String& reason) {
   gRealtimeAwaiting = false;
   gRealtimeGotAudio = false;
   gRealtimeSessionId = "";
+  gRealtimeExtraHeaders = "";
+  gRealtimeWs.setExtraHeaders();
   resumeHubWebSocketAfterVoice();
   setVoiceDiag("realtime: " + reason);
 }

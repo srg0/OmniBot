@@ -869,9 +869,9 @@ bool handleLocalCommand(const String& input) {
   if (cmd == "/help" || cmd == "help" || cmd == "commands" || cmd == "actions" ||
       cmd == "команды" || cmd == "помощь") {
     pushSystem("Ctrl+Space = EN/RU");
-    pushSystem("Voice: Ctrl x2, Ctrl+V, or hold G0");
-    pushSystem("Tab = next screen, Tab+Down/Right = next app");
-    pushSystem("Ctrl+L = launcher map, arrows = group/item");
+    pushSystem("Voice: Ctrl x2, Ctrl+V, or hold G0; Realtime: Ctrl+R");
+    pushSystem("Tab = menu; Tab+Down/Right = next group");
+    pushSystem("Ctrl+L = launcher; Up/Down group, Left/Right item, Enter open");
     pushSystem("Ctrl+D = debug; type: voice focus topics pet notes");
     pushSystem("Pet: F food P play C clean S sleep H hunt");
     pushSystem("Agent actions: focus, ui.open, audio/voice, topics, pet, settings");

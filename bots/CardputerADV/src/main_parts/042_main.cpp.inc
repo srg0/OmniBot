@@ -89,6 +89,41 @@ void handleRealtimeAudioDeltaPayload(uint8_t* payload, size_t length) {
   }
 }
 
+String sanitizeRealtimeHeaderValue(const String& value) {
+  String out = value;
+  out.replace("\r", "");
+  out.replace("\n", "");
+  return out;
+}
+
+void configureRealtimeAuthHeaders() {
+  gRealtimeExtraHeaders = "";
+  const String deviceId = sanitizeRealtimeHeaderValue(gDeviceId);
+  const String token = sanitizeRealtimeHeaderValue(gDeviceToken);
+  if (!deviceId.isEmpty()) {
+    gRealtimeExtraHeaders += "X-Device-Id: ";
+    gRealtimeExtraHeaders += deviceId;
+    gRealtimeExtraHeaders += "\r\n";
+  }
+  if (!token.isEmpty()) {
+    gRealtimeExtraHeaders += "Authorization: Bearer ";
+    gRealtimeExtraHeaders += token;
+    gRealtimeExtraHeaders += "\r\n";
+    gRealtimeExtraHeaders += "X-Device-Token: ";
+    gRealtimeExtraHeaders += token;
+    gRealtimeExtraHeaders += "\r\n";
+  }
+  if (gRealtimeExtraHeaders.isEmpty()) {
+    gRealtimeWs.setExtraHeaders();
+  } else {
+    gRealtimeWs.setExtraHeaders(gRealtimeExtraHeaders.c_str());
+  }
+  logf("[RT] auth headers device=%d bearer=%d token_len=%u",
+       static_cast<int>(!deviceId.isEmpty()),
+       static_cast<int>(!token.isEmpty()),
+       static_cast<unsigned>(token.length()));
+}
+
 void handleRealtimeJson(const JsonDocument& doc) {
   const String type = doc["type"] | "";
   if (type == "connected") {
@@ -344,7 +379,7 @@ void startRealtimeSession(bool startAfterReady) {
   gRealtimeAwaiting = false;
   gRealtimeRestartAfterPlayback = false;
   gRealtimeSessionStartedMs = millis();
-  gRealtimeWs.setExtraHeaders();
+  configureRealtimeAuthHeaders();
   if (hubUsesTls() && gRealtimeTlsVerify) {
     gRealtimeWs.beginSslWithCA(gHubHost.c_str(), gHubPort, kRealtimeWsPath, kTlsRootCaPem, "");
   } else if (hubUsesTls()) {
