@@ -1,10 +1,15 @@
   d.setFont(&fonts::Font7);
   d.setTextColor(TFT_WHITE, 0x0841);
-  d.setCursor(166, 22);
-  d.print(String(level));
-  d.setFont(&fonts::Font4);
-  d.setCursor(208, 36);
-  d.print("%");
+  if (levelKnown) {
+    d.setCursor(166, 22);
+    d.print(String(level));
+    d.setFont(&fonts::Font4);
+    d.setCursor(208, 36);
+    d.print("%");
+  } else {
+    d.setCursor(166, 25);
+    d.print("--");
+  }
 
   d.setFont(&fonts::Font2);
   d.setTextColor(TFT_CYAN, 0x0841);
@@ -13,6 +18,9 @@
   d.setCursor(92, 70);
   d.setTextColor(TFT_WHITE, 0x0841);
   d.print(batteryChargeLabel(gBatterySnapshot.charging));
+  if (gBatterySnapshot.levelEstimated) {
+    d.print(" est");
+  }
 
   d.setTextColor(TFT_CYAN, 0x0841);
   d.setCursor(22, 84);
@@ -182,4 +190,3 @@ void renderFocusUi() {
   String done = String(gFocus.completedToday) + " done";
   d.setCursor(222 - d.textWidth(done), 15);
   d.print(done);
-

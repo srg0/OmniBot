@@ -186,9 +186,12 @@ struct ContextPreviewLine {
 
 struct BatterySnapshot {
   int32_t level = -1;
+  int32_t rawLevel = -1;
   int16_t voltageMv = -1;
+  int16_t vbusMv = -1;
   int32_t currentMa = 0;
   m5::Power_Class::is_charging_t charging = m5::Power_Class::charge_unknown;
+  bool levelEstimated = false;
 };
 
 struct TextTurnTaskPayload {

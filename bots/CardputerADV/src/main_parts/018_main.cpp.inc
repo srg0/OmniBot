@@ -152,13 +152,14 @@ bool addDefaultContext(const String& label, const String& key, const String& sho
 
 void loadDefaultConversationContexts() {
   gContexts.clear();
-  addDefaultContext("Cardputer", "tg:root-main:default:-1003665527854:323", "ADV");
+  addContextItem(kPrimaryCardputerTopicTitle, kPrimaryCardputerTopicKey, "ADV",
+                 kPrimaryCardputerTopicKey, kPrimaryCardputerThreadId, 0, 0, false);
 }
 
 bool isPrimaryCardputerContext(const ConversationContext& ctx) {
-  return ctx.threadId == 323 ||
-         ctx.key == "tg:root-main:default:-1003665527854:323" ||
-         ctx.topicKey == "tg:root-main:default:-1003665527854:323" ||
+  return ctx.threadId == kPrimaryCardputerThreadId ||
+         ctx.key == kPrimaryCardputerTopicKey ||
+         ctx.topicKey == kPrimaryCardputerTopicKey ||
          normalizeTopicTitleForDisplay(ctx.label, false) == "Cardputer";
 }
 
@@ -228,6 +229,10 @@ void loadConversationContexts() {
   gSavedContextKey = savedKey;
   selectSavedContextOrDefault(savedKey);
   if (gSavedContextKey.isEmpty() && !gContexts.empty()) {
+    gSavedContextKey = currentConversationKey();
+  } else if (!gContexts.empty() &&
+             gSavedContextKey != currentConversationKey() &&
+             gContexts[gSelectedContext].topicKey == kPrimaryCardputerTopicKey) {
     gSavedContextKey = currentConversationKey();
   }
   clearContextPreviewIfSelectionChanged();

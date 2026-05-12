@@ -623,7 +623,7 @@ bool runHostOtaApply(bool refreshManifest) {
 
 void printHostDiag() {
   updateBatterySnapshot(true);
-  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%%/%dmV/%ldmA/%s vbus=%dmV voice=%s http=%s",
+  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%% raw=%ld est=%d/%dmV/%ldmA/%s vbus=%dmV voice=%s http=%s",
        kAppVersion,
        kBuildGitSha,
        static_cast<unsigned>(ESP.getFreeHeap()),
@@ -645,22 +645,26 @@ void printHostDiag() {
        static_cast<int>(gOtaPendingVerify),
        static_cast<int>(gOtaApplyInProgress),
        static_cast<long>(gBatterySnapshot.level),
+       static_cast<long>(gBatterySnapshot.rawLevel),
+       static_cast<int>(gBatterySnapshot.levelEstimated),
        static_cast<int>(gBatterySnapshot.voltageMv),
        static_cast<long>(gBatterySnapshot.currentMa),
        batteryChargeLabel(gBatterySnapshot.charging),
-       static_cast<int>(M5.Power.getVBUSVoltage()),
+       static_cast<int>(gBatterySnapshot.vbusMv),
        gLastVoiceDiag.c_str(),
        gLastHttpDiag.c_str());
 }
 
 void printHostBatteryStatus() {
   updateBatterySnapshot(true);
-  logf("[HOST] battery.status level=%ld voltage_mv=%d current_ma=%ld charging=%s vbus_mv=%d",
+  logf("[HOST] battery.status level=%ld raw_level=%ld estimated=%d voltage_mv=%d current_ma=%ld charging=%s vbus_mv=%d",
        static_cast<long>(gBatterySnapshot.level),
+       static_cast<long>(gBatterySnapshot.rawLevel),
+       static_cast<int>(gBatterySnapshot.levelEstimated),
        static_cast<int>(gBatterySnapshot.voltageMv),
        static_cast<long>(gBatterySnapshot.currentMa),
        batteryChargeLabel(gBatterySnapshot.charging),
-       static_cast<int>(M5.Power.getVBUSVoltage()));
+       static_cast<int>(gBatterySnapshot.vbusMv));
 }
 
 bool handleHostOtaMinBatteryCommand(const String& line) {
@@ -1007,7 +1011,16 @@ bool handleLocalCommand(const String& input) {
   if (cmd == "/contexts" || cmd == "/topics") {
     loadConversationContexts();
     setUiMode(UiMode::Contexts);
-    startTopicTask(true, false, true, "Syncing topics...");
+    if (kSingleCardputerTopicMode) {
+      gContextsRemoteLoaded = true;
+      gContextPreview.clear();
+      gContextHistoryKey = currentConversationKey();
+      gContextError = "";
+      setStatus("Cardputer topic", 900);
+      logf("[HOST] topics single key=%s", currentConversationKey().c_str());
+    } else {
+      startTopicTask(true, false, true, "Syncing topics...");
+    }
     return true;
   }
 

@@ -269,7 +269,11 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
 }
 
 bool autoInboxPollAllowed() {
+  bool passiveUi = gUiMode == UiMode::Home || gUiMode == UiMode::ChatFace ||
+                   gUiMode == UiMode::Face || gUiMode == UiMode::Hero ||
+                   gUiMode == UiMode::ChatFull;
   return gWifiReady && !gHubHost.isEmpty() && !gOtaApplyInProgress && !gTransferUiActive &&
+         passiveUi && !gLauncherVisible &&
          !gBootBackgroundActive && !gRecording && !gSubmitting && !gThinking && !gPlaybackActive &&
          !gRealtimeActive && !gRealtimeConnected && !gRealtimeRecording && !gRealtimeAwaiting &&
          !gRealtimeSmokeActive && !gRealtimeSmokeAudioStreaming && gTextTurnTaskHandle == nullptr &&

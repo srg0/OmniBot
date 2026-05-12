@@ -50,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.104-dev"
+#define APP_VERSION "0.2.105-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,11 +64,10 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.102-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02102";
+constexpr const char* kPostInstallStoryVersion = "0.2.105-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02105";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. Realtime voice now authenticates the WebSocket during the handshake, so Ctrl R can reach the bridge again. "
-    "The launcher footer now matches the controls: Up and Down choose a group, Left and Right choose an item, Enter opens it.";
+    "Firmware installed. Cardputer now uses one stable chat topic, menu topic sync is disabled, and battery level falls back to voltage when the raw gauge is unavailable.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
@@ -79,6 +78,10 @@ constexpr const char* kCardputerLogsPath = "/api/cardputer/logs";
 constexpr const char* kRealtimeWsPath = "/api/cardputer/v1/realtime";
 constexpr const char* kAssetManifestFetchPath = "/api/cardputer/assets/manifest";
 constexpr const char* kFirmwareManifestFetchPath = "/api/cardputer/firmware/manifest";
+constexpr bool kSingleCardputerTopicMode = true;
+constexpr int32_t kPrimaryCardputerThreadId = 4402;
+constexpr const char* kPrimaryCardputerTopicKey = "tg:root-main:default:-1003665527854:4402";
+constexpr const char* kPrimaryCardputerTopicTitle = "Cardputer";
 
 constexpr const char* kPrefsWifiNs = "wifi_creds";
 constexpr const char* kPrefsHubNs = "hub_ep";

@@ -262,6 +262,7 @@ bool uiModeInterruptsRealtime(UiMode mode) {
     case UiMode::Face:
     case UiMode::Hero:
     case UiMode::ChatFull:
+    case UiMode::Contexts:
       return false;
     default:
       return true;
@@ -291,6 +292,10 @@ void setUiMode(UiMode mode) {
   }
   setStatus(String("Mode: ") + uiModeName(mode), 900);
   if (mode == UiMode::Contexts) {
+    if (kSingleCardputerTopicMode) {
+      loadDefaultConversationContexts();
+      return;
+    }
     bool needCatalog = !gContextsRemoteLoaded;
     bool needHistory = !gContexts.empty() && gContextHistoryKey != currentConversationKey();
     if (needCatalog || needHistory) {

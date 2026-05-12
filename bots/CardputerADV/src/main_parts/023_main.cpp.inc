@@ -86,6 +86,18 @@ bool playVoiceNoteByAction(JsonObjectConst action) {
 }
 
 bool openTopicByAction(JsonObjectConst action) {
+  if (kSingleCardputerTopicMode) {
+    (void)action;
+    if (gContexts.empty()) {
+      loadDefaultConversationContexts();
+    }
+    gSelectedContext = 0;
+    saveCurrentContext();
+    showTopicOverlay(0, 900);
+    setUiMode(UiMode::ChatFace);
+    setStatus("Cardputer topic", 700);
+    return true;
+  }
   if (gContexts.empty()) {
     startTopicTask(true, false, true, "Syncing topics...");
     setStatus("Topics syncing", 1200);
@@ -192,4 +204,3 @@ bool executeDeviceAction(JsonObjectConst action) {
       petType.startsWith("pet.") || petType.startsWith("tama.") || petType.startsWith("tamagotchi.")) {
     return executePetActionByName(petType);
   }
-

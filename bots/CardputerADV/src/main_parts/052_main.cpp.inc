@@ -211,14 +211,15 @@ void renderBatteryUi() {
   d.fillRoundRect(8, 8, 224, 118, 16, 0x0841);
   d.drawRoundRect(8, 8, 224, 118, 16, 0x31C7);
 
-  int level = gBatterySnapshot.level < 0 ? 0 : gBatterySnapshot.level;
-  level = clampValue(level, 0, 100);
+  bool levelKnown = gBatterySnapshot.level >= 0;
+  int level = levelKnown ? clampValue<int>(gBatterySnapshot.level, 0, 100) : 0;
   int barX = 22;
   int barY = 28;
   int barW = 140;
   int barH = 28;
   int fillW = (barW - 8) * level / 100;
-  uint16_t barColor = level >= 60 ? rgb565_local(90, 255, 150)
+  uint16_t barColor = !levelKnown ? rgb565_local(80, 130, 180)
+                     : level >= 60 ? rgb565_local(90, 255, 150)
                      : level >= 25 ? TFT_GOLD
                                    : rgb565_local(255, 110, 80);
 

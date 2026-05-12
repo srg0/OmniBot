@@ -1,5 +1,15 @@
 bool handleContextsKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (kSingleCardputerTopicMode) {
+    if (lowerKey == 'r' || lowerKey == 'h') {
+      loadDefaultConversationContexts();
+      gContextsRemoteLoaded = true;
+      gContextPreview.clear();
+      gContextError = "";
+      setStatus("Cardputer topic", 700);
+      return true;
+    }
+  }
   if (lowerKey == 'r') {
     startTopicTask(true, false, true, "Syncing topics...");
     return true;
@@ -26,6 +36,21 @@ bool handleContextsKey(char key, const Keyboard_Class::KeysState& keys) {
 }
 
 bool switchTopicRelative(int delta, bool selectAndLoad) {
+  if (kSingleCardputerTopicMode) {
+    (void)delta;
+    if (gContexts.empty()) {
+      loadDefaultConversationContexts();
+    }
+    gSelectedContext = 0;
+    gTopicCreateArmed = false;
+    clearContextPreviewIfSelectionChanged();
+    if (selectAndLoad) {
+      saveCurrentContext();
+    }
+    showTopicOverlay(0, 900);
+    setStatus("Cardputer topic", 700);
+    return true;
+  }
   if (gContexts.empty()) {
     startTopicTask(true, false, true, "Syncing topics...");
     setStatus("No topics", 900);
@@ -120,6 +145,24 @@ void topicTask(void* arg) {
 
 bool startTopicTask(bool syncCatalog, bool selectCurrent, bool loadHistory, const char* statusText,
                     bool createTopic, const String& createTitle) {
+  if (kSingleCardputerTopicMode) {
+    (void)syncCatalog;
+    (void)selectCurrent;
+    (void)loadHistory;
+    (void)createTopic;
+    (void)createTitle;
+    if (gContexts.empty() || currentConversationKey() != kPrimaryCardputerTopicKey) {
+      loadDefaultConversationContexts();
+    }
+    gContextsRemoteLoaded = true;
+    gContextPreview.clear();
+    gContextHistoryKey = currentConversationKey();
+    gContextError = "";
+    gTopicCreateArmed = false;
+    setStatus(statusText ? statusText : "Cardputer topic", 500);
+    appendRuntimeLog("CTX", "single topic no-op", true);
+    return true;
+  }
   if (gTopicTaskHandle != nullptr || gCompletedTopicTask != nullptr) {
     setStatus("Topic busy", 500);
     return false;
@@ -192,4 +235,3 @@ bool handleLogsKey(char key) {
   }
   return false;
 }
-

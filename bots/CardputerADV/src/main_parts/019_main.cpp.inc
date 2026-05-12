@@ -1,6 +1,6 @@
 String currentConversationKey() {
   if (gContexts.empty()) {
-    return "tg:root-main:default:-1003665527854:54";
+    return kPrimaryCardputerTopicKey;
   }
   gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
   return gContexts[gSelectedContext].key;
@@ -92,6 +92,9 @@ bool fetchRemoteTopicCatalog() {
 }
 
 bool selectRemoteCurrentTopic() {
+  if (kSingleCardputerTopicMode) {
+    return true;
+  }
   if (gContexts.empty() || (!gWifiReady && !ensureWifiForHttp("topic-select", 2000)) || gHubHost.isEmpty()) {
     return false;
   }
@@ -141,6 +144,14 @@ String defaultNewTopicTitle() {
 }
 
 bool createRemoteTopic(const String& title, String& createdTopicKey) {
+  if (kSingleCardputerTopicMode) {
+    (void)title;
+    createdTopicKey = kPrimaryCardputerTopicKey;
+    gContextError = "";
+    setStatus("Single Cardputer topic", 900);
+    appendRuntimeLog("CTX", "single topic mode", true);
+    return true;
+  }
   if ((!gWifiReady && !ensureWifiForHttp("topic-create", 3000)) || gHubHost.isEmpty()) {
     gContextError = "Bridge offline";
     setStatus("Create offline", 1200);

@@ -53,14 +53,42 @@ const char* batteryChargeLabel(m5::Power_Class::is_charging_t charging) {
   }
 }
 
+int32_t estimateBatteryLevelFromVoltage(int16_t voltageMv) {
+  if (voltageMv <= 0) {
+    return -1;
+  }
+  if (voltageMv <= 3300) {
+    return 0;
+  }
+  if (voltageMv >= 4200) {
+    return 100;
+  }
+  return clampValue<int32_t>((static_cast<int32_t>(voltageMv) - 3300) * 100 / 900, 0, 100);
+}
+
 void updateBatterySnapshot(bool force) {
   uint32_t now = millis();
   if (!force && gLastBatterySampleMs != 0 && now - gLastBatterySampleMs < kBatterySampleIntervalMs) {
     return;
   }
   gLastBatterySampleMs = now;
-  gBatterySnapshot.level = M5.Power.getBatteryLevel();
-  gBatterySnapshot.voltageMv = M5.Power.getBatteryVoltage();
+  int32_t rawLevel = M5.Power.getBatteryLevel();
+  int16_t voltageMv = M5.Power.getBatteryVoltage();
+  int16_t vbusMv = M5.Power.getVBUSVoltage();
+  gBatterySnapshot.rawLevel = rawLevel;
+  gBatterySnapshot.level = rawLevel;
+  gBatterySnapshot.levelEstimated = false;
+  if ((rawLevel <= 0 || rawLevel > 100) && voltageMv > 0) {
+    int32_t estimated = estimateBatteryLevelFromVoltage(voltageMv);
+    if (estimated >= 0) {
+      gBatterySnapshot.level = estimated;
+      gBatterySnapshot.levelEstimated = true;
+    }
+  } else if (rawLevel <= 0 && voltageMv <= 0 && vbusMv > 4000) {
+    gBatterySnapshot.level = -1;
+  }
+  gBatterySnapshot.voltageMv = voltageMv;
+  gBatterySnapshot.vbusMv = vbusMv;
   gBatterySnapshot.currentMa = M5.Power.getBatteryCurrent();
   gBatterySnapshot.charging = M5.Power.isCharging();
 }
