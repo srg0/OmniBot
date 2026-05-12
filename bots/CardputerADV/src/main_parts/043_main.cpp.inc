@@ -1054,7 +1054,7 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
-  if (cmd == "/cmatrix" || cmd == "/c-matrix" || cmd == "/matrix") {
+  if (cmd == "/cmatrix" || cmd == "/cimatrix" || cmd == "/c-matrix" || cmd == "/matrix") {
     setUiMode(UiMode::CMatrix);
     return true;
   }
