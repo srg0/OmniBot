@@ -110,6 +110,8 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}}},
     {"Utilities", "UTIL", "Tools and games", rgb565_local(255, 150, 80), 4,
      {{"Calculator", UiMode::Calculator}, {"IR Remote", UiMode::IrRemote}, {"Tetris", UiMode::Tetris}, {"Calendar", UiMode::Calendar}}},
+    {"Visuals", "C", "Ambient screen savers", rgb565_local(88, 240, 141), 1,
+     {{"C-Matrix", UiMode::CMatrix}}},
 };
 
 Preferences gPrefs;

@@ -59,6 +59,9 @@
       case UiMode::Tetris:
         renderTetrisUi();
         break;
+      case UiMode::CMatrix:
+        renderCMatrixUi();
+        break;
       case UiMode::Logs:
         renderLogsUi();
         break;

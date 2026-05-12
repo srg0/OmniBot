@@ -269,7 +269,8 @@ bool uiModeInterruptsRealtime(UiMode mode) {
 }
 
 void setUiMode(UiMode mode) {
-  if (mode != gUiMode && uiModeInterruptsRealtime(mode) &&
+  bool modeChanged = mode != gUiMode;
+  if (modeChanged && uiModeInterruptsRealtime(mode) &&
       (gRealtimeActive || gRealtimeConnected || gRealtimeRecording || gRealtimeAwaiting)) {
     closeRealtimeSession("mode change");
   }
@@ -277,6 +278,9 @@ void setUiMode(UiMode mode) {
   gLauncherVisible = false;
   if (mode != UiMode::Tetris) {
     gTetrisHelpVisible = false;
+  }
+  if (mode == UiMode::CMatrix && modeChanged) {
+    gCMatrixInitialized = false;
   }
   if (gLauncherSelection >= 0 && gLauncherSelection < kLauncherGroupCount &&
       gLauncherSubSelection >= 0 && gLauncherSubSelection < kLauncherGroups[gLauncherSelection].count &&

@@ -1041,6 +1041,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/cmatrix" || cmd == "/c-matrix" || cmd == "/matrix") {
+    setUiMode(UiMode::CMatrix);
+    return true;
+  }
+
   if (cmd == "/ir" || cmd == "/remote" || cmd == "/irremote") {
     setUiMode(UiMode::IrRemote);
     return true;

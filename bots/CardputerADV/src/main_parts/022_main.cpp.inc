@@ -235,6 +235,9 @@ bool mapActionUiMode(String mode, UiMode& out) {
     out = UiMode::Calendar;
   } else if (mode == "tetris" || mode == "game" || mode == "blocks") {
     out = UiMode::Tetris;
+  } else if (mode == "c_matrix" || mode == "cmatrix" || mode == "c-matrix" ||
+             mode == "matrix" || mode == "visuals") {
+    out = UiMode::CMatrix;
   } else if (mode == "battery") {
     out = UiMode::Battery;
   } else if (mode == "ota" || mode == "firmware") {

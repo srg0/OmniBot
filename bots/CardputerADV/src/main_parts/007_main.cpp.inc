@@ -42,6 +42,8 @@ const char* uiModeName(UiMode mode) {
       return "IR Remote";
     case UiMode::Tetris:
       return "Tetris";
+    case UiMode::CMatrix:
+      return "C-Matrix";
     case UiMode::Logs:
       return "Logs";
     case UiMode::ChatFace:

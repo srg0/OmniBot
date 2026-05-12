@@ -137,6 +137,12 @@ String gBootBackgroundLabel;
 bool gBootWifiStarted = false;
 uint32_t gBootWifiStartMs = 0;
 uint32_t gBootStepStartedMs = 0;
+constexpr uint8_t kCMatrixCols = 30;
+int8_t gCMatrixHead[kCMatrixCols] = {};
+uint8_t gCMatrixSpeed[kCMatrixCols] = {};
+uint32_t gCMatrixLastStepMs = 0;
+uint16_t gCMatrixTick = 0;
+bool gCMatrixInitialized = false;
 
 void IRAM_ATTR onTcaKeyboardInterrupt() {
   gTcaInterruptPending = true;

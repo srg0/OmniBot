@@ -114,6 +114,85 @@ void renderCalculatorUi() {
   renderDebugOverlay();
 }
 
+void resetCMatrixColumns() {
+  for (uint8_t col = 0; col < kCMatrixCols; ++col) {
+    gCMatrixHead[col] = -static_cast<int8_t>(random(0, 18));
+    gCMatrixSpeed[col] = static_cast<uint8_t>(1 + random(0, 3));
+  }
+  gCMatrixTick = 0;
+  gCMatrixLastStepMs = millis();
+  gCMatrixInitialized = true;
+}
+
+char cMatrixGlyphAt(uint8_t col, int16_t row, uint8_t trail) {
+  static const char glyphs[] = {'C', 'M', 'A', 'T', 'R', 'I', 'X', '0', '1', '+', '*', '#'};
+  constexpr uint8_t glyphCount = sizeof(glyphs) / sizeof(glyphs[0]);
+  uint16_t mix = static_cast<uint16_t>(col) * 13U + static_cast<uint16_t>(row + 32) * 7U +
+                 static_cast<uint16_t>(trail) * 5U + gCMatrixTick;
+  return glyphs[mix % glyphCount];
+}
+
+void renderCMatrixUi() {
+  auto& d = gCanvas;
+  constexpr int16_t cellW = 8;
+  constexpr int16_t cellH = 8;
+  constexpr int16_t rows = 17;
+  constexpr uint8_t trailLen = 9;
+  const uint16_t bg = rgb565_local(0, 5, 2);
+  const uint16_t deep = rgb565_local(0, 18, 6);
+  const uint16_t dim = rgb565_local(0, 72, 22);
+  const uint16_t mid = rgb565_local(0, 150, 48);
+  const uint16_t bright = rgb565_local(118, 255, 157);
+
+  if (!gCMatrixInitialized) {
+    resetCMatrixColumns();
+  }
+
+  uint32_t now = millis();
+  if (now - gCMatrixLastStepMs >= 75U) {
+    gCMatrixLastStepMs = now;
+    ++gCMatrixTick;
+    for (uint8_t col = 0; col < kCMatrixCols; ++col) {
+      if ((gCMatrixTick % gCMatrixSpeed[col]) != 0) {
+        continue;
+      }
+      ++gCMatrixHead[col];
+      if (gCMatrixHead[col] > rows + static_cast<int16_t>(trailLen) + random(0, 8)) {
+        gCMatrixHead[col] = -static_cast<int8_t>(random(1, 15));
+        gCMatrixSpeed[col] = static_cast<uint8_t>(1 + random(0, 3));
+      }
+    }
+  }
+
+  d.fillScreen(bg);
+  d.setFont(&fonts::Font0);
+  for (uint8_t col = 0; col < kCMatrixCols; ++col) {
+    int16_t x = static_cast<int16_t>(col) * cellW;
+    for (uint8_t trail = 0; trail < trailLen; ++trail) {
+      int16_t row = static_cast<int16_t>(gCMatrixHead[col]) - trail;
+      if (row < 0 || row >= rows) {
+        continue;
+      }
+      uint16_t color = trail == 0 ? bright : (trail < 3 ? mid : (trail < 6 ? dim : deep));
+      d.setTextColor(color, bg);
+      d.setCursor(x + 1, row * cellH);
+      d.print(cMatrixGlyphAt(col, row, trail));
+    }
+  }
+
+  d.fillRoundRect(6, 5, 83, 16, 5, rgb565_local(0, 12, 4));
+  d.drawRoundRect(6, 5, 83, 16, 5, dim);
+  d.setTextColor(bright, rgb565_local(0, 12, 4));
+  d.setCursor(12, 10);
+  d.print("C-MATRIX");
+  d.setTextColor(dim, bg);
+  d.setCursor(141, 122);
+  d.print("Esc home  Tab menu");
+
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 void renderTetrisPreview(uint8_t piece, int16_t x0, int16_t y0, int16_t cell, uint16_t bg) {
   auto& d = gCanvas;
   for (uint8_t y = 0; y < 4; ++y) {
