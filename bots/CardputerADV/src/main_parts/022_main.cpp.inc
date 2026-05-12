@@ -222,8 +222,14 @@ bool mapActionUiMode(String mode, UiMode& out) {
     out = UiMode::Contexts;
   } else if (mode == "logs") {
     out = UiMode::Logs;
-  } else if (mode == "settings") {
+  } else if (mode == "settings" || mode == "device_settings") {
     out = UiMode::Settings;
+  } else if (mode == "focus_settings" || mode == "pomodoro_settings" || mode == "pomodoro") {
+    out = UiMode::FocusSettings;
+  } else if (mode == "screen_settings" || mode == "screen_saver" || mode == "screensaver_settings" ||
+             mode == "saver_settings" || mode == "display_settings" || mode == "display" ||
+             mode == "screensaver") {
+    out = UiMode::ScreenSettings;
   } else if (mode == "calculator" || mode == "calc") {
     out = UiMode::Calculator;
   } else if (mode == "alarm" || mode == "wake" || mode == "wake_up" || mode == "clock_alarm") {

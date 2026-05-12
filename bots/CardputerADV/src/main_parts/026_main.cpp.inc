@@ -178,11 +178,26 @@ void loadDeviceSettings() {
   gDeviceSettings.beepOnUpdate = gPrefs.getBool("fw_beep", true);
   gDeviceSettings.minBatteryForUpdate = static_cast<uint8_t>(gPrefs.getUChar("fw_bat", 40));
   gDeviceSettings.clockFace = static_cast<uint8_t>(gPrefs.getUChar("clk_face", 0));
+  gDeviceSettings.displayBrightnessPct = static_cast<uint8_t>(gPrefs.getUChar("lcd_pct", kDefaultDisplayBrightnessPct));
+  gDeviceSettings.screensaverEnabled = gPrefs.getBool("scr_on", true);
+  gDeviceSettings.screensaverTimeoutMin = static_cast<uint8_t>(gPrefs.getUChar("scr_min", kDefaultScreensaverTimeoutMin));
+  gDeviceSettings.screensaverDimAfterMin = static_cast<uint8_t>(gPrefs.getUChar("scr_dim_m", kDefaultScreensaverDimAfterMin));
+  gDeviceSettings.screensaverDimBrightnessPct = static_cast<uint8_t>(gPrefs.getUChar("scr_dim_p", kDefaultScreensaverDimBrightnessPct));
+  gDeviceSettings.screenAutoOffEnabled = gPrefs.getBool("lcd_off", false);
+  gDeviceSettings.screenOffAfterMin = static_cast<uint8_t>(gPrefs.getUChar("lcd_off_m", kDefaultScreenOffAfterMin));
+  gDeviceSettings.screensaverClockOnWake = gPrefs.getBool("scr_clk", true);
+  gDeviceSettings.notificationVolumePct = static_cast<uint8_t>(gPrefs.getUChar("vol_notif", kDefaultNotificationVolumePct));
   gDeviceSettings.updateChannel = gPrefs.getString("fw_chan", "dev");
   gDeviceSettings.audioLanguage = gPrefs.getString("aud_lang", "ru");
   gPrefs.end();
   gDeviceSettings.minBatteryForUpdate = clampValue<uint8_t>(gDeviceSettings.minBatteryForUpdate, 5, 95);
   gDeviceSettings.clockFace %= kClockFaceCount;
+  gDeviceSettings.displayBrightnessPct = clampValue<uint8_t>(gDeviceSettings.displayBrightnessPct, 0, 100);
+  gDeviceSettings.screensaverTimeoutMin = clampValue<uint8_t>(gDeviceSettings.screensaverTimeoutMin, 1, 60);
+  gDeviceSettings.screensaverDimAfterMin = clampValue<uint8_t>(gDeviceSettings.screensaverDimAfterMin, 1, 120);
+  gDeviceSettings.screensaverDimBrightnessPct = clampValue<uint8_t>(gDeviceSettings.screensaverDimBrightnessPct, 0, 100);
+  gDeviceSettings.screenOffAfterMin = clampValue<uint8_t>(gDeviceSettings.screenOffAfterMin, 5, 240);
+  gDeviceSettings.notificationVolumePct = clampValue<uint8_t>(gDeviceSettings.notificationVolumePct, 0, 100);
   if (gDeviceSettings.updateChannel.isEmpty()) {
     gDeviceSettings.updateChannel = "dev";
   }
@@ -198,6 +213,15 @@ void saveDeviceSettings() {
   gPrefs.putBool("fw_beep", gDeviceSettings.beepOnUpdate);
   gPrefs.putUChar("fw_bat", gDeviceSettings.minBatteryForUpdate);
   gPrefs.putUChar("clk_face", gDeviceSettings.clockFace % kClockFaceCount);
+  gPrefs.putUChar("lcd_pct", gDeviceSettings.displayBrightnessPct);
+  gPrefs.putBool("scr_on", gDeviceSettings.screensaverEnabled);
+  gPrefs.putUChar("scr_min", gDeviceSettings.screensaverTimeoutMin);
+  gPrefs.putUChar("scr_dim_m", gDeviceSettings.screensaverDimAfterMin);
+  gPrefs.putUChar("scr_dim_p", gDeviceSettings.screensaverDimBrightnessPct);
+  gPrefs.putBool("lcd_off", gDeviceSettings.screenAutoOffEnabled);
+  gPrefs.putUChar("lcd_off_m", gDeviceSettings.screenOffAfterMin);
+  gPrefs.putBool("scr_clk", gDeviceSettings.screensaverClockOnWake);
+  gPrefs.putUChar("vol_notif", gDeviceSettings.notificationVolumePct);
   gPrefs.putString("fw_chan", gDeviceSettings.updateChannel);
   gPrefs.putString("aud_lang", gDeviceSettings.audioLanguage);
   gPrefs.end();

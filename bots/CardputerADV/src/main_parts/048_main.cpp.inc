@@ -104,7 +104,7 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Contexts && handleContextsKey(key, keys)) {
     return;
   }
-  if (gUiMode == UiMode::Settings && handleSettingsKey(key)) {
+  if (isSettingsMode(gUiMode) && handleSettingsKey(key)) {
     return;
   }
   if (gUiMode == UiMode::Calculator && handleCalculatorKey(key, keys)) {
@@ -240,3 +240,25 @@ void pollTyping() {
                           !keys.tab && !keys.enter && !keys.del && !keys.space &&
                           !upHeld && !downHeld && !leftHeld && !rightHeld &&
                           wordSignature.isEmpty();
+  auto rememberInputState = [&]() {
+    pEnter = keys.enter;
+    pDel = keys.del;
+    pTab = keys.tab;
+    pSpace = keys.space;
+    pUp = upHeld;
+    pDown = downHeld;
+    pLeft = leftHeld;
+    pRight = rightHeld;
+    pEsc = escHeld;
+    pOpt = keys.opt;
+    pWordSignature = wordSignature;
+  };
+  bool inputActivityEdge = enterDown || delDown || tabDown || spaceDown || upDown || downDown || leftDown ||
+                           rightDown || optDown || charDown || escDown;
+  if (inputActivityEdge) {
+    if (handleScreensaverWake()) {
+      rememberInputState();
+      return;
+    }
+    markUserActivity();
+  }

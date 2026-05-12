@@ -50,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.106-dev"
+#define APP_VERSION "0.2.107-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,10 +64,10 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.106-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02106";
+constexpr const char* kPostInstallStoryVersion = "0.2.107-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02107";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. C-Matrix is now also available from the System menu as Cimatrix.";
+    "Firmware installed. CMatrix is now the idle screensaver; display and saver settings are in the menu.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
@@ -167,7 +167,16 @@ constexpr uint32_t kCtrlDoubleTapWindowMs = 420;
 constexpr uint32_t kLauncherToggleDebounceMs = 140;
 constexpr uint8_t kLauncherGroupCount = 8;
 constexpr uint8_t kLauncherMaxSubItems = 4;
-constexpr uint8_t kSettingsItemCount = 10;
+constexpr uint8_t kDeviceSettingsItemCount = 7;
+constexpr uint8_t kFocusSettingsItemCount = 7;
+constexpr uint8_t kScreenSettingsItemCount = 8;
+constexpr uint8_t kSettingsItemCount = kScreenSettingsItemCount;
+constexpr uint8_t kDefaultDisplayBrightnessPct = 70;
+constexpr uint8_t kDefaultScreensaverTimeoutMin = 5;
+constexpr uint8_t kDefaultScreensaverDimAfterMin = 30;
+constexpr uint8_t kDefaultScreensaverDimBrightnessPct = 15;
+constexpr uint8_t kDefaultScreenOffAfterMin = 60;
+constexpr uint8_t kDefaultNotificationVolumePct = 100;
 constexpr uint8_t kClockFaceCount = 1;
 constexpr uint8_t kHidKeyEscape = 0x29;
 constexpr float kPi = 3.14159265358979323846f;

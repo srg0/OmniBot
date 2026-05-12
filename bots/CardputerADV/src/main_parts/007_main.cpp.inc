@@ -30,6 +30,10 @@ const char* uiModeName(UiMode mode) {
       return "Topics";
     case UiMode::Settings:
       return "Settings";
+    case UiMode::FocusSettings:
+      return "Pomodoro";
+    case UiMode::ScreenSettings:
+      return "Screensaver";
     case UiMode::Calculator:
       return "Calc";
     case UiMode::Alarm:

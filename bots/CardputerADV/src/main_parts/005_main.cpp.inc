@@ -1,6 +1,7 @@
 FaceMode gFaceMode = FaceMode::Idle;
 KeyboardLayout gKeyboardLayout = KeyboardLayout::En;
 UiMode gUiMode = UiMode::Home;
+UiMode gScreensaverPreviousMode = UiMode::Home;
 Keyboard_Class::KeysState gKeyboardState;
 int16_t* gRecordBuffer = nullptr;
 int16_t* gTtsBuffer = nullptr;
@@ -51,6 +52,11 @@ bool gRealtimeSmokeAudioPending = false;
 bool gRealtimeSmokeAudioStreaming = false;
 bool gRealtimeTlsVerify = true;
 bool gCanvasSpriteActive = false;
+bool gScreensaverActive = false;
+bool gScreensaverDimmed = false;
+bool gScreenOffActive = false;
+uint32_t gLastUserActivityMs = 0;
+uint32_t gScreensaverStartedMs = 0;
 uint32_t gRealtimeSessionStartedMs = 0;
 uint32_t gRealtimeAwaitingStartedMs = 0;
 uint32_t gRealtimeSmokeAudioNextMs = 0;
@@ -298,6 +304,11 @@ bool executeDeviceAction(JsonObjectConst action);
 bool executeOrDeferDeviceActionsJson(const String& json);
 void serviceDeferredDeviceActions();
 void servicePendingOtaAction();
+void applyDisplayBrightness();
+void applySpeakerVolumeSetting();
+bool handleScreensaverWake();
+void markUserActivity();
+void serviceIdleScreensaver();
 
 void mapTcaRawKeyToPhysical(uint8_t keyValue, uint8_t& row, uint8_t& col) {
   uint8_t unit = keyValue % 10;

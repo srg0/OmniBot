@@ -69,6 +69,10 @@
     handleTypingKey(',', keys);
   } else if (gUiMode == UiMode::IrRemote && (rightDown || downDown)) {
     handleTypingKey('.', keys);
+  } else if (isSettingsMode(gUiMode) && (leftDown || upDown)) {
+    handleTypingKey(',', keys);
+  } else if (isSettingsMode(gUiMode) && (rightDown || downDown)) {
+    handleTypingKey('.', keys);
   } else if (gUiMode == UiMode::Tetris && leftDown) {
     handleTypingKey(',', keys);
   } else if (gUiMode == UiMode::Tetris && rightDown) {
@@ -89,17 +93,7 @@
     setKeyDiag("mods=" + keyboardSignatureFromState());
   }
 
-  pEnter = keys.enter;
-  pDel = keys.del;
-  pTab = keys.tab;
-  pSpace = keys.space;
-  pUp = upHeld;
-  pDown = downHeld;
-  pLeft = leftHeld;
-	  pRight = rightHeld;
-	  pEsc = escHeld;
-  pOpt = keys.opt;
-	  pWordSignature = wordSignature;
+  rememberInputState();
 	}
 
 bool ctrlAlonePressedNow() {
@@ -160,6 +154,10 @@ void updateVoiceTrigger() {
 
 void updateG0VoiceTrigger() {
   bool pressed = M5.BtnA.isPressed();
+  if (pressed && !gG0VoiceHeld && handleScreensaverWake()) {
+    gG0VoiceHeld = true;
+    return;
+  }
   if (gUiMode == UiMode::Ota) {
     if (pressed && !gG0VoiceHeld) {
       gG0VoiceHeld = true;

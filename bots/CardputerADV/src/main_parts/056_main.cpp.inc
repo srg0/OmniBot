@@ -244,27 +244,63 @@ void renderOtaUi() {
 }
 
 String settingLabel(uint8_t index) {
+  if (gUiMode == UiMode::FocusSettings) {
+    switch (index) {
+      case 0:
+        return "Focus length";
+      case 1:
+        return "Short break";
+      case 2:
+        return "Long break";
+      case 3:
+        return "Cycles";
+      case 4:
+        return "Auto focus";
+      case 5:
+        return "Metronome";
+      case 6:
+        return "BPM";
+      default:
+        return "-";
+    }
+  }
+  if (gUiMode == UiMode::ScreenSettings) {
+    switch (index) {
+      case 0:
+        return "Backlight";
+      case 1:
+        return "Screensaver";
+      case 2:
+        return "Start after";
+      case 3:
+        return "Dim after";
+      case 4:
+        return "Dim level";
+      case 5:
+        return "Auto screen off";
+      case 6:
+        return "Off after";
+      case 7:
+        return "Clock on wake";
+      default:
+        return "-";
+    }
+  }
   switch (index) {
     case 0:
-      return "Focus";
-    case 1:
-      return "Short break";
-    case 2:
-      return "Long break";
-    case 3:
-      return "Cycles";
-    case 4:
-      return "Auto focus";
-    case 5:
-      return "Auto OTA";
-    case 6:
-      return "BPM";
-    case 7:
-      return "OTA battery";
-    case 8:
       return "Audio lang";
-    case 9:
+    case 1:
+      return "Notify volume";
+    case 2:
+      return "Auto OTA";
+    case 3:
+      return "Boot OTA check";
+    case 4:
+      return "OTA battery";
+    case 5:
       return "Home face";
+    case 6:
+      return "OTA beep";
     default:
       return "-";
   }

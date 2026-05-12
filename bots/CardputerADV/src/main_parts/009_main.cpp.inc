@@ -171,9 +171,120 @@ bool adjustSpeakerVolume(int delta, uint32_t ttlMs = 700) {
     return false;
   }
   gSpeakerVolume = static_cast<uint8_t>(next);
+  gDeviceSettings.notificationVolumePct = static_cast<uint8_t>(clampValue<int>((next * 100 + 127) / 255, 0, 100));
   M5Cardputer.Speaker.setVolume(gSpeakerVolume);
   setStatus("Vol " + String(map(gSpeakerVolume, 0, 255, 0, 100)) + "%", ttlMs);
   return true;
+}
+
+uint8_t percentToByte(uint8_t pct) {
+  return static_cast<uint8_t>(clampValue<int>((static_cast<int>(pct) * 255 + 50) / 100, 0, 255));
+}
+
+uint8_t byteToPercent(uint8_t value) {
+  return static_cast<uint8_t>(clampValue<int>((static_cast<int>(value) * 100 + 127) / 255, 0, 100));
+}
+
+void applySpeakerVolumeSetting() {
+  gDeviceSettings.notificationVolumePct = clampValue<uint8_t>(gDeviceSettings.notificationVolumePct, 0, 100);
+  gSpeakerVolume = percentToByte(gDeviceSettings.notificationVolumePct);
+  M5Cardputer.Speaker.setVolume(gSpeakerVolume);
+}
+
+void applyDisplayBrightness() {
+  uint8_t pct = clampValue<uint8_t>(gDeviceSettings.displayBrightnessPct, 0, 100);
+  if (gScreenOffActive) {
+    pct = 0;
+  } else if (gScreensaverDimmed) {
+    pct = min<uint8_t>(pct, clampValue<uint8_t>(gDeviceSettings.screensaverDimBrightnessPct, 0, 100));
+  }
+  M5Cardputer.Display.setBrightness(percentToByte(pct));
+}
+
+bool screensaverMayRun() {
+  return !gRecording && !gSubmitting && !gThinking && !gPlaybackActive &&
+         !gTransferUiActive && !gOtaApplyInProgress && !gPendingRestart &&
+         gUiMode != UiMode::Ota;
+}
+
+void markUserActivity() {
+  gLastUserActivityMs = millis();
+}
+
+bool handleScreensaverWake() {
+  bool wasQuietDisplay = gScreensaverActive || gScreensaverDimmed || gScreenOffActive;
+  markUserActivity();
+  if (!wasQuietDisplay) {
+    return false;
+  }
+  UiMode target = gScreensaverActive
+                      ? (gDeviceSettings.screensaverClockOnWake ? UiMode::Clock : gScreensaverPreviousMode)
+                      : gScreensaverPreviousMode;
+  if (target == UiMode::CMatrix) {
+    target = UiMode::Home;
+  }
+  gScreensaverActive = false;
+  gScreensaverDimmed = false;
+  gScreenOffActive = false;
+  applyDisplayBrightness();
+  setUiMode(target);
+  setStatus(target == UiMode::Clock ? "Clock" : "Awake", 900);
+  return true;
+}
+
+void enterScreensaver() {
+  gScreensaverPreviousMode = gUiMode;
+  gScreensaverActive = true;
+  gScreensaverDimmed = false;
+  gScreenOffActive = false;
+  gScreensaverStartedMs = millis();
+  gLauncherVisible = false;
+  setUiMode(UiMode::CMatrix);
+  gCMatrixInitialized = false;
+  setStatus("Screensaver", 700);
+  applyDisplayBrightness();
+}
+
+void serviceIdleScreensaver() {
+  uint32_t now = millis();
+  if (gLastUserActivityMs == 0) {
+    gLastUserActivityMs = now;
+  }
+
+  if (!screensaverMayRun()) {
+    if (!gScreensaverActive && !gScreenOffActive) {
+      gLastUserActivityMs = now;
+    }
+    return;
+  }
+
+  uint32_t idleMs = now - gLastUserActivityMs;
+  uint32_t saverTimeoutMs = static_cast<uint32_t>(max<uint8_t>(1, gDeviceSettings.screensaverTimeoutMin)) * 60000UL;
+  uint32_t offTimeoutMs = static_cast<uint32_t>(max<uint8_t>(5, gDeviceSettings.screenOffAfterMin)) * 60000UL;
+
+  if (!gScreensaverActive) {
+    if (gDeviceSettings.screensaverEnabled && idleMs >= saverTimeoutMs) {
+      enterScreensaver();
+      return;
+    }
+    if (gDeviceSettings.screenAutoOffEnabled && !gScreenOffActive && idleMs >= offTimeoutMs) {
+      gScreensaverPreviousMode = gUiMode;
+      gScreenOffActive = true;
+      applyDisplayBrightness();
+    }
+    return;
+  }
+
+  uint32_t saverMs = now - gScreensaverStartedMs;
+  uint32_t dimMs = static_cast<uint32_t>(max<uint8_t>(1, gDeviceSettings.screensaverDimAfterMin)) * 60000UL;
+  if (!gScreensaverDimmed && saverMs >= dimMs) {
+    gScreensaverDimmed = true;
+    applyDisplayBrightness();
+  }
+  if (gDeviceSettings.screenAutoOffEnabled && !gScreenOffActive && saverMs >= offTimeoutMs) {
+    gScreenOffActive = true;
+    applyDisplayBrightness();
+  }
 }
 
 void setVoiceDiag(const String& text) {

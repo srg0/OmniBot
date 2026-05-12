@@ -257,6 +257,15 @@ struct DeviceSettings {
   bool beepOnUpdate = true;
   uint8_t minBatteryForUpdate = 40;
   uint8_t clockFace = 0;
+  uint8_t displayBrightnessPct = kDefaultDisplayBrightnessPct;
+  bool screensaverEnabled = true;
+  uint8_t screensaverTimeoutMin = kDefaultScreensaverTimeoutMin;
+  uint8_t screensaverDimAfterMin = kDefaultScreensaverDimAfterMin;
+  uint8_t screensaverDimBrightnessPct = kDefaultScreensaverDimBrightnessPct;
+  bool screenAutoOffEnabled = false;
+  uint8_t screenOffAfterMin = kDefaultScreenOffAfterMin;
+  bool screensaverClockOnWake = true;
+  uint8_t notificationVolumePct = kDefaultNotificationVolumePct;
   String updateChannel = "dev";
   String audioLanguage = "ru";
 };

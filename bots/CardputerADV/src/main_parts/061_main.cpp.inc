@@ -39,6 +39,8 @@
         renderContextsUi();
         break;
       case UiMode::Settings:
+      case UiMode::FocusSettings:
+      case UiMode::ScreenSettings:
         renderSettingsUi();
         break;
       case UiMode::Calculator:
@@ -207,6 +209,11 @@ void setup() {
   loadConfig();
   loadFocusSettings();
   loadDeviceSettings();
+  applyDisplayBrightness();
+  if (!gOtaBootApplyMode) {
+    applySpeakerVolumeSetting();
+  }
+  markUserActivity();
   loadAlarmSettings();
   beginOtaBootGuard();
   schedulePostInstallStoryIfNeeded();
@@ -287,6 +294,7 @@ void loop() {
   serviceDeferredDeviceActions();
   servicePendingOtaAction();
   servicePostInstallStory();
+  serviceIdleScreensaver();
   serviceAutoInboxPoll();
 
   if (gPlaybackActive && !gPlaybackStreaming && !M5Cardputer.Speaker.isPlaying()) {

@@ -1,40 +1,77 @@
 String settingValue(uint8_t index) {
+  if (gUiMode == UiMode::FocusSettings) {
+    switch (index) {
+      case 0:
+        return String(gFocusSettings.focusSec / 60) + "m";
+      case 1:
+        return String(gFocusSettings.shortBreakSec / 60) + "m";
+      case 2:
+        return String(gFocusSettings.longBreakSec / 60) + "m";
+      case 3:
+        return String(gFocusSettings.cyclesPerRound);
+      case 4:
+        return gFocusSettings.autoStart ? "on" : "off";
+      case 5:
+        return gFocusSettings.metronome ? "on" : "off";
+      case 6:
+        return String(gFocusSettings.bpm);
+      default:
+        return "-";
+    }
+  }
+  if (gUiMode == UiMode::ScreenSettings) {
+    switch (index) {
+      case 0:
+        return String(gDeviceSettings.displayBrightnessPct) + "%";
+      case 1:
+        return gDeviceSettings.screensaverEnabled ? "on" : "off";
+      case 2:
+        return String(gDeviceSettings.screensaverTimeoutMin) + "m";
+      case 3:
+        return String(gDeviceSettings.screensaverDimAfterMin) + "m";
+      case 4:
+        return String(gDeviceSettings.screensaverDimBrightnessPct) + "%";
+      case 5:
+        return gDeviceSettings.screenAutoOffEnabled ? "on" : "off";
+      case 6:
+        return String(gDeviceSettings.screenOffAfterMin) + "m";
+      case 7:
+        return gDeviceSettings.screensaverClockOnWake ? "on" : "off";
+      default:
+        return "-";
+    }
+  }
   switch (index) {
     case 0:
-      return String(gFocusSettings.focusSec / 60) + "m";
-    case 1:
-      return String(gFocusSettings.shortBreakSec / 60) + "m";
-    case 2:
-      return String(gFocusSettings.longBreakSec / 60) + "m";
-    case 3:
-      return String(gFocusSettings.cyclesPerRound);
-    case 4:
-      return gFocusSettings.autoStart ? "on" : "off";
-    case 5:
-      return gDeviceSettings.autoUpdateFirmware ? "on" : "off";
-    case 6:
-      return String(gFocusSettings.bpm);
-    case 7:
-      return String(gDeviceSettings.minBatteryForUpdate) + "%";
-    case 8:
       return gDeviceSettings.audioLanguage;
-    case 9:
+    case 1:
+      return String(gDeviceSettings.notificationVolumePct) + "%";
+    case 2:
+      return gDeviceSettings.autoUpdateFirmware ? "on" : "off";
+    case 3:
+      return gDeviceSettings.checkUpdatesOnBoot ? "on" : "off";
+    case 4:
+      return String(gDeviceSettings.minBatteryForUpdate) + "%";
+    case 5:
       return clockFaceName(gDeviceSettings.clockFace);
+    case 6:
+      return gDeviceSettings.beepOnUpdate ? "on" : "off";
     default:
       return "-";
   }
 }
 
 void renderSettingsUi() {
-  drawCardHeader("Settings", 0x7BEF);
+  drawCardHeader(currentSettingsTitle(), 0x7BEF);
   auto& d = gCanvas;
-  gSelectedSetting = clampValue<int>(gSelectedSetting, 0, kSettingsItemCount - 1);
+  uint8_t count = currentSettingsItemCount();
+  gSelectedSetting = clampValue<int>(gSelectedSetting, 0, count - 1);
   constexpr int visible = 7;
-  int start = max<int>(0, min<int>(gSelectedSetting - visible / 2, kSettingsItemCount - visible));
+  int start = max<int>(0, min<int>(gSelectedSetting - visible / 2, static_cast<int>(count) - visible));
   d.setFont(&fonts::Font0);
   for (int i = 0; i < visible; ++i) {
     int idx = start + i;
-    if (idx >= kSettingsItemCount) {
+    if (idx >= count) {
       break;
     }
     int y = 34 + i * 11;
@@ -180,14 +217,25 @@ void renderCMatrixUi() {
     }
   }
 
-  d.fillRoundRect(6, 5, 83, 16, 5, rgb565_local(0, 12, 4));
-  d.drawRoundRect(6, 5, 83, 16, 5, dim);
-  d.setTextColor(bright, rgb565_local(0, 12, 4));
-  d.setCursor(12, 10);
-  d.print("C-MATRIX");
+  if (gScreensaverActive && gDeviceSettings.screensaverClockOnWake) {
+    String hhmm = "--:--";
+    time_t ts = time(nullptr);
+    if (ts > 100000) {
+      struct tm timeinfo;
+      localtime_r(&ts, &timeinfo);
+      char buf[6];
+      strftime(buf, sizeof(buf), "%H:%M", &timeinfo);
+      hhmm = buf;
+    }
+    d.fillRoundRect(176, 6, 56, 18, 6, rgb565_local(0, 12, 4));
+    d.drawRoundRect(176, 6, 56, 18, 6, dim);
+    d.setTextColor(bright, rgb565_local(0, 12, 4));
+    d.setCursor(189, 11);
+    d.print(hhmm);
+  }
   d.setTextColor(dim, bg);
-  d.setCursor(141, 122);
-  d.print("Esc home  Tab menu");
+  d.setCursor(gScreensaverActive ? 126 : 141, 122);
+  d.print(gScreensaverActive ? "key: clock" : "Esc home  Tab menu");
 
   renderLauncherOverlay();
   renderDebugOverlay();

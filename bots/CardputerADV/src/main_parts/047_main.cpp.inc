@@ -1,16 +1,205 @@
+bool isSettingsMode(UiMode mode) {
+  return mode == UiMode::Settings || mode == UiMode::FocusSettings || mode == UiMode::ScreenSettings;
+}
+
+uint8_t currentSettingsItemCount() {
+  if (gUiMode == UiMode::FocusSettings) {
+    return kFocusSettingsItemCount;
+  }
+  if (gUiMode == UiMode::ScreenSettings) {
+    return kScreenSettingsItemCount;
+  }
+  return kDeviceSettingsItemCount;
+}
+
+const char* currentSettingsTitle() {
+  if (gUiMode == UiMode::FocusSettings) {
+    return "Pomodoro Settings";
+  }
+  if (gUiMode == UiMode::ScreenSettings) {
+    return "Screensaver";
+  }
+  return "Device Settings";
+}
+
+uint32_t secondsWithDelta(uint32_t value, int32_t deltaSec, uint32_t minValue, uint32_t maxValue) {
+  int64_t next = static_cast<int64_t>(value) + static_cast<int64_t>(deltaSec);
+  if (next < static_cast<int64_t>(minValue)) {
+    return minValue;
+  }
+  if (next > static_cast<int64_t>(maxValue)) {
+    return maxValue;
+  }
+  return static_cast<uint32_t>(next);
+}
+
+void cycleAudioLanguage(int delta) {
+  static const char* langs[] = {"ru", "en", "es"};
+  constexpr int langCount = sizeof(langs) / sizeof(langs[0]);
+  int current = 0;
+  for (int i = 0; i < langCount; ++i) {
+    if (gDeviceSettings.audioLanguage == langs[i]) {
+      current = i;
+      break;
+    }
+  }
+  int next = (current + delta + langCount) % langCount;
+  gDeviceSettings.audioLanguage = langs[next];
+}
+
+void adjustCurrentSetting(int delta) {
+  if (gUiMode == UiMode::FocusSettings) {
+    switch (gSelectedSetting) {
+      case 0:
+        gFocusSettings.focusSec = secondsWithDelta(gFocusSettings.focusSec, delta * 5L * 60L,
+                                                   kFocusMinDurationSec, kFocusMaxDurationSec);
+        break;
+      case 1:
+        gFocusSettings.shortBreakSec = secondsWithDelta(gFocusSettings.shortBreakSec, delta * 60L,
+                                                        kFocusMinDurationSec, kFocusMaxDurationSec);
+        break;
+      case 2:
+        gFocusSettings.longBreakSec = secondsWithDelta(gFocusSettings.longBreakSec, delta * 5L * 60L,
+                                                       kFocusMinDurationSec, kFocusMaxDurationSec);
+        break;
+      case 3:
+        gFocusSettings.cyclesPerRound = static_cast<uint8_t>(clampValue<int>(gFocusSettings.cyclesPerRound + delta, 1, 9));
+        break;
+      case 6:
+        gFocusSettings.bpm = static_cast<uint16_t>(clampValue<int>(gFocusSettings.bpm + delta * 5, kFocusMinBpm, kFocusMaxBpm));
+        break;
+      default:
+        break;
+    }
+    saveFocusSettings();
+    return;
+  }
+
+  if (gUiMode == UiMode::ScreenSettings) {
+    switch (gSelectedSetting) {
+      case 0:
+        gDeviceSettings.displayBrightnessPct = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.displayBrightnessPct + delta * 5, 0, 100));
+        applyDisplayBrightness();
+        break;
+      case 2:
+        gDeviceSettings.screensaverTimeoutMin = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screensaverTimeoutMin + delta, 1, 60));
+        break;
+      case 3:
+        gDeviceSettings.screensaverDimAfterMin = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screensaverDimAfterMin + delta * 5, 1, 120));
+        break;
+      case 4:
+        gDeviceSettings.screensaverDimBrightnessPct = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screensaverDimBrightnessPct + delta * 5, 0, 100));
+        applyDisplayBrightness();
+        break;
+      case 6:
+        gDeviceSettings.screenOffAfterMin = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screenOffAfterMin + delta * 5, 5, 240));
+        break;
+      default:
+        break;
+    }
+    saveDeviceSettings();
+    return;
+  }
+
+  switch (gSelectedSetting) {
+    case 0:
+      cycleAudioLanguage(delta >= 0 ? 1 : -1);
+      break;
+    case 1:
+      gDeviceSettings.notificationVolumePct = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.notificationVolumePct + delta * 5, 0, 100));
+      applySpeakerVolumeSetting();
+      break;
+    case 4:
+      gDeviceSettings.minBatteryForUpdate = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.minBatteryForUpdate + delta * 5, 5, 95));
+      break;
+    case 5:
+      gDeviceSettings.clockFace = static_cast<uint8_t>((gDeviceSettings.clockFace + kClockFaceCount + (delta >= 0 ? 1 : -1)) % kClockFaceCount);
+      break;
+    default:
+      break;
+  }
+  saveDeviceSettings();
+}
+
+void toggleCurrentSetting() {
+  if (gUiMode == UiMode::FocusSettings) {
+    switch (gSelectedSetting) {
+      case 4:
+        gFocusSettings.autoStart = !gFocusSettings.autoStart;
+        break;
+      case 5:
+        gFocusSettings.metronome = !gFocusSettings.metronome;
+        break;
+      default:
+        break;
+    }
+    saveFocusSettings();
+    return;
+  }
+
+  if (gUiMode == UiMode::ScreenSettings) {
+    switch (gSelectedSetting) {
+      case 1:
+        gDeviceSettings.screensaverEnabled = !gDeviceSettings.screensaverEnabled;
+        break;
+      case 5:
+        gDeviceSettings.screenAutoOffEnabled = !gDeviceSettings.screenAutoOffEnabled;
+        if (!gDeviceSettings.screenAutoOffEnabled && gScreenOffActive) {
+          gScreenOffActive = false;
+          applyDisplayBrightness();
+        }
+        break;
+      case 7:
+        gDeviceSettings.screensaverClockOnWake = !gDeviceSettings.screensaverClockOnWake;
+        break;
+      default:
+        break;
+    }
+    saveDeviceSettings();
+    return;
+  }
+
+  switch (gSelectedSetting) {
+    case 0:
+      cycleAudioLanguage(1);
+      break;
+    case 2:
+      gDeviceSettings.autoUpdateFirmware = !gDeviceSettings.autoUpdateFirmware;
+      break;
+    case 3:
+      gDeviceSettings.checkUpdatesOnBoot = !gDeviceSettings.checkUpdatesOnBoot;
+      break;
+    case 5:
+      gDeviceSettings.clockFace = static_cast<uint8_t>((gDeviceSettings.clockFace + 1) % kClockFaceCount);
+      break;
+    case 6:
+      gDeviceSettings.beepOnUpdate = !gDeviceSettings.beepOnUpdate;
+      break;
+    default:
+      break;
+  }
+  saveDeviceSettings();
+}
+
 bool handleSettingsKey(char key) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  uint8_t count = currentSettingsItemCount();
+  if (count == 0) {
+    return false;
+  }
   if (key == ',' || key == ';') {
-    gSelectedSetting = (gSelectedSetting + kSettingsItemCount - 1) % kSettingsItemCount;
+    gSelectedSetting = (gSelectedSetting + count - 1) % count;
     return true;
   }
   if (key == '.' || key == '/') {
-    gSelectedSetting = (gSelectedSetting + 1) % kSettingsItemCount;
+    gSelectedSetting = (gSelectedSetting + 1) % count;
     return true;
   }
   if (lowerKey == 'r') {
     loadDeviceSettings();
     loadFocusSettings();
+    applyDisplayBrightness();
+    applySpeakerVolumeSetting();
     setStatus("Settings reloaded", 900);
     return true;
   }
@@ -21,92 +210,17 @@ bool handleSettingsKey(char key) {
     return true;
   }
   if (key == '-' || lowerKey == 'z') {
-    switch (gSelectedSetting) {
-      case 0:
-        gFocusSettings.focusSec = max<uint32_t>(kFocusMinDurationSec, gFocusSettings.focusSec - 5UL * 60UL);
-        break;
-      case 1:
-        gFocusSettings.shortBreakSec = max<uint32_t>(kFocusMinDurationSec, gFocusSettings.shortBreakSec - 60UL);
-        break;
-      case 2:
-        gFocusSettings.longBreakSec = max<uint32_t>(kFocusMinDurationSec, gFocusSettings.longBreakSec - 5UL * 60UL);
-        break;
-      case 3:
-        gFocusSettings.cyclesPerRound = max<uint8_t>(1, gFocusSettings.cyclesPerRound - 1);
-        break;
-      case 6:
-        gFocusSettings.bpm = max<uint16_t>(kFocusMinBpm, gFocusSettings.bpm - 5);
-        break;
-      case 7:
-        gDeviceSettings.minBatteryForUpdate = max<uint8_t>(5, gDeviceSettings.minBatteryForUpdate - 5);
-        break;
-      case 9:
-        gDeviceSettings.clockFace = (gDeviceSettings.clockFace + kClockFaceCount - 1) % kClockFaceCount;
-        break;
-      default:
-        break;
-    }
-    saveDeviceSettings();
-    saveFocusSettings();
+    adjustCurrentSetting(-1);
     setStatus("Setting -", 500);
     return true;
   }
   if (key == '+' || key == '=' || lowerKey == 'x') {
-    switch (gSelectedSetting) {
-      case 0:
-        gFocusSettings.focusSec = min<uint32_t>(kFocusMaxDurationSec, gFocusSettings.focusSec + 5UL * 60UL);
-        break;
-      case 1:
-        gFocusSettings.shortBreakSec = min<uint32_t>(kFocusMaxDurationSec, gFocusSettings.shortBreakSec + 60UL);
-        break;
-      case 2:
-        gFocusSettings.longBreakSec = min<uint32_t>(kFocusMaxDurationSec, gFocusSettings.longBreakSec + 5UL * 60UL);
-        break;
-      case 3:
-        gFocusSettings.cyclesPerRound = min<uint8_t>(9, gFocusSettings.cyclesPerRound + 1);
-        break;
-      case 6:
-        gFocusSettings.bpm = min<uint16_t>(kFocusMaxBpm, gFocusSettings.bpm + 5);
-        break;
-      case 7:
-        gDeviceSettings.minBatteryForUpdate = min<uint8_t>(95, gDeviceSettings.minBatteryForUpdate + 5);
-        break;
-      case 9:
-        gDeviceSettings.clockFace = (gDeviceSettings.clockFace + 1) % kClockFaceCount;
-        break;
-      default:
-        break;
-    }
-    saveDeviceSettings();
-    saveFocusSettings();
+    adjustCurrentSetting(1);
     setStatus("Setting +", 500);
     return true;
   }
   if (key == ' ' || key == '\n' || key == '\r' || lowerKey == 't') {
-    switch (gSelectedSetting) {
-      case 4:
-        gFocusSettings.autoStart = !gFocusSettings.autoStart;
-        break;
-      case 5:
-        gDeviceSettings.autoUpdateFirmware = !gDeviceSettings.autoUpdateFirmware;
-        break;
-      case 8:
-        if (gDeviceSettings.audioLanguage == "ru") {
-          gDeviceSettings.audioLanguage = "en";
-        } else if (gDeviceSettings.audioLanguage == "en") {
-          gDeviceSettings.audioLanguage = "es";
-        } else {
-          gDeviceSettings.audioLanguage = "ru";
-        }
-        break;
-      case 9:
-        gDeviceSettings.clockFace = (gDeviceSettings.clockFace + 1) % kClockFaceCount;
-        break;
-      default:
-        break;
-    }
-    saveDeviceSettings();
-    saveFocusSettings();
+    toggleCurrentSetting();
     setStatus("Setting toggled", 700);
     return true;
   }

@@ -276,12 +276,21 @@ void setUiMode(UiMode mode) {
     closeRealtimeSession("mode change");
   }
   gUiMode = mode;
+  if (mode != UiMode::CMatrix && (gScreensaverActive || gScreensaverDimmed || gScreenOffActive)) {
+    gScreensaverActive = false;
+    gScreensaverDimmed = false;
+    gScreenOffActive = false;
+    applyDisplayBrightness();
+  }
   gLauncherVisible = false;
   if (mode != UiMode::Tetris) {
     gTetrisHelpVisible = false;
   }
   if (mode == UiMode::CMatrix && modeChanged) {
     gCMatrixInitialized = false;
+  }
+  if (modeChanged && (mode == UiMode::Settings || mode == UiMode::FocusSettings || mode == UiMode::ScreenSettings)) {
+    gSelectedSetting = 0;
   }
   if (gLauncherSelection >= 0 && gLauncherSelection < kLauncherGroupCount &&
       gLauncherSubSelection >= 0 && gLauncherSubSelection < kLauncherGroups[gLauncherSelection].count &&

@@ -166,6 +166,8 @@ enum class UiMode : uint8_t {
   Ota,
   Contexts,
   Settings,
+  FocusSettings,
+  ScreenSettings,
   Calculator,
   Alarm,
   Stopwatch,

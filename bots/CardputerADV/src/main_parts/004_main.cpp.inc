@@ -102,16 +102,16 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}, {"Notes", UiMode::Notes}}},
     {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
      {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice}, {"Assets", UiMode::Assets}}},
-    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 3,
-     {{"Focus Space", UiMode::Focus}, {"Alarm", UiMode::Alarm}, {"Stopwatch", UiMode::Stopwatch}}},
+    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 4,
+     {{"Focus Space", UiMode::Focus}, {"Pomodoro", UiMode::FocusSettings}, {"Alarm", UiMode::Alarm}, {"Stopwatch", UiMode::Stopwatch}}},
     {"System", "SYS", "Bridge and firmware", rgb565_local(180, 150, 255), 3,
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}, {"Cimatrix", UiMode::CMatrix}}},
-    {"Device", "DEV", "Power and settings", rgb565_local(203, 216, 226), 2,
-     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}}},
+    {"Device", "DEV", "Power and settings", rgb565_local(203, 216, 226), 3,
+     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Display", UiMode::ScreenSettings}}},
     {"Utilities", "UTIL", "Tools and games", rgb565_local(255, 150, 80), 4,
      {{"Calculator", UiMode::Calculator}, {"IR Remote", UiMode::IrRemote}, {"Tetris", UiMode::Tetris}, {"Calendar", UiMode::Calendar}}},
-    {"Visuals", "C", "Ambient screen savers", rgb565_local(88, 240, 141), 1,
-     {{"C-Matrix", UiMode::CMatrix}}},
+    {"Visuals", "C", "Ambient screen savers", rgb565_local(88, 240, 141), 2,
+     {{"C-Matrix", UiMode::CMatrix}, {"Saver Setup", UiMode::ScreenSettings}}},
 };
 
 Preferences gPrefs;
