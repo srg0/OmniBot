@@ -623,7 +623,7 @@ bool runHostOtaApply(bool refreshManifest) {
 
 void printHostDiag() {
   updateBatterySnapshot(true);
-  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%% raw=%ld est=%d/%dmV/%ldmA/%s vbus=%dmV voice=%s http=%s",
+  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%% raw=%ld est=%d/%dmV/%ldmA/%s vbus=%dmV loop_max=%u pump_input=%u/%u voice=%s http=%s key=%s",
        kAppVersion,
        kBuildGitSha,
        static_cast<unsigned>(ESP.getFreeHeap()),
@@ -651,8 +651,12 @@ void printHostDiag() {
        static_cast<long>(gBatterySnapshot.currentMa),
        batteryChargeLabel(gBatterySnapshot.charging),
        static_cast<int>(gBatterySnapshot.vbusMv),
+       static_cast<unsigned>(gLoopMaxMs),
+       static_cast<unsigned>(gBlockingPumpInputEvents),
+       static_cast<unsigned>(gLastBlockingPumpInputMs),
        gLastVoiceDiag.c_str(),
-       gLastHttpDiag.c_str());
+       gLastHttpDiag.c_str(),
+       gLastKeyDiag.c_str());
 }
 
 void printHostBatteryStatus() {

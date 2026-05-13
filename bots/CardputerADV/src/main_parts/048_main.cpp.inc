@@ -5,6 +5,17 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     handleGlobalEscape();
     return;
   }
+  if (gBlockingInputPumpActive) {
+    const bool networkAction =
+        (keys.ctrl && (lowerKey == 'r' || lowerKey == 'v')) ||
+        ((keys.enter || key == '\r' || key == '\n') &&
+         (gUiMode == UiMode::Ota || !gInputBuffer.isEmpty()));
+    if (networkAction) {
+      setStatus("Busy, please wait", 700);
+      setKeyDiag("busy:block");
+      return;
+    }
+  }
   if (gRealtimeRecording && !(keys.ctrl && lowerKey == 'r')) {
     setStatus("Ctrl+R stop realtime", 600);
     return;

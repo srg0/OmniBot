@@ -197,7 +197,8 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
   }
   HTTPClient http;
   std::unique_ptr<WiFiClientSecure> secureClient;
-  if (!configureHttpClient(http, secureClient, url, 15000)) {
+  uint32_t inboxTimeoutMs = quiet ? 4000 : 15000;
+  if (!configureHttpClient(http, secureClient, url, inboxTimeoutMs)) {
     if (!quiet) {
       setStatus("Inbox connect failed", 1200);
     }

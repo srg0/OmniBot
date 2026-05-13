@@ -310,8 +310,16 @@ String makeClientTurnId(const char* prefix) {
 }
 
 void pumpBlockingNetworkUi() {
-  if (gMainLoopTaskHandle != nullptr && xTaskGetCurrentTaskHandle() == gMainLoopTaskHandle) {
+  const bool onMainLoop = gMainLoopTaskHandle != nullptr && xTaskGetCurrentTaskHandle() == gMainLoopTaskHandle;
+  if (onMainLoop) {
     handleHostSerialInput();
+    M5Cardputer.update();
+    refreshKeyboardState();
+    gBlockingInputPumpActive = true;
+    pollTyping();
+    gBlockingInputPumpActive = false;
+    ++gBlockingPumpInputEvents;
+    gLastBlockingPumpInputMs = millis();
   }
   uint32_t now = millis();
   if (gBlockingRenderPumpEnabled && now - gLastBlockingRenderPumpMs >= kBusyRenderIntervalMs) {

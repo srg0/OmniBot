@@ -50,7 +50,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.108-dev"
+#define APP_VERSION "0.2.109-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,10 +64,10 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.108-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02108";
+constexpr const char* kPostInstallStoryVersion = "0.2.109-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02109";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. CMatrix idle screensaver remains available, and OTA can now proceed while charging even if the battery gauge reports zero. The update screen shows current version, candidate version, and release notes.";
+    "Firmware installed. Voice replies are more reliable, long network waits keep the keyboard responsive, and realtime voice now has better diagnostics and recovery.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";

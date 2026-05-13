@@ -252,6 +252,7 @@ void setup() {
 }
 
 void loop() {
+  uint32_t loopStartMs = millis();
   handleHostSerialInput();
   M5Cardputer.update();
   refreshKeyboardState();
@@ -330,5 +331,21 @@ void loop() {
   if (now - gLastRenderMs >= renderInterval) {
     render();
     gLastRenderMs = now;
+  }
+  uint32_t loopCostMs = millis() - loopStartMs;
+  if (loopCostMs > gLoopMaxMs) {
+    gLoopMaxMs = loopCostMs;
+  }
+  if (loopCostMs >= 120U && now - gLastLoopSlowMs >= 2000U) {
+    gLastLoopSlowMs = now;
+    logf("[LOOP] slow ms=%u max=%u mode=%d thinking=%d submit=%d playback=%d rt=%d/%d",
+         static_cast<unsigned>(loopCostMs),
+         static_cast<unsigned>(gLoopMaxMs),
+         static_cast<int>(gUiMode),
+         static_cast<int>(gThinking),
+         static_cast<int>(gSubmitting),
+         static_cast<int>(gPlaybackActive),
+         static_cast<int>(gRealtimeActive),
+         static_cast<int>(gRealtimeAwaiting));
   }
 }
