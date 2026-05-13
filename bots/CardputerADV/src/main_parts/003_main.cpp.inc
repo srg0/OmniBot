@@ -158,6 +158,7 @@ struct OtaManifestSummary {
   uint32_t size = 0;
   uint8_t minBattery = 50;
   bool confirmRequired = true;
+  String notes;
   String error;
 };
 

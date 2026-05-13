@@ -205,14 +205,16 @@ void renderOtaUi() {
   int x = 91;
   FirmwareCapacityInfo fw = firmwareCapacityInfo();
   String freeValue = fw.usableBytes > 0 ? compactFlashKb(fw.freeBytes) + "/" + compactFlashKb(fw.usableBytes) : "-";
-  String usedValue = fw.usableBytes > 0 ? compactFlashKb(fw.usedBytes) + " " + String(fw.usedPct) + "%" : "-";
+  updateBatterySnapshot();
+  bool externalPower = batteryExternalPowerPresent();
+  String powerValue = externalPower ? "charging" : (gBatterySnapshot.level >= 0 ? String(gBatterySnapshot.level) + "%" : "--");
   drawInfoRow(x, 34, 128, "current", String(kAppVersion), row, muted, TFT_WHITE);
-  drawInfoRow(x, 49, 128, "candidate", gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version,
+  drawInfoRow(x, 49, 128, "new", gOtaManifest.version.isEmpty() ? "-" : gOtaManifest.version,
               row, muted, updateReady ? red : green);
-  drawInfoRow(x, 64, 128, "fw free", freeValue,
+  drawInfoRow(x, 64, 128, "power", powerValue,
+              row, muted, externalPower ? green : amber);
+  drawInfoRow(x, 79, 128, "fw free", freeValue,
               row, muted, cyan);
-  drawInfoRow(x, 79, 128, "fw used", usedValue,
-              row, muted, gOtaPendingVerify ? amber : muted);
 
   d.setFont(&fonts::Font0);
   d.setTextColor(gOtaConfirmedThisBoot ? green : (gOtaPendingVerify ? amber : muted), panel);
@@ -223,7 +225,15 @@ void renderOtaUi() {
   } else if (gOtaPendingVerify) {
     d.print("new app is pending verification");
   } else if (updateReady) {
-    d.print(fitCurrentFontToWidth("image " + compactBytes(gOtaManifest.size) + "; reserve " + compactFlashKb(fw.reserveBytes), 202));
+    String note = gOtaManifest.notes;
+    note.trim();
+    if (!note.isEmpty()) {
+      d.print(fitCurrentFontToWidth(note, 202));
+    } else if (externalPower) {
+      d.print("keep charger connected during update");
+    } else {
+      d.print(fitCurrentFontToWidth("image " + compactBytes(gOtaManifest.size) + "; reserve " + compactFlashKb(fw.reserveBytes), 202));
+    }
   } else if (hasCandidate) {
     d.print(fitCurrentFontToWidth(gOtaRunningSlot + " " + gOtaBootState + "; reserve " + compactFlashKb(fw.reserveBytes), 202));
   } else {

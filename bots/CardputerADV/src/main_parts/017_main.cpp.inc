@@ -174,8 +174,14 @@ bool applyOtaFromManifest() {
   updateBatterySnapshot(true);
   int level = gBatterySnapshot.level < 0 ? 100 : gBatterySnapshot.level;
   uint8_t minBattery = max<uint8_t>(gDeviceSettings.minBatteryForUpdate, gOtaManifest.minBattery);
-  if (level < minBattery) {
-    return fail("battery too low");
+  bool externalPower = batteryExternalPowerPresent();
+  if (level < minBattery && !externalPower) {
+    return fail("battery too low; connect charger");
+  }
+  if (externalPower && level < minBattery) {
+    otaLog("battery low but charging/vbus present; keep charger connected", true);
+    setStatus("Keep charger connected", 0);
+    render();
   }
   const esp_partition_t* running = esp_ota_get_running_partition();
   const esp_partition_t* boot = esp_ota_get_boot_partition();

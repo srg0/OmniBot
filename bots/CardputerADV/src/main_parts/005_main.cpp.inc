@@ -245,6 +245,7 @@ void renderAlarmUi();
 bool handleCalendarKey(char key, const Keyboard_Class::KeysState& keys);
 void renderCalendarUi();
 void updateBatterySnapshot(bool force = false);
+bool batteryExternalPowerPresent();
 void scanAudioAssets();
 bool startPlaybackStreamFromWavFile(const String& path, const String& diag);
 const char* clockFaceName(uint8_t face);

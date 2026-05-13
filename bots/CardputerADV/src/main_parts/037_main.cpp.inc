@@ -53,6 +53,11 @@ const char* batteryChargeLabel(m5::Power_Class::is_charging_t charging) {
   }
 }
 
+bool batteryExternalPowerPresent() {
+  return gBatterySnapshot.vbusMv > 4000 ||
+         gBatterySnapshot.charging == m5::Power_Class::is_charging;
+}
+
 int32_t estimateBatteryLevelFromVoltage(int16_t voltageMv) {
   if (voltageMv <= 0) {
     return -1;

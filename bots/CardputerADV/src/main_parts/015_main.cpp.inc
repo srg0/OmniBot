@@ -158,6 +158,7 @@ void loadOtaManifestSummary() {
   gOtaManifest.size = doc["size"] | 0;
   gOtaManifest.minBattery = doc["min_battery"] | 50;
   gOtaManifest.confirmRequired = doc["confirm_required"] | true;
+  gOtaManifest.notes = doc["notes"] | "";
   appendRuntimeLog("OTA", "manifest version=" + gOtaManifest.version, true);
 }
 
