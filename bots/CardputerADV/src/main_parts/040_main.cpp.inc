@@ -360,6 +360,42 @@ void servicePostInstallStory() {
   gPostInstallStoryNextMs = millis() + 60000U;
 }
 
+void markPomodoroMeditationAssetsSynced() {
+  gPrefs.begin(kPrefsDeviceNs, false);
+  gPrefs.putString(kPomodoroAssetSyncPrefsKey, kAppVersion);
+  gPrefs.end();
+}
+
+void maybeSyncPomodoroMeditationAssetsOnBoot() {
+  if (strcmp(kAppVersion, kPomodoroAssetSyncVersion) != 0 || !gWifiReady || gHubHost.isEmpty()) {
+    return;
+  }
+  gPrefs.begin(kPrefsDeviceNs, true);
+  String syncedVersion = gPrefs.getString(kPomodoroAssetSyncPrefsKey, "");
+  gPrefs.end();
+  bool present = pomodoroMeditationAssetsPresent();
+  if (syncedVersion == kAppVersion && present) {
+    return;
+  }
+  if (present) {
+    markPomodoroMeditationAssetsSynced();
+    appendRuntimeLog("ASSET", "pomodoro meditations already present", true);
+    return;
+  }
+  appendRuntimeLog("ASSET", "pomodoro meditations sync start", true);
+  setStatus("Syncing Pomodoro audio...", 0);
+  render();
+  bool ok = fetchRemoteAssetManifest() && syncAssetsFromManifest(true) && pomodoroMeditationAssetsPresent();
+  if (ok) {
+    markPomodoroMeditationAssetsSynced();
+    pushSystem("Pomodoro audio synced: RU/EN/ES");
+    setStatus("Pomodoro audio synced", 1600);
+  } else {
+    appendRuntimeLog("ASSET", "pomodoro meditations sync incomplete", true);
+    setStatus("Pomodoro audio sync failed", 1800);
+  }
+}
+
 void beginDeferredWifi() {
   gBootBackgroundLabel = "wifi";
   gBootWifiStarted = true;
@@ -439,6 +475,9 @@ void serviceDeferredBoot() {
       if (gDeviceSettings.checkUpdatesOnBoot) {
         appendRuntimeLog("OTA", "boot remote check deferred", true);
         setStatus("Update check deferred", 900);
+      }
+      if (!gOtaPendingVerify) {
+        maybeSyncPomodoroMeditationAssetsOnBoot();
       }
       if (gDeviceSettings.autoUpdateFirmware && gOtaManifest.parsed &&
           !gOtaManifest.url.isEmpty() && gOtaManifest.version != kAppVersion) {

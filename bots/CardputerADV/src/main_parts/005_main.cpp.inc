@@ -287,7 +287,7 @@ String normalizeTopicTitleForDisplay(const String& raw, bool keepAvailableEmoji 
 String makeTopicShortName(const String& title, int32_t threadId);
 bool fetchRemoteAssetManifest();
 bool fetchRemoteOtaManifest();
-bool syncAssetsFromManifest();
+bool syncAssetsFromManifest(bool pomodoroOnly = false);
 String fitCurrentFontToWidth(String text, int32_t pixelLimit);
 void drawTinyFooter(uint16_t bg, uint16_t fg, const String& text, int16_t x = 12, int16_t y = 124,
                     int16_t w = 216);

@@ -212,17 +212,21 @@ bool playFocusCue(FocusState state) {
   if (gRecording || gSubmitting || gThinking || gPlaybackActive) {
     return false;
   }
-  const char* path = nullptr;
+  const char* cue = nullptr;
+  const char* legacyPath = nullptr;
   switch (state) {
     case FocusState::Focus:
-      path = kFocusCuePath;
+      cue = "start";
+      legacyPath = kFocusCuePath;
       break;
     case FocusState::ShortBreak:
     case FocusState::LongBreak:
-      path = kBreakCuePath;
+      cue = "break";
+      legacyPath = kBreakCuePath;
       break;
     case FocusState::Reflect:
-      path = kReflectionCuePath;
+      cue = "reflection";
+      legacyPath = kReflectionCuePath;
       break;
     case FocusState::Paused:
     case FocusState::Stopped:
@@ -230,9 +234,24 @@ bool playFocusCue(FocusState state) {
       return false;
   }
   fs::FS* fs = activeVoiceFs();
-  if (fs && fsExists(*fs, path)) {
-    return startPlaybackStreamFromWavFile(path, String("focus cue: ") + focusStateName(state));
+  if (!fs) {
+    return false;
+  }
+  String language = normalizedPomodoroAudioLanguage(gDeviceSettings.audioLanguage);
+  String localizedPath = pomodoroMeditationAssetPath(language.c_str(), cue);
+  if (fsExists(*fs, localizedPath) &&
+      startPlaybackStreamFromWavFile(localizedPath, String("focus cue: ") + focusStateName(state))) {
+    return true;
+  }
+  if (language != "ru") {
+    String fallbackPath = pomodoroMeditationAssetPath("ru", cue);
+    if (fsExists(*fs, fallbackPath) &&
+        startPlaybackStreamFromWavFile(fallbackPath, String("focus cue: ") + focusStateName(state))) {
+      return true;
+    }
+  }
+  if (legacyPath && fsExists(*fs, legacyPath)) {
+    return startPlaybackStreamFromWavFile(legacyPath, String("focus cue: ") + focusStateName(state));
   }
   return false;
 }
-

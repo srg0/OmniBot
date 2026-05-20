@@ -1,4 +1,45 @@
-bool syncAssetsFromManifest() {
+String normalizedPomodoroAudioLanguage(String language) {
+  language.trim();
+  language.toLowerCase();
+  for (size_t i = 0; i < kPomodoroAudioLanguageCount; ++i) {
+    if (language == kPomodoroAudioLanguages[i]) {
+      return language;
+    }
+  }
+  return "ru";
+}
+
+String pomodoroMeditationAssetPath(const char* language, const char* cue) {
+  return String(kPomodoroAudioDir) + "/" + normalizedPomodoroAudioLanguage(language) + "/" + cue + ".wav";
+}
+
+bool isPomodoroMeditationAssetPath(const String& path) {
+  for (size_t lang = 0; lang < kPomodoroAudioLanguageCount; ++lang) {
+    for (size_t cue = 0; cue < kPomodoroAudioCueCount; ++cue) {
+      if (path == pomodoroMeditationAssetPath(kPomodoroAudioLanguages[lang], kPomodoroAudioCues[cue])) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool pomodoroMeditationAssetsPresent() {
+  fs::FS* fs = activeVoiceFs();
+  if (!fs || !ensurePomodoroStorageOn(*fs)) {
+    return false;
+  }
+  for (size_t lang = 0; lang < kPomodoroAudioLanguageCount; ++lang) {
+    for (size_t cue = 0; cue < kPomodoroAudioCueCount; ++cue) {
+      if (!fsExists(*fs, pomodoroMeditationAssetPath(kPomodoroAudioLanguages[lang], kPomodoroAudioCues[cue]))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool syncAssetsFromManifest(bool pomodoroOnly) {
   fs::FS* fs = activeVoiceFs();
   if (!fs || !fsExists(*fs, kAssetManifestPath)) {
     setStatus("No asset manifest", 1200);
@@ -17,11 +58,27 @@ bool syncAssetsFromManifest() {
   }
   uint16_t okCount = 0;
   uint16_t failCount = 0;
-  for (JsonObject item : doc["files"].as<JsonArray>()) {
+  JsonArray files = doc["files"].as<JsonArray>();
+  uint16_t targetCount = 0;
+  for (JsonObject item : files) {
+    String path = item["path"] | "";
+    if (!pomodoroOnly || isPomodoroMeditationAssetPath(path)) {
+      ++targetCount;
+    }
+  }
+  if (pomodoroOnly && targetCount == 0) {
+    setStatus("No Pomodoro assets", 1200);
+    appendRuntimeLog("ASSET", "pomodoro sync no manifest targets", true);
+    return false;
+  }
+  for (JsonObject item : files) {
     String path = item["path"] | "";
     String url = item["url"] | "";
     String sha = item["sha256"] | "";
     uint32_t size = item["size"] | 0;
+    if (pomodoroOnly && !isPomodoroMeditationAssetPath(path)) {
+      continue;
+    }
     if (path.isEmpty() || url.isEmpty()) {
       continue;
     }
@@ -34,7 +91,7 @@ bool syncAssetsFromManifest() {
     }
     if (alreadyOk || downloadUrlToFile(url, path, sha, size,
                                        "Asset " + String(okCount + failCount + 1) + "/" +
-                                           String(doc["files"].as<JsonArray>().size()),
+                                           String(targetCount),
                                        rgb565_local(88, 240, 141))) {
       ++okCount;
     } else {
@@ -45,7 +102,8 @@ bool syncAssetsFromManifest() {
   }
   scanAudioAssets();
   loadAssetManifestSummary();
-  appendRuntimeLog("ASSET", "sync ok=" + String(okCount) + " fail=" + String(failCount), true);
+  appendRuntimeLog("ASSET", String(pomodoroOnly ? "pomodoro " : "") +
+                                "sync ok=" + String(okCount) + " fail=" + String(failCount), true);
   setStatus(failCount ? "Asset sync partial" : "Asset sync done", 1600);
   return failCount == 0;
 }
@@ -237,4 +295,3 @@ bool finishOtaApply(esp_ota_handle_t& otaHandle, const esp_partition_t* next, ui
   ESP.restart();
   return true;
 }
-

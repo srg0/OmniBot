@@ -52,7 +52,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.111-dev"
+#define APP_VERSION "0.2.112-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -66,10 +66,12 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.111-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02111";
+constexpr const char* kPostInstallStoryVersion = "0.2.112-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02112";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. Matrix screensaver no longer shows the key clock hint.";
+    "Firmware installed. Pomodoro meditation assets are syncing for Russian, English, and Spanish.";
+constexpr const char* kPomodoroAssetSyncVersion = "0.2.112-dev";
+constexpr const char* kPomodoroAssetSyncPrefsKey = "pomasset_02112";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
@@ -256,6 +258,10 @@ constexpr uint32_t kIrPersistMagic = 0x49523031;  // "IR01"
 constexpr const char* kFocusCuePath = "/pomodoro/audio/focus_ru.wav";
 constexpr const char* kBreakCuePath = "/pomodoro/audio/break_ru.wav";
 constexpr const char* kReflectionCuePath = "/pomodoro/audio/reflection_ru.wav";
+constexpr const char* kPomodoroAudioLanguages[] = {"ru", "en", "es"};
+constexpr const char* kPomodoroAudioCues[] = {"start", "break", "reflection"};
+constexpr size_t kPomodoroAudioLanguageCount = sizeof(kPomodoroAudioLanguages) / sizeof(kPomodoroAudioLanguages[0]);
+constexpr size_t kPomodoroAudioCueCount = sizeof(kPomodoroAudioCues) / sizeof(kPomodoroAudioCues[0]);
 constexpr const char* kActiveRecordPcmPath = "/voice/__active_record.pcm";
 constexpr const char* kActiveTtsPcmPath = "/voice/__active_tts.pcm";
 constexpr const char* kRealtimeReplyPcmPath = "/voice/__realtime_reply.pcm";
