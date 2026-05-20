@@ -233,9 +233,11 @@ void renderCMatrixUi() {
     d.setCursor(189, 11);
     d.print(hhmm);
   }
-  d.setTextColor(dim, bg);
-  d.setCursor(gScreensaverActive ? 126 : 141, 122);
-  d.print(gScreensaverActive ? "key: clock" : "Esc home  Tab menu");
+  if (!gScreensaverActive) {
+    d.setTextColor(dim, bg);
+    d.setCursor(141, 122);
+    d.print("Esc home  Tab menu");
+  }
 
   renderLauncherOverlay();
   renderDebugOverlay();

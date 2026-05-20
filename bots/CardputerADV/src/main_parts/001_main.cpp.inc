@@ -52,7 +52,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.110-dev"
+#define APP_VERSION "0.2.111-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -66,10 +66,10 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.110-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02110";
+constexpr const char* kPostInstallStoryVersion = "0.2.111-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02111";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. If Wi-Fi is unavailable, Cardputer now opens a setup access point for Wi-Fi and bridge credentials.";
+    "Firmware installed. Matrix screensaver no longer shows the key clock hint.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
