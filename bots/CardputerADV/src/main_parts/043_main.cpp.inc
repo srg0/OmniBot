@@ -623,7 +623,7 @@ bool runHostOtaApply(bool refreshManifest) {
 
 void printHostDiag() {
   updateBatterySnapshot(true);
-  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%% raw=%ld est=%d/%dmV/%ldmA/%s vbus=%dmV loop_max=%u pump_input=%u/%u voice=%s http=%s key=%s",
+  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d setup=%d ap=%s rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%% raw=%ld est=%d/%dmV/%ldmA/%s vbus=%dmV loop_max=%u pump_input=%u/%u voice=%s http=%s key=%s",
        kAppVersion,
        kBuildGitSha,
        static_cast<unsigned>(ESP.getFreeHeap()),
@@ -633,6 +633,8 @@ void printHostDiag() {
        gHubHost.c_str(),
        gHubPort,
        static_cast<int>(hubUsesTls()),
+       static_cast<int>(gSetupPortalActive),
+       gSetupPortalSsid.isEmpty() ? "-" : gSetupPortalSsid.c_str(),
        gRealtimeTlsVerify ? "ca" : "insecure",
        static_cast<int>(gRealtimeActive),
        static_cast<int>(gRealtimeConnected),
@@ -864,6 +866,11 @@ void handleHostSerialInput() {
 }
 
 void maintainConnectivity() {
+  if (gSetupPortalActive) {
+    serviceSetupPortal();
+    return;
+  }
+
   bool wifiNow = WiFi.status() == WL_CONNECTED;
 
   if (!wifiNow) {
@@ -928,7 +935,16 @@ bool handleLocalCommand(const String& input) {
   }
 
   if (cmd == "/btsetup") {
-    pushSystem("BLE provisioning was removed. Use compiled defaults or saved config.");
+    pushSystem("BLE provisioning was removed. Starting Wi-Fi setup AP.");
+    startSetupPortal("local-command");
+    setUiMode(UiMode::Home);
+    return true;
+  }
+
+  if (cmd == "/setup" || cmd == "setup" || cmd == "setup.portal" || cmd == "/wifi" || cmd == "wifi" ||
+      cmd == "/provision" || cmd == "provision") {
+    startSetupPortal("local-command");
+    setUiMode(UiMode::Home);
     return true;
   }
 

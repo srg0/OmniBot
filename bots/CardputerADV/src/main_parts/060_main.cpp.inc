@@ -179,6 +179,45 @@ void renderStatusBar() {
   d.setFont(&fonts::Font2);
 }
 
+void renderSetupPortalUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(4, 13, 18);
+  const uint16_t panel = rgb565_local(8, 28, 36);
+  const uint16_t accent = rgb565_local(33, 199, 223);
+  const uint16_t ok = rgb565_local(132, 245, 174);
+  d.fillSprite(bg);
+  d.fillRoundRect(8, 8, 224, 118, 6, panel);
+  d.drawRoundRect(8, 8, 224, 118, 6, accent);
+  d.setTextDatum(TL_DATUM);
+  d.setFont(&fonts::Font2);
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(18, 16);
+  d.print("OpenClaw setup");
+  d.setFont(&fonts::Font0);
+  d.setTextColor(rgb565_local(180, 222, 236), panel);
+  d.setCursor(18, 36);
+  d.print("Connect phone/laptop to AP");
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, panel);
+  d.setCursor(18, 52);
+  d.print(fitCurrentFontToWidth(gSetupPortalSsid, 204));
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(18, 72);
+  d.print("pass: ");
+  d.setTextColor(ok, panel);
+  d.print(kSetupPortalPassword);
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(18, 92);
+  d.print("open: ");
+  d.setTextColor(ok, panel);
+  d.print("192.168.4.1");
+  d.setFont(&fonts::Font0);
+  d.setTextColor(rgb565_local(132, 157, 171), panel);
+  d.setCursor(18, 112);
+  d.print(gSetupPortalSaved ? "saved, restarting" : "Wi-Fi + bridge credentials");
+  d.pushSprite(0, 0);
+}
+
 void render() {
   if (!gCanvasSpriteActive) {
     return;
@@ -193,4 +232,8 @@ void render() {
     } else {
       gStatusText = "Ready";
     }
+  }
+  if (gSetupPortalActive) {
+    renderSetupPortalUi();
+    return;
   }

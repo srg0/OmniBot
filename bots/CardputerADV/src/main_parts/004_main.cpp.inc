@@ -117,6 +117,8 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
 Preferences gPrefs;
 WebSocketsClient gWs;
 WebSocketsClient gRealtimeWs;
+DNSServer gSetupDns;
+WebServer gSetupServer(80);
 M5Canvas gCanvas(&M5Cardputer.Display);
 Adafruit_TCA8418 gTcaKeyboard;
 SPIClass gSdSpi(FSPI);
@@ -129,6 +131,12 @@ String gHubHost;
 String gDeviceToken;
 String gRealtimeExtraHeaders;
 uint16_t gHubPort = kDefaultHubPort;
+bool gSetupPortalActive = false;
+bool gSetupPortalStarted = false;
+bool gSetupPortalSaved = false;
+uint32_t gSetupPortalLastReconnectMs = 0;
+String gSetupPortalSsid;
+String gSetupPortalMessage;
 
 std::deque<ChatLine> gChatLines;
 String gInputBuffer;

@@ -4,6 +4,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <WebServer.h>
+#include <DNSServer.h>
 #include <SPI.h>
 #include <SD.h>
 #include <LittleFS.h>
@@ -50,7 +52,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.109-dev"
+#define APP_VERSION "0.2.110-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -64,10 +66,10 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.109-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02109";
+constexpr const char* kPostInstallStoryVersion = "0.2.110-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02110";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. Voice replies are more reliable, long network waits keep the keyboard responsive, and realtime voice now has better diagnostics and recovery.";
+    "Firmware installed. If Wi-Fi is unavailable, Cardputer now opens a setup access point for Wi-Fi and bridge credentials.";
 constexpr const char* kWsPath = "/ws/stream";
 constexpr const char* kDeviceTextTurnPath = "/api/device-text-turn";
 constexpr const char* kDeviceAudioTurnPath = "/api/device-audio-turn";
@@ -134,6 +136,9 @@ constexpr uint32_t kOtaCoreBootGraceMs = 90000;
 constexpr uint16_t kDefaultHubPort = 8000;
 constexpr uint32_t kWifiConnectTimeoutMs = 20000;
 constexpr uint32_t kWifiReconnectIntervalMs = 5000;
+constexpr uint32_t kSetupPortalReconnectIntervalMs = 15000;
+constexpr const char* kSetupPortalPassword = "12345678";
+constexpr byte kSetupPortalDnsPort = 53;
 constexpr uint32_t kWsReconnectIntervalMs = 3000;
 constexpr uint32_t kRenderIntervalMs = 20;
 constexpr uint32_t kThinkRenderIntervalMs = 40;

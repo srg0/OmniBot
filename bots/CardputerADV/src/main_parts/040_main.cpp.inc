@@ -1,7 +1,223 @@
+String setupPortalHtmlEscape(String value) {
+  value.replace("&", "&amp;");
+  value.replace("<", "&lt;");
+  value.replace(">", "&gt;");
+  value.replace("\"", "&quot;");
+  return value;
+}
+
+void parseSetupPortalBridgeUrl(String raw, String& host, uint16_t& port) {
+  raw.trim();
+  bool https = raw.startsWith("https://");
+  bool http = raw.startsWith("http://");
+  if (https) {
+    raw.remove(0, 8);
+  } else if (http) {
+    raw.remove(0, 7);
+  }
+  int slash = raw.indexOf('/');
+  if (slash >= 0) {
+    raw = raw.substring(0, slash);
+  }
+  raw.trim();
+  int colon = raw.lastIndexOf(':');
+  if (colon > 0 && colon < raw.length() - 1) {
+    int parsedPort = raw.substring(colon + 1).toInt();
+    if (parsedPort > 0 && parsedPort <= 65535) {
+      port = static_cast<uint16_t>(parsedPort);
+      raw = raw.substring(0, colon);
+    }
+  } else if (https) {
+    port = 443;
+  } else if (http) {
+    port = 80;
+  }
+  raw.trim();
+  if (!raw.isEmpty()) {
+    host = raw;
+  }
+}
+
+String setupPortalNetworkOptions() {
+  String html;
+  int count = WiFi.scanNetworks(false, true);
+  if (count <= 0) {
+    html += "<option value=\"\">No networks found</option>";
+    WiFi.scanDelete();
+    return html;
+  }
+  uint8_t shown = 0;
+  std::vector<String> seen;
+  for (int i = 0; i < count && shown < 24; ++i) {
+    String ssid = WiFi.SSID(i);
+    if (ssid.isEmpty()) {
+      continue;
+    }
+    bool duplicate = false;
+    for (const auto& item : seen) {
+      if (item == ssid) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (duplicate) {
+      continue;
+    }
+    seen.push_back(ssid);
+    String escaped = setupPortalHtmlEscape(ssid);
+    html += "<option value=\"";
+    html += escaped;
+    html += "\">";
+    html += escaped;
+    html += " (";
+    html += String(WiFi.RSSI(i));
+    html += " dBm";
+    if (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) {
+      html += ", open";
+    }
+    html += ")</option>";
+    ++shown;
+  }
+  WiFi.scanDelete();
+  if (html.isEmpty()) {
+    html += "<option value=\"\">No visible SSID</option>";
+  }
+  return html;
+}
+
+String setupPortalPage(const String& message = String()) {
+  String bridgeUrl = gHubHost.isEmpty() ? String("https://bridge.ai.k-digital.pro") : hubBaseUrl();
+  String page;
+  page.reserve(7200);
+  page += F("<!doctype html><html><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>OpenClaw Setup</title><style>"
+            ":root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#071018;color:#e9f7ff;"
+            "font:15px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}.wrap{max-width:560px;margin:0 auto;padding:22px}"
+            "h1{font-size:24px;margin:0 0 6px}p{color:#9fb7c8;margin:0 0 18px}.panel{border:1px solid #1d4155;background:#0c1a24;"
+            "border-radius:8px;padding:16px;margin:14px 0}.row{display:grid;gap:10px;margin:10px 0}label{font-weight:650;color:#c9eefb}"
+            "input,select{width:100%;border:1px solid #31576b;background:#071018;color:#fff;border-radius:6px;padding:11px;font:inherit}"
+            "button{width:100%;border:0;background:#21c7df;color:#021116;border-radius:6px;padding:12px 14px;font-weight:800;font:inherit}"
+            ".hint{font-size:12px;color:#7fa1b4}.msg{padding:10px;border-radius:6px;background:#153626;color:#9ef7bc;margin:10px 0}"
+            ".grid{display:grid;grid-template-columns:1fr 100px;gap:10px}@media(max-width:480px){.grid{grid-template-columns:1fr}}"
+            "</style></head><body><main class=\"wrap\"><h1>OpenClaw Cardputer Setup</h1>"
+            "<p>Connect Wi-Fi and bridge credentials. Saved values are stored only on this device.</p>");
+  if (!message.isEmpty()) {
+    page += "<div class=\"msg\">";
+    page += setupPortalHtmlEscape(message);
+    page += "</div>";
+  }
+  page += F("<form method=\"post\" action=\"/save\"><section class=\"panel\"><h2>Wi-Fi</h2>"
+            "<div class=\"row\"><label for=\"scan\">Available networks</label><select id=\"scan\" onchange=\"ssid.value=this.value\">");
+  page += setupPortalNetworkOptions();
+  page += F("</select><div class=\"hint\">Refresh this page to scan again.</div></div>"
+            "<div class=\"row\"><label for=\"ssid\">Network name</label><input id=\"ssid\" name=\"ssid\" required value=\"");
+  page += setupPortalHtmlEscape(gWifiSsid);
+  page += F("\"></div><div class=\"row\"><label for=\"password\">Password</label>"
+            "<input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\"></div></section>"
+            "<section class=\"panel\"><h2>Bridge</h2><div class=\"row\"><label for=\"bridge_url\">Bridge URL</label>"
+            "<input id=\"bridge_url\" name=\"bridge_url\" required value=\"");
+  page += setupPortalHtmlEscape(bridgeUrl);
+  page += F("\"><div class=\"hint\">Example: https://bridge.ai.k-digital.pro</div></div>"
+            "<div class=\"row\"><label for=\"device_token\">Device token</label>"
+            "<input id=\"device_token\" name=\"device_token\" type=\"password\" autocomplete=\"off\" placeholder=\"");
+  page += gDeviceToken.isEmpty() ? "required" : "keep existing token if blank";
+  page += F("\"></div><div class=\"hint\">Device ID: ");
+  page += setupPortalHtmlEscape(gDeviceId);
+  page += F("</div></section><button type=\"submit\">Save and restart</button></form></main></body></html>");
+  return page;
+}
+
+void setupPortalSendPage(const String& message = String()) {
+  gSetupServer.sendHeader("Cache-Control", "no-store");
+  gSetupServer.send(200, "text/html; charset=utf-8", setupPortalPage(message));
+}
+
+void setupPortalRedirect() {
+  gSetupServer.sendHeader("Location", "http://192.168.4.1/", true);
+  gSetupServer.send(302, "text/plain", "");
+}
+
+void handleSetupPortalSave() {
+  String ssid = gSetupServer.arg("ssid");
+  String password = gSetupServer.arg("password");
+  String bridgeUrl = gSetupServer.arg("bridge_url");
+  String token = gSetupServer.arg("device_token");
+  ssid.trim();
+  bridgeUrl.trim();
+  token.trim();
+  String host = gHubHost.isEmpty() ? String(kProdBridgeHost) : gHubHost;
+  uint16_t port = gHubPort == 0 ? kProdBridgePort : gHubPort;
+  parseSetupPortalBridgeUrl(bridgeUrl, host, port);
+  if (ssid.isEmpty()) {
+    setupPortalSendPage("Wi-Fi network name is required.");
+    return;
+  }
+  if (host.isEmpty()) {
+    setupPortalSendPage("Bridge URL is required.");
+    return;
+  }
+  if (token.isEmpty() && gDeviceToken.isEmpty()) {
+    setupPortalSendPage("Device token is required.");
+    return;
+  }
+  saveWifiCreds(ssid, password);
+  saveHubEndpoint(host, port);
+  if (!token.isEmpty()) {
+    saveDeviceToken(token);
+  }
+  gSetupPortalSaved = true;
+  gSetupPortalMessage = "Saved. Restarting Cardputer...";
+  setupPortalSendPage(gSetupPortalMessage);
+  logf("[SETUP] saved ssid=%s bridge=%s:%u token=%s",
+       gWifiSsid.c_str(), gHubHost.c_str(), gHubPort, gDeviceToken.isEmpty() ? "empty" : "set");
+  setStatus("Setup saved. Restarting", 1500);
+  gPendingRestart = true;
+}
+
+void startSetupPortal(const char* reason) {
+  if (gSetupPortalStarted) {
+    gSetupPortalActive = true;
+    return;
+  }
+  IPAddress apIp(192, 168, 4, 1);
+  IPAddress gateway(192, 168, 4, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  gSetupPortalSsid = "OpenClaw-" + chipIdSuffix();
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.setSleep(false);
+  WiFi.softAPConfig(apIp, gateway, subnet);
+  bool apOk = WiFi.softAP(gSetupPortalSsid.c_str(), kSetupPortalPassword);
+  gSetupDns.start(kSetupPortalDnsPort, "*", apIp);
+  gSetupServer.on("/", HTTP_GET, []() { setupPortalSendPage(gSetupPortalMessage); });
+  gSetupServer.on("/save", HTTP_POST, handleSetupPortalSave);
+  gSetupServer.on("/generate_204", HTTP_GET, setupPortalRedirect);
+  gSetupServer.on("/fwlink", HTTP_GET, setupPortalRedirect);
+  gSetupServer.on("/hotspot-detect.html", HTTP_GET, setupPortalRedirect);
+  gSetupServer.onNotFound(setupPortalRedirect);
+  gSetupServer.begin();
+  gSetupPortalStarted = true;
+  gSetupPortalActive = true;
+  gSetupPortalMessage = String("Setup AP started");
+  setStatus("Setup AP: " + gSetupPortalSsid, 0);
+  pushSystem("Setup Wi-Fi at http://192.168.4.1");
+  pushSystem(String("AP: ") + gSetupPortalSsid + " / " + kSetupPortalPassword);
+  logf("[SETUP] portal start ok=%d ssid=%s reason=%s",
+       static_cast<int>(apOk), gSetupPortalSsid.c_str(), reason ? reason : "-");
+}
+
+void serviceSetupPortal() {
+  if (!gSetupPortalActive) {
+    return;
+  }
+  gSetupDns.processNextRequest();
+  gSetupServer.handleClient();
+}
+
 bool ensureWifi() {
   if (gWifiSsid.isEmpty()) {
-    pushError("Wi-Fi credentials are missing. Rebuild with defaults or restore saved config.");
-    setStatus("Wi-Fi config missing", 1500);
+    pushError("Wi-Fi credentials are missing. Setup AP started.");
+    startSetupPortal("wifi-missing");
     return false;
   }
 
@@ -20,9 +236,9 @@ bool ensureWifi() {
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    pushError("Wi-Fi connection failed. Check compiled defaults or saved config.");
-    setStatus("Wi-Fi failed", 1500);
+    pushError("Wi-Fi connection failed. Setup AP started.");
     logf("[WIFI] connect failed ssid=%s", gWifiSsid.c_str());
+    startSetupPortal("wifi-connect-failed");
     return false;
   }
 
@@ -149,8 +365,8 @@ void beginDeferredWifi() {
   gBootWifiStarted = true;
   gBootWifiStartMs = millis();
   if (gWifiSsid.isEmpty()) {
-    pushError("Wi-Fi credentials are missing. Rebuild with defaults or restore saved config.");
-    setStatus("Wi-Fi config missing", 1500);
+    pushError("Wi-Fi credentials are missing. Setup AP started.");
+    startSetupPortal("deferred-wifi-missing");
     gBootBackgroundStep = 10;
     return;
   }
@@ -208,9 +424,9 @@ void serviceDeferredBoot() {
         gBootBackgroundStep = 8;
         gBootStepStartedMs = millis();
       } else if (gBootWifiStarted && millis() - gBootWifiStartMs >= kWifiConnectTimeoutMs) {
-        pushError("Wi-Fi connection failed. Check compiled defaults or saved config.");
-        setStatus("Wi-Fi failed", 1500);
+        pushError("Wi-Fi connection failed. Setup AP started.");
         logf("[WIFI] deferred connect failed ssid=%s", gWifiSsid.c_str());
+        startSetupPortal("deferred-wifi-failed");
         gBootBackgroundStep = 10;
       }
       break;

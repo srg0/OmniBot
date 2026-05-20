@@ -267,6 +267,13 @@ void saveHubEndpoint(const String& host, uint16_t port) {
   gHubPort = port;
 }
 
+void saveDeviceToken(const String& token) {
+  gPrefs.begin(kPrefsDeviceNs, false);
+  gPrefs.putString("device_token", token);
+  gPrefs.end();
+  gDeviceToken = token;
+}
+
 void clearWifiCreds() {
   gPrefs.begin(kPrefsWifiNs, false);
   gPrefs.remove("ssid");

@@ -143,8 +143,7 @@ void migrateBridgeEndpoint() {
   bool legacyBridge = gHubHost == kLegacyBridgeHost && gHubPort == kLegacyBridgePort;
   bool staleDomainPort = gHubHost == kProdBridgeHost && (gHubPort == 80 || gHubPort == kLegacyBridgePort);
   bool localBridge = isLocalOrPrivateBridgeHost(gHubHost);
-  bool nonProdSavedEndpoint = !gHubHost.isEmpty() && gHubHost != kProdBridgeHost;
-  if (legacyBridge || staleDomainPort || localBridge || nonProdSavedEndpoint) {
+  if (legacyBridge || staleDomainPort || localBridge) {
     String previous = gHubHost + ":" + String(gHubPort);
     saveHubEndpoint(kProdBridgeHost, kProdBridgePort);
     logf("[CFG] migrated bridge endpoint from=%s to=%s:%u",

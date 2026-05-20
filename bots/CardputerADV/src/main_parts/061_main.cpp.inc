@@ -254,6 +254,7 @@ void setup() {
 void loop() {
   uint32_t loopStartMs = millis();
   handleHostSerialInput();
+  serviceSetupPortal();
   M5Cardputer.update();
   refreshKeyboardState();
   updateImuMotion();

@@ -313,6 +313,7 @@ void pumpBlockingNetworkUi() {
   const bool onMainLoop = gMainLoopTaskHandle != nullptr && xTaskGetCurrentTaskHandle() == gMainLoopTaskHandle;
   if (onMainLoop) {
     handleHostSerialInput();
+    serviceSetupPortal();
     M5Cardputer.update();
     refreshKeyboardState();
     gBlockingInputPumpActive = true;
