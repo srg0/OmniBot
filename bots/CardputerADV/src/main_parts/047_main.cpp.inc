@@ -1031,176 +1031,157 @@ String irRemoteSlotKey(uint8_t slot) {
 }
 
 namespace {
-constexpr uint8_t kDaikinAcStateLength = 35;
-constexpr uint8_t kDaikinAcSection1Length = 8;
-constexpr uint8_t kDaikinAcSection2Length = 8;
-constexpr uint8_t kDaikinAcSection3Length = kDaikinAcStateLength - kDaikinAcSection1Length - kDaikinAcSection2Length;
-constexpr uint16_t kDaikinAcHdrMark = 3650;
-constexpr uint16_t kDaikinAcHdrSpace = 1623;
-constexpr uint16_t kDaikinAcBitMark = 428;
-constexpr uint16_t kDaikinAcZeroSpace = 428;
-constexpr uint16_t kDaikinAcOneSpace = 1280;
-constexpr uint16_t kDaikinAcGap = 29000;
-constexpr uint8_t kDaikinAcAuto = 0;
-constexpr uint8_t kDaikinAcDry = 2;
-constexpr uint8_t kDaikinAcCool = 3;
-constexpr uint8_t kDaikinAcHeat = 4;
-constexpr uint8_t kDaikinAcFanOnly = 6;
-constexpr uint8_t kDaikinAcTempMin = 18;
-constexpr uint8_t kDaikinAcTempMax = 30;
-constexpr uint8_t kDaikinAcFanAuto = 0xA;
-constexpr uint8_t kDaikinAcFanQuiet = 0xB;
-constexpr uint8_t kDaikinAcSwingOff = 0x0;
-constexpr uint8_t kDaikinAcSwingOn = 0xF;
-constexpr uint8_t kIrRemoteSlotDaikin = 0;
-constexpr uint8_t kIrRemoteSlotHisense = 1;
+constexpr uint8_t kIrRemoteSlotCarrier = 0;
+constexpr uint8_t kIrRemoteSlotSamsung = 1;
 constexpr uint8_t kIrRemotePresetCount = 2;
-constexpr uint16_t kHisenseTvNecAddress = 0x0004;  // ERF3W80H 4K/A6G/U6K family: NEC bytes 04 FB.
-constexpr uint8_t kHisensePowerToggle = 0x08;
-constexpr uint8_t kHisensePowerOn = 0x71;   // Hisense discrete power-on in the same 04 FB family.
-constexpr uint8_t kHisensePowerOff = 0x72;  // Hisense discrete power-off in the same 04 FB family.
-constexpr uint8_t kHisenseInput = 0x0B;
-constexpr uint8_t kHisenseHome = 0x4A;
-constexpr uint8_t kHisenseBack = 0x04;
-constexpr uint8_t kHisenseSettings = 0x43;
-constexpr uint8_t kHisenseExit = 0x4D;
-constexpr uint8_t kHisenseUp = 0x56;
-constexpr uint8_t kHisenseDown = 0x57;
-constexpr uint8_t kHisenseLeft = 0x58;
-constexpr uint8_t kHisenseRight = 0x59;
-constexpr uint8_t kHisenseOk = 0x5A;
-constexpr uint8_t kHisenseMute = 0x09;
-constexpr uint8_t kHisenseVolUp = 0x02;
-constexpr uint8_t kHisenseVolDown = 0x03;
-constexpr uint8_t kHisenseChUp = 0x00;
-constexpr uint8_t kHisenseChDown = 0x01;
-constexpr uint8_t kHisenseYouTube = 0x49;
-constexpr uint8_t kHisenseNetflix = 0x4C;
-constexpr uint8_t kHisensePrimeVideo = 0x47;
-constexpr uint8_t kHisenseAssistant = 0x1E;
 
-bool gDaikinPower = false;
-uint8_t gDaikinMode = kDaikinAcCool;
-uint8_t gDaikinTempC = 24;
-uint8_t gDaikinFan = kDaikinAcFanAuto;
-bool gDaikinSwingV = false;
-bool gDaikinQuiet = false;
-bool gDaikinPowerful = false;
-String gDaikinLastCommand = "Ready";
-uint8_t gHisenseLastCommand = kHisensePowerToggle;
-String gHisenseLastCommandLabel = "Ready";
+// Samsung AA59/A59 TV family. Public databases list these as Samsung 32-bit
+// frames like 0xE0E040BF; IRremote sends them as address 0x0707 + LSB command.
+constexpr uint16_t kSamsungTvAddress = 0x0707;
+constexpr uint8_t kSamsungPowerToggle = 0x02;
+constexpr uint8_t kSamsungPowerOn = 0x99;
+constexpr uint8_t kSamsungPowerOff = 0x98;
+constexpr uint8_t kSamsungSource = 0x01;
+constexpr uint8_t kSamsungHome = 0x79;
+constexpr uint8_t kSamsungMenu = 0x1A;
+constexpr uint8_t kSamsungGuide = 0x4F;
+constexpr uint8_t kSamsungInfo = 0x1F;
+constexpr uint8_t kSamsungTools = 0x4B;
+constexpr uint8_t kSamsungReturn = 0x58;
+constexpr uint8_t kSamsungExit = 0x2D;
+constexpr uint8_t kSamsungUp = 0x60;
+constexpr uint8_t kSamsungDown = 0x61;
+constexpr uint8_t kSamsungLeft = 0x65;
+constexpr uint8_t kSamsungRight = 0x62;
+constexpr uint8_t kSamsungOk = 0x68;
+constexpr uint8_t kSamsungMute = 0x0F;
+constexpr uint8_t kSamsungVolUp = 0x07;
+constexpr uint8_t kSamsungVolDown = 0x0B;
+constexpr uint8_t kSamsungChUp = 0x12;
+constexpr uint8_t kSamsungChDown = 0x10;
 
-uint8_t daikinSumBytes(const uint8_t* data, uint8_t len) {
-  uint16_t sum = 0;
-  for (uint8_t i = 0; i < len; ++i) {
-    sum += data[i];
+// Carrier FTU01: no exact FTU01 code table was published in the common IR DBs.
+// Use the supported Carrier/Surrey 64-bit A/C protocol from IRremoteESP8266.
+constexpr uint16_t kCarrierAc64HdrMark = 8940;
+constexpr uint16_t kCarrierAc64HdrSpace = 4556;
+constexpr uint16_t kCarrierAc64BitMark = 503;
+constexpr uint16_t kCarrierAc64OneSpace = 1736;
+constexpr uint16_t kCarrierAc64ZeroSpace = 615;
+constexpr uint16_t kCarrierAc64Gap = 30000;
+constexpr uint64_t kCarrierAc64BaseState = 0x109000002C2A5584ULL;
+constexpr uint8_t kCarrierAc64ChecksumOffset = 16;
+constexpr uint8_t kCarrierAc64ChecksumSize = 4;
+constexpr uint8_t kCarrierAc64Heat = 0b01;
+constexpr uint8_t kCarrierAc64Cool = 0b10;
+constexpr uint8_t kCarrierAc64Fan = 0b11;
+constexpr uint8_t kCarrierAc64FanAuto = 0b00;
+constexpr uint8_t kCarrierAc64FanLow = 0b01;
+constexpr uint8_t kCarrierAc64FanMedium = 0b10;
+constexpr uint8_t kCarrierAc64FanHigh = 0b11;
+constexpr uint8_t kCarrierAc64TempMin = 16;
+constexpr uint8_t kCarrierAc64TempMax = 30;
+
+bool gCarrierPower = false;
+uint8_t gCarrierMode = kCarrierAc64Cool;
+uint8_t gCarrierTempC = 24;
+uint8_t gCarrierFan = kCarrierAc64FanAuto;
+bool gCarrierSwingV = false;
+bool gCarrierSleep = false;
+String gCarrierLastCommand = "Ready";
+uint8_t gSamsungLastCommand = kSamsungPowerToggle;
+String gSamsungLastCommandLabel = "Ready";
+
+uint64_t carrierSetBits(uint64_t raw, uint8_t offset, uint8_t width, uint64_t value) {
+  const uint64_t mask = ((1ULL << width) - 1ULL) << offset;
+  raw &= ~mask;
+  raw |= (value << offset) & mask;
+  return raw;
+}
+
+uint8_t carrierCalcChecksum(uint64_t raw) {
+  uint64_t data = raw >> (kCarrierAc64ChecksumOffset + kCarrierAc64ChecksumSize);
+  uint8_t sum = 0;
+  while (data != 0) {
+    sum = static_cast<uint8_t>(sum + (data & 0x0F));
+    data >>= 4;
   }
-  return static_cast<uint8_t>(sum & 0xFF);
+  return static_cast<uint8_t>(sum & 0x0F);
 }
 
-void daikinResetState(uint8_t state[kDaikinAcStateLength]) {
-  memset(state, 0, kDaikinAcStateLength);
-  state[0] = 0x11;
-  state[1] = 0xDA;
-  state[2] = 0x27;
-  state[4] = 0xC5;
-  state[8] = 0x11;
-  state[9] = 0xDA;
-  state[10] = 0x27;
-  state[12] = 0x42;
-  state[16] = 0x11;
-  state[17] = 0xDA;
-  state[18] = 0x27;
-  state[21] = 0x08;
-  state[22] = 24 * 2;
-  state[24] = 0xB0;
-  state[27] = 0x06;
-  state[28] = 0x60;
-  state[31] = 0xC0;
+uint64_t carrierBuildState() {
+  uint64_t raw = kCarrierAc64BaseState;
+  raw = carrierSetBits(raw, 20, 2, gCarrierMode);
+  raw = carrierSetBits(raw, 22, 2, gCarrierFan);
+  raw = carrierSetBits(raw, 24, 4, clampValue<int>(gCarrierTempC, kCarrierAc64TempMin, kCarrierAc64TempMax) - kCarrierAc64TempMin);
+  raw = carrierSetBits(raw, 29, 1, gCarrierSwingV ? 1 : 0);
+  raw = carrierSetBits(raw, 36, 1, gCarrierPower ? 1 : 0);
+  raw = carrierSetBits(raw, 37, 1, 0);  // off timer disabled
+  raw = carrierSetBits(raw, 38, 1, 0);  // on timer disabled
+  raw = carrierSetBits(raw, 39, 1, gCarrierSleep ? 1 : 0);
+  raw = carrierSetBits(raw, 60, 4, gCarrierSleep ? 2 : 1);
+  raw = carrierSetBits(raw, kCarrierAc64ChecksumOffset, kCarrierAc64ChecksumSize, 0);
+  raw = carrierSetBits(raw, kCarrierAc64ChecksumOffset, kCarrierAc64ChecksumSize, carrierCalcChecksum(raw));
+  return raw;
 }
 
-void daikinApplyState(uint8_t state[kDaikinAcStateLength]) {
-  state[21] = static_cast<uint8_t>((state[21] & 0x8E) | (gDaikinPower ? 0x01 : 0x00) |
-                                   ((gDaikinMode & 0x07) << 4));
-  state[22] = static_cast<uint8_t>(clampValue<int>(gDaikinTempC, kDaikinAcTempMin, kDaikinAcTempMax) * 2);
-  state[24] = static_cast<uint8_t>(((gDaikinFan & 0x0F) << 4) | (gDaikinSwingV ? kDaikinAcSwingOn : kDaikinAcSwingOff));
-  state[29] = static_cast<uint8_t>((state[29] & 0xDE) | (gDaikinPowerful ? 0x01 : 0x00) |
-                                   (gDaikinQuiet ? 0x20 : 0x00));
-  state[7] = daikinSumBytes(state, kDaikinAcSection1Length - 1);
-  state[15] = daikinSumBytes(state + kDaikinAcSection1Length, kDaikinAcSection2Length - 1);
-  state[34] = daikinSumBytes(state + kDaikinAcSection1Length + kDaikinAcSection2Length,
-                             kDaikinAcSection3Length - 1);
-}
-
-void daikinSendBit(bool one) {
-  IrSender.mark(kDaikinAcBitMark);
-  IrSender.space(one ? kDaikinAcOneSpace : kDaikinAcZeroSpace);
-}
-
-void daikinSendBytes(const uint8_t* data, uint8_t len) {
-  for (uint8_t i = 0; i < len; ++i) {
-    for (uint8_t mask = 0x01; mask != 0; mask <<= 1) {
-      daikinSendBit((data[i] & mask) != 0);
-    }
+void carrierSend64(uint64_t raw) {
+  IrSender.enableIROut(38);
+  IrSender.mark(kCarrierAc64HdrMark);
+  IrSender.space(kCarrierAc64HdrSpace);
+  for (uint8_t i = 0; i < 64; ++i) {
+    IrSender.mark(kCarrierAc64BitMark);
+    IrSender.space((raw & (1ULL << i)) ? kCarrierAc64OneSpace : kCarrierAc64ZeroSpace);
   }
-}
-
-void daikinSendLeadIn() {
-  for (uint8_t i = 0; i < 5; ++i) {
-    daikinSendBit(false);
-  }
-  IrSender.mark(kDaikinAcBitMark);
-  IrSender.space(kDaikinAcZeroSpace + kDaikinAcGap);
-}
-
-void daikinSendSection(const uint8_t* data, uint8_t len) {
-  IrSender.mark(kDaikinAcHdrMark);
-  IrSender.space(kDaikinAcHdrSpace);
-  daikinSendBytes(data, len);
-  IrSender.mark(kDaikinAcBitMark);
-  IrSender.space(kDaikinAcZeroSpace + kDaikinAcGap);
+  IrSender.mark(kCarrierAc64BitMark);
+  IrSender.space(kCarrierAc64Gap);
+  IrSender.IRLedOff();
 }
 }  // namespace
 
-const char* daikinModeName(uint8_t mode) {
+const char* carrierModeName(uint8_t mode) {
   switch (mode) {
-    case kDaikinAcCool:
+    case kCarrierAc64Cool:
       return "Cool";
-    case kDaikinAcFanOnly:
+    case kCarrierAc64Fan:
       return "Fan";
-    case kDaikinAcDry:
-      return "Dry";
-    case kDaikinAcHeat:
+    case kCarrierAc64Heat:
       return "Heat";
-    case kDaikinAcAuto:
-      return "Auto";
     default:
       return "AC";
   }
 }
 
-String daikinFanName() {
-  if (gDaikinFan == kDaikinAcFanAuto) {
-    return "Auto";
+String carrierFanName() {
+  switch (gCarrierFan) {
+    case kCarrierAc64FanLow:
+      return "Low";
+    case kCarrierAc64FanMedium:
+      return "Med";
+    case kCarrierAc64FanHigh:
+      return "High";
+    default:
+      return "Auto";
   }
-  if (gDaikinFan == kDaikinAcFanQuiet) {
-    return "Quiet";
-  }
-  int speed = static_cast<int>(gDaikinFan) - 2;
-  return String(clampValue<int>(speed, 1, 5));
 }
 
-String daikinStateSummary() {
-  return String(gDaikinPower ? "ON" : "OFF") + " " + daikinModeName(gDaikinMode) + " " +
-         String(gDaikinTempC) + "C F" + daikinFanName();
+String carrierStateSummary() {
+  String state = String(gCarrierPower ? "ON" : "OFF") + " " + carrierModeName(gCarrierMode) + " " +
+                 String(gCarrierTempC) + "C F" + carrierFanName();
+  if (gCarrierSwingV) {
+    state += " Swing";
+  }
+  if (gCarrierSleep) {
+    state += " Sleep";
+  }
+  return state;
 }
 
-bool isHisenseRemoteSlot() {
-  return gSelectedIrRemoteSlot == kIrRemoteSlotHisense;
+bool isSamsungRemoteSlot() {
+  return gSelectedIrRemoteSlot == kIrRemoteSlotSamsung;
 }
 
 const char* irRemotePresetName(uint8_t slotIndex) {
-  return slotIndex == kIrRemoteSlotHisense ? "ERF3W80H 4K" : "Daikin AC";
+  return slotIndex == kIrRemoteSlotSamsung ? "Samsung A59-00818A" : "Carrier FTU01";
 }
 
 void selectIrRemoteSlot(uint8_t slotIndex) {
@@ -1223,167 +1204,144 @@ void initIrRemote() {
   gIrRemoteReady = true;
   gIrRemoteLearning = false;
   gIrRemoteAutoLearning = false;
-  gSelectedIrRemoteSlot = kIrRemoteSlotDaikin;
-  gIrRemoteStatus = "Slot 1 Daikin, Slot 2 ERF3W80H 4K";
+  gSelectedIrRemoteSlot = kIrRemoteSlotCarrier;
+  gIrRemoteStatus = "Slot 1 Carrier FTU01, Slot 2 Samsung A59-00818A";
   appendRuntimeLog("IR", gIrRemoteStatus, true);
 }
 
-void sendDaikinAcState(const String& commandLabel) {
+void sendCarrierAcState(const String& commandLabel) {
   initIrRemote();
-  uint8_t state[kDaikinAcStateLength];
-  daikinResetState(state);
-  daikinApplyState(state);
-
-  IrSender.enableIROut(38);
-  daikinSendLeadIn();
-  daikinSendSection(state, kDaikinAcSection1Length);
-  daikinSendSection(state + kDaikinAcSection1Length, kDaikinAcSection2Length);
-  daikinSendSection(state + kDaikinAcSection1Length + kDaikinAcSection2Length, kDaikinAcSection3Length);
-  IrSender.IRLedOff();
-
-  gDaikinLastCommand = commandLabel;
-  gIrRemoteStatus = String("Daikin ") + commandLabel + ": " + daikinStateSummary();
+  carrierSend64(carrierBuildState());
+  gCarrierLastCommand = commandLabel;
+  gIrRemoteStatus = String("Carrier FTU01 ") + commandLabel + ": " + carrierStateSummary();
   setStatus(gIrRemoteStatus, 1100);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
   flashActivityLed(255, 80, 20, 120);
 }
 
-void setDaikinModeAndSend(uint8_t mode, const String& label) {
-  gDaikinPower = true;
-  gDaikinMode = mode;
-  if (mode == kDaikinAcFanOnly) {
-    gDaikinFan = kDaikinAcFanAuto;
-  }
-  sendDaikinAcState(label);
+void setCarrierModeAndSend(uint8_t mode, const String& label) {
+  gCarrierPower = true;
+  gCarrierMode = mode;
+  sendCarrierAcState(label);
 }
 
-void cycleDaikinFanAndSend() {
-  gDaikinPower = true;
-  static constexpr uint8_t kFanCycle[] = {kDaikinAcFanAuto, 3, 4, 5, 6, 7, kDaikinAcFanQuiet};
+void cycleCarrierFanAndSend() {
+  gCarrierPower = true;
+  static constexpr uint8_t kFanCycle[] = {kCarrierAc64FanAuto, kCarrierAc64FanLow, kCarrierAc64FanMedium, kCarrierAc64FanHigh};
   uint8_t next = 0;
   for (uint8_t i = 0; i < sizeof(kFanCycle); ++i) {
-    if (gDaikinFan == kFanCycle[i]) {
+    if (gCarrierFan == kFanCycle[i]) {
       next = static_cast<uint8_t>((i + 1) % sizeof(kFanCycle));
       break;
     }
   }
-  gDaikinFan = kFanCycle[next];
-  if (gDaikinFan == kDaikinAcFanQuiet) {
-    gDaikinQuiet = true;
-    gDaikinPowerful = false;
-  } else {
-    gDaikinQuiet = false;
-  }
-  sendDaikinAcState(String("Fan ") + daikinFanName());
+  gCarrierFan = kFanCycle[next];
+  sendCarrierAcState(String("Fan ") + carrierFanName());
 }
 
-void sendHisenseTvCommand(uint8_t command, const String& label) {
+void sendSamsungTvCommand(uint8_t command, const String& label) {
   initIrRemote();
-  IrSender.sendNEC(kHisenseTvNecAddress, command, NO_REPEATS);
+  IrSender.sendSamsung(kSamsungTvAddress, command, NO_REPEATS);
   IrSender.IRLedOff();
-  gHisenseLastCommand = command;
-  gHisenseLastCommandLabel = label;
-  gIrRemoteStatus = String("ERF3W80H ") + label;
+  gSamsungLastCommand = command;
+  gSamsungLastCommandLabel = label;
+  gIrRemoteStatus = String("Samsung A59 ") + label;
   setStatus(gIrRemoteStatus, 950);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
   flashActivityLed(80, 190, 255, 110);
 }
 
-bool handleHisenseTvRemoteKey(char key, char lowerKey, const Keyboard_Class::KeysState& keys) {
+bool handleSamsungTvRemoteKey(char key, char lowerKey, const Keyboard_Class::KeysState& keys) {
   if (lowerKey == 'q') {
-    sendHisenseTvCommand(kHisensePowerToggle, "Power");
+    sendSamsungTvCommand(kSamsungPowerToggle, "Power");
     return true;
   }
   if (lowerKey == 'w') {
-    sendHisenseTvCommand(kHisenseUp, "Up");
+    sendSamsungTvCommand(kSamsungUp, "Up");
     return true;
   }
   if (lowerKey == 'a') {
-    sendHisenseTvCommand(kHisenseLeft, "Left");
+    sendSamsungTvCommand(kSamsungLeft, "Left");
     return true;
   }
   if (lowerKey == 's') {
-    sendHisenseTvCommand(kHisenseDown, "Down");
+    sendSamsungTvCommand(kSamsungDown, "Down");
     return true;
   }
   if (lowerKey == 'd') {
-    sendHisenseTvCommand(kHisenseRight, "Right");
+    sendSamsungTvCommand(kSamsungRight, "Right");
     return true;
   }
   if (keys.enter || keys.space || key == ' ' || key == '\r' || key == '\n') {
-    sendHisenseTvCommand(kHisenseOk, "OK");
+    sendSamsungTvCommand(kSamsungOk, "OK");
     return true;
   }
   if (lowerKey == 'e') {
-    sendHisenseTvCommand(kHisenseInput, "Input");
+    sendSamsungTvCommand(kSamsungSource, "Source");
     return true;
   }
   if (lowerKey == 'r') {
-    sendHisenseTvCommand(kHisenseBack, "Back");
+    sendSamsungTvCommand(kSamsungReturn, "Return");
     return true;
   }
   if (lowerKey == 't') {
-    sendHisenseTvCommand(kHisenseHome, "Home");
+    sendSamsungTvCommand(kSamsungHome, "Home");
     return true;
   }
   if (lowerKey == 'y') {
-    sendHisenseTvCommand(kHisenseSettings, "Menu");
+    sendSamsungTvCommand(kSamsungMenu, "Menu");
     return true;
   }
   if (lowerKey == 'f') {
-    sendHisenseTvCommand(kHisenseMute, "Mute");
+    sendSamsungTvCommand(kSamsungMute, "Mute");
     return true;
   }
   if (lowerKey == 'g') {
-    sendHisenseTvCommand(kHisenseChDown, "Ch -");
+    sendSamsungTvCommand(kSamsungChDown, "Ch -");
     return true;
   }
   if (lowerKey == 'h') {
-    sendHisenseTvCommand(kHisenseChUp, "Ch +");
+    sendSamsungTvCommand(kSamsungChUp, "Ch +");
     return true;
   }
   if (lowerKey == 'z' || key == '-' || key == '_') {
-    sendHisenseTvCommand(kHisenseVolDown, "Vol -");
+    sendSamsungTvCommand(kSamsungVolDown, "Vol -");
     return true;
   }
   if (lowerKey == 'x' || key == '+' || key == '=') {
-    sendHisenseTvCommand(kHisenseVolUp, "Vol +");
+    sendSamsungTvCommand(kSamsungVolUp, "Vol +");
     return true;
   }
   if (lowerKey == 'c') {
-    sendHisenseTvCommand(kHisenseExit, "Exit");
+    sendSamsungTvCommand(kSamsungExit, "Exit");
     return true;
   }
   if (lowerKey == 'v') {
-    sendHisenseTvCommand(kHisenseYouTube, "YouTube");
+    sendSamsungTvCommand(kSamsungGuide, "Guide");
     return true;
   }
   if (lowerKey == 'b') {
-    sendHisenseTvCommand(kHisenseNetflix, "Netflix");
+    sendSamsungTvCommand(kSamsungInfo, "Info");
     return true;
   }
   if (lowerKey == 'n') {
-    sendHisenseTvCommand(kHisensePrimeVideo, "Prime Video");
-    return true;
-  }
-  if (lowerKey == 'm') {
-    sendHisenseTvCommand(kHisenseAssistant, "Assistant");
+    sendSamsungTvCommand(kSamsungTools, "Tools");
     return true;
   }
   if (keys.del || key == '\b') {
-    sendHisenseTvCommand(kHisensePowerOff, "Power off");
+    sendSamsungTvCommand(kSamsungPowerOff, "Power off");
     return true;
   }
   if (lowerKey == 'o') {
-    sendHisenseTvCommand(kHisensePowerOn, "Power on");
+    sendSamsungTvCommand(kSamsungPowerOn, "Power on");
     return true;
   }
   if (lowerKey == 'p') {
-    sendHisenseTvCommand(kHisensePowerOff, "Power off");
+    sendSamsungTvCommand(kSamsungPowerOff, "Power off");
     return true;
   }
-  gIrRemoteStatus = "ERF3W80H keys: WASD nav, Enter OK, Z/X volume";
-  setStatus("ERF3W80H: WASD Enter Z/X E/R/T/Y", 1200);
+  gIrRemoteStatus = "Samsung keys: WASD nav, Enter OK, Z/X volume";
+  setStatus("Samsung: WASD Enter Z/X E/R/T/Y", 1200);
   return true;
 }
 
@@ -1410,93 +1368,72 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
     return true;
   }
 
-  if (isHisenseRemoteSlot()) {
-    return handleHisenseTvRemoteKey(key, lowerKey, keys);
+  if (isSamsungRemoteSlot()) {
+    return handleSamsungTvRemoteKey(key, lowerKey, keys);
   }
 
   if (lowerKey == 'q') {
-    gDaikinPower = !gDaikinPower;
-    sendDaikinAcState(gDaikinPower ? "Power on" : "Power off");
+    gCarrierPower = !gCarrierPower;
+    sendCarrierAcState(gCarrierPower ? "Power on" : "Power off");
     return true;
   }
   if (lowerKey == 'w') {
-    setDaikinModeAndSend(kDaikinAcCool, "Cool");
+    setCarrierModeAndSend(kCarrierAc64Cool, "Cool");
     return true;
   }
   if (lowerKey == 'e') {
-    setDaikinModeAndSend(kDaikinAcFanOnly, "Fan only");
-    return true;
-  }
-  if (lowerKey == 'r') {
-    setDaikinModeAndSend(kDaikinAcDry, "Dry");
+    setCarrierModeAndSend(kCarrierAc64Fan, "Fan only");
     return true;
   }
   if (lowerKey == 't') {
-    setDaikinModeAndSend(kDaikinAcHeat, "Heat");
-    return true;
-  }
-  if (lowerKey == 'y') {
-    setDaikinModeAndSend(kDaikinAcAuto, "Auto");
+    setCarrierModeAndSend(kCarrierAc64Heat, "Heat");
     return true;
   }
   if (lowerKey == 'a' || key == '-' || key == '_') {
-    gDaikinPower = true;
-    gDaikinTempC = static_cast<uint8_t>(clampValue<int>(gDaikinTempC - 1, kDaikinAcTempMin, kDaikinAcTempMax));
-    sendDaikinAcState("Temp -");
+    gCarrierPower = true;
+    gCarrierTempC = static_cast<uint8_t>(clampValue<int>(gCarrierTempC - 1, kCarrierAc64TempMin, kCarrierAc64TempMax));
+    sendCarrierAcState("Temp -");
     return true;
   }
   if (lowerKey == 's' || key == '+' || key == '=') {
-    gDaikinPower = true;
-    gDaikinTempC = static_cast<uint8_t>(clampValue<int>(gDaikinTempC + 1, kDaikinAcTempMin, kDaikinAcTempMax));
-    sendDaikinAcState("Temp +");
+    gCarrierPower = true;
+    gCarrierTempC = static_cast<uint8_t>(clampValue<int>(gCarrierTempC + 1, kCarrierAc64TempMin, kCarrierAc64TempMax));
+    sendCarrierAcState("Temp +");
     return true;
   }
   if (lowerKey == 'd') {
-    cycleDaikinFanAndSend();
+    cycleCarrierFanAndSend();
     return true;
   }
   if (lowerKey == 'f') {
-    gDaikinPower = true;
-    gDaikinSwingV = !gDaikinSwingV;
-    sendDaikinAcState(gDaikinSwingV ? "Swing on" : "Swing off");
+    gCarrierPower = true;
+    gCarrierSwingV = !gCarrierSwingV;
+    sendCarrierAcState(gCarrierSwingV ? "Swing on" : "Swing off");
     return true;
   }
   if (lowerKey == 'g') {
-    gDaikinPower = true;
-    gDaikinQuiet = !gDaikinQuiet;
-    if (gDaikinQuiet) {
-      gDaikinPowerful = false;
-      gDaikinFan = kDaikinAcFanQuiet;
-    } else if (gDaikinFan == kDaikinAcFanQuiet) {
-      gDaikinFan = kDaikinAcFanAuto;
-    }
-    sendDaikinAcState(gDaikinQuiet ? "Quiet on" : "Quiet off");
+    gCarrierPower = true;
+    gCarrierSleep = !gCarrierSleep;
+    sendCarrierAcState(gCarrierSleep ? "Sleep on" : "Sleep off");
     return true;
   }
-  if (lowerKey == 'h') {
-    gDaikinPower = true;
-    gDaikinPowerful = !gDaikinPowerful;
-    if (gDaikinPowerful) {
-      gDaikinQuiet = false;
-      if (gDaikinFan == kDaikinAcFanQuiet) {
-        gDaikinFan = kDaikinAcFanAuto;
-      }
-    }
-    sendDaikinAcState(gDaikinPowerful ? "Powerful on" : "Powerful off");
+  if (lowerKey == 'o' || lowerKey == 'y') {
+    gCarrierPower = true;
+    sendCarrierAcState("Power on");
     return true;
   }
-  if (keys.enter || keys.space || key == ' ' || key == '\r' || key == '\n') {
-    sendDaikinAcState("Resend");
+  if (lowerKey == 'p' || keys.del || key == '\b') {
+    gCarrierPower = false;
+    sendCarrierAcState("Power off");
     return true;
   }
-  if (keys.del || key == '\b') {
-    gDaikinPower = false;
-    sendDaikinAcState("Power off");
+  if (keys.enter || keys.space || key == ' ' || key == '\r' || key == '\n' || lowerKey == 'h') {
+    sendCarrierAcState("Resend");
     return true;
   }
 
-  gIrRemoteStatus = "Daikin keys: Q power, W cool, E fan, A/S temp";
-  setStatus("Daikin: 1/2 slots Q/W/E/R/T/Y A/S", 1200);
+  gIrRemoteStatus = "Carrier keys: Q power, W/E/T mode, A/S temp";
+  setStatus("Carrier: Q W/E/T A/S D/F/G Enter", 1200);
   return true;
 }
 
