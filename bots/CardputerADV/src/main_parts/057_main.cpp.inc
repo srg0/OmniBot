@@ -486,7 +486,7 @@ void renderIrRemoteButton(int16_t x, int16_t y, const char* keyLabel, const char
 
 void renderIrRemoteSlotTabs(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t amber, uint16_t muted) {
   auto& d = gCanvas;
-  const char* labels[] = {"1 Carrier", "2 A59"};
+  const char* labels[] = {"1 WC-UA04", "2 A59"};
   for (uint8_t i = 0; i < kIrRemotePresetCount; ++i) {
     int16_t x = 18 + i * 77;
     bool selected = gSelectedIrRemoteSlot == i;
@@ -510,7 +510,7 @@ void renderCarrierRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint1
   d.setFont(&fonts::Font2);
   d.setTextColor(cyan, panel);
   d.setCursor(16, 13);
-  d.print("CARRIER FTU01");
+  d.print("CARRIER WC-UA04");
   String io = String("IRG") + String(kIrSendPin) + " TX";
   d.setTextColor(green, panel);
   d.setCursor(224 - d.textWidth(io), 16);
@@ -525,15 +525,16 @@ void renderCarrierRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint1
   d.setCursor(23, 49);
   d.print(fitCurrentFontToWidth(state, 194));
 
-  const char* keys[] = {"Q", "W", "E", "T", "A", "S", "D", "F", "G", "O", "P", "H"};
-  const char* labels[] = {"Power", "Cool", "Fan", "Heat", "Temp-", "Temp+", "FanSp", "Swing", "Sleep", "On", "Off", "Resend"};
+  const char* keys[] = {"Q", "W", "E", "R", "T", "Y", "A", "S", "D", "F", "G", "H"};
+  const char* labels[] = {"Power", "Cool", "Fan", "Dry", "Heat", "Auto", "Temp-", "Temp+", "FanSp", "Swing", "Eco", "Resend"};
   for (uint8_t i = 0; i < 12; ++i) {
     const int col = i % 4;
     const int row = i / 4;
     uint16_t line = muted;
-    if ((i == 0 && gCarrierPower) || (i == 1 && gCarrierMode == kCarrierAc64Cool) ||
-        (i == 2 && gCarrierMode == kCarrierAc64Fan) || (i == 3 && gCarrierMode == kCarrierAc64Heat) ||
-        (i == 7 && gCarrierSwingV) || (i == 8 && gCarrierSleep)) {
+    if ((i == 0 && gCarrierPower) || (i == 1 && gCarrierMode == kCarrierToshibaCool) ||
+        (i == 2 && gCarrierMode == kCarrierToshibaFan) || (i == 3 && gCarrierMode == kCarrierToshibaDry) ||
+        (i == 4 && gCarrierMode == kCarrierToshibaHeat) || (i == 5 && gCarrierMode == kCarrierToshibaAuto) ||
+        (i == 9 && gCarrierSwingV) || (i == 10 && gCarrierEco)) {
       line = amber;
     }
     renderIrRemoteButton(18 + col * 53, 62 + row * 18, keys[i], labels[i], panel2, line, cyan, TFT_LIGHTGREY);

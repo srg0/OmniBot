@@ -1060,91 +1060,138 @@ constexpr uint8_t kSamsungVolDown = 0x0B;
 constexpr uint8_t kSamsungChUp = 0x12;
 constexpr uint8_t kSamsungChDown = 0x10;
 
-// Carrier FTU01: no exact FTU01 code table was published in the common IR DBs.
-// Use the supported Carrier/Surrey 64-bit A/C protocol from IRremoteESP8266.
-constexpr uint16_t kCarrierAc64HdrMark = 8940;
-constexpr uint16_t kCarrierAc64HdrSpace = 4556;
-constexpr uint16_t kCarrierAc64BitMark = 503;
-constexpr uint16_t kCarrierAc64OneSpace = 1736;
-constexpr uint16_t kCarrierAc64ZeroSpace = 615;
-constexpr uint16_t kCarrierAc64Gap = 30000;
-constexpr uint64_t kCarrierAc64BaseState = 0x109000002C2A5584ULL;
-constexpr uint8_t kCarrierAc64ChecksumOffset = 16;
-constexpr uint8_t kCarrierAc64ChecksumSize = 4;
-constexpr uint8_t kCarrierAc64Heat = 0b01;
-constexpr uint8_t kCarrierAc64Cool = 0b10;
-constexpr uint8_t kCarrierAc64Fan = 0b11;
-constexpr uint8_t kCarrierAc64FanAuto = 0b00;
-constexpr uint8_t kCarrierAc64FanLow = 0b01;
-constexpr uint8_t kCarrierAc64FanMedium = 0b10;
-constexpr uint8_t kCarrierAc64FanHigh = 0b11;
-constexpr uint8_t kCarrierAc64TempMin = 16;
-constexpr uint8_t kCarrierAc64TempMax = 30;
+// Carrier WC-UA04NE / 43T6V694 family (device marking also reported as
+// Q18D0167859) is sold as a Carrier/Toshiba split A/C remote.
+// IRremoteESP8266 documents the matching Toshiba-Carrier A/C protocol
+// for Carrier 42NQV/38NYV units and similar Toshiba remotes (WH-TA04NE etc.).
+constexpr uint8_t kCarrierToshibaStateLength = 9;
+constexpr uint8_t kCarrierToshibaStateLengthShort = 7;
+constexpr uint8_t kCarrierToshibaStateLengthLong = 10;
+constexpr uint8_t kCarrierToshibaMinLength = 6;
+constexpr uint16_t kCarrierToshibaHdrMark = 4400;
+constexpr uint16_t kCarrierToshibaHdrSpace = 4300;
+constexpr uint16_t kCarrierToshibaBitMark = 580;
+constexpr uint16_t kCarrierToshibaOneSpace = 1600;
+constexpr uint16_t kCarrierToshibaZeroSpace = 490;
+constexpr uint16_t kCarrierToshibaGap = 7400;
+constexpr uint8_t kCarrierToshibaAuto = 0;
+constexpr uint8_t kCarrierToshibaCool = 1;
+constexpr uint8_t kCarrierToshibaDry = 2;
+constexpr uint8_t kCarrierToshibaHeat = 3;
+constexpr uint8_t kCarrierToshibaFan = 4;
+constexpr uint8_t kCarrierToshibaOff = 7;
+constexpr uint8_t kCarrierToshibaFanAuto = 0;
+constexpr uint8_t kCarrierToshibaFanLow = 1;
+constexpr uint8_t kCarrierToshibaFanMedium = 3;
+constexpr uint8_t kCarrierToshibaFanHigh = 5;
+constexpr uint8_t kCarrierToshibaSwingOn = 1;
+constexpr uint8_t kCarrierToshibaSwingOff = 2;
+constexpr uint8_t kCarrierToshibaTempMin = 17;
+constexpr uint8_t kCarrierToshibaTempMax = 30;
+constexpr uint8_t kCarrierToshibaEcoOn = 3;
 
 bool gCarrierPower = false;
-uint8_t gCarrierMode = kCarrierAc64Cool;
+uint8_t gCarrierMode = kCarrierToshibaCool;
 uint8_t gCarrierTempC = 24;
-uint8_t gCarrierFan = kCarrierAc64FanAuto;
+uint8_t gCarrierFan = kCarrierToshibaFanAuto;
 bool gCarrierSwingV = false;
-bool gCarrierSleep = false;
+bool gCarrierEco = false;
 String gCarrierLastCommand = "Ready";
 uint8_t gSamsungLastCommand = kSamsungPowerToggle;
 String gSamsungLastCommandLabel = "Ready";
 
-uint64_t carrierSetBits(uint64_t raw, uint8_t offset, uint8_t width, uint64_t value) {
-  const uint64_t mask = ((1ULL << width) - 1ULL) << offset;
-  raw &= ~mask;
-  raw |= (value << offset) & mask;
-  return raw;
-}
-
-uint8_t carrierCalcChecksum(uint64_t raw) {
-  uint64_t data = raw >> (kCarrierAc64ChecksumOffset + kCarrierAc64ChecksumSize);
-  uint8_t sum = 0;
-  while (data != 0) {
-    sum = static_cast<uint8_t>(sum + (data & 0x0F));
-    data >>= 4;
+uint8_t carrierToshibaChecksum(const uint8_t* state, uint8_t length) {
+  uint8_t checksum = 0;
+  for (uint8_t i = 0; i + 1 < length; ++i) {
+    checksum ^= state[i];
   }
-  return static_cast<uint8_t>(sum & 0x0F);
+  return checksum;
 }
 
-uint64_t carrierBuildState() {
-  uint64_t raw = kCarrierAc64BaseState;
-  raw = carrierSetBits(raw, 20, 2, gCarrierMode);
-  raw = carrierSetBits(raw, 22, 2, gCarrierFan);
-  raw = carrierSetBits(raw, 24, 4, clampValue<int>(gCarrierTempC, kCarrierAc64TempMin, kCarrierAc64TempMax) - kCarrierAc64TempMin);
-  raw = carrierSetBits(raw, 29, 1, gCarrierSwingV ? 1 : 0);
-  raw = carrierSetBits(raw, 36, 1, gCarrierPower ? 1 : 0);
-  raw = carrierSetBits(raw, 37, 1, 0);  // off timer disabled
-  raw = carrierSetBits(raw, 38, 1, 0);  // on timer disabled
-  raw = carrierSetBits(raw, 39, 1, gCarrierSleep ? 1 : 0);
-  raw = carrierSetBits(raw, 60, 4, gCarrierSleep ? 2 : 1);
-  raw = carrierSetBits(raw, kCarrierAc64ChecksumOffset, kCarrierAc64ChecksumSize, 0);
-  raw = carrierSetBits(raw, kCarrierAc64ChecksumOffset, kCarrierAc64ChecksumSize, carrierCalcChecksum(raw));
-  return raw;
+void carrierToshibaReset(uint8_t* state, uint8_t length) {
+  memset(state, 0, kCarrierToshibaStateLengthLong);
+  state[0] = 0xF2;
+  state[1] = 0x0D;
+  state[2] = static_cast<uint8_t>((length - kCarrierToshibaMinLength) & 0x0F);
+  state[3] = static_cast<uint8_t>(~state[2]);
+  state[4] = 0x01;
+  if (length == kCarrierToshibaStateLengthShort) {
+    state[4] |= 0x20;  // Short swing message.
+  } else if (length == kCarrierToshibaStateLengthLong) {
+    state[4] |= 0x08;  // Long Eco/Turbo message.
+  }
 }
 
-void carrierSend64(uint64_t raw) {
+uint8_t carrierToshibaFanRaw() {
+  if (gCarrierFan == kCarrierToshibaFanAuto) {
+    return kCarrierToshibaFanAuto;
+  }
+  return static_cast<uint8_t>(clampValue<int>(gCarrierFan, kCarrierToshibaFanLow, kCarrierToshibaFanHigh) + 1);
+}
+
+uint8_t carrierToshibaModeRaw() {
+  return gCarrierPower ? gCarrierMode : kCarrierToshibaOff;
+}
+
+uint8_t carrierBuildToshibaState(uint8_t* state) {
+  const uint8_t length = gCarrierEco ? kCarrierToshibaStateLengthLong : kCarrierToshibaStateLength;
+  carrierToshibaReset(state, length);
+  const uint8_t temp = static_cast<uint8_t>(clampValue<int>(gCarrierTempC, kCarrierToshibaTempMin, kCarrierToshibaTempMax));
+  state[5] = static_cast<uint8_t>((temp - kCarrierToshibaTempMin) << 4);
+  state[6] = static_cast<uint8_t>((carrierToshibaFanRaw() << 5) | (carrierToshibaModeRaw() & 0x07));
+  state[7] = 0x00;
+  if (length == kCarrierToshibaStateLengthLong) {
+    state[8] = gCarrierEco ? kCarrierToshibaEcoOn : 0x00;
+  }
+  state[length - 1] = carrierToshibaChecksum(state, length);
+  return length;
+}
+
+uint8_t carrierBuildToshibaSwingState(uint8_t* state) {
+  const uint8_t length = kCarrierToshibaStateLengthShort;
+  carrierToshibaReset(state, length);
+  state[5] = gCarrierSwingV ? kCarrierToshibaSwingOn : kCarrierToshibaSwingOff;
+  state[6] = carrierToshibaChecksum(state, length);
+  return length;
+}
+
+void carrierSendToshibaMessage(const uint8_t* state, uint8_t length) {
   IrSender.enableIROut(38);
-  IrSender.mark(kCarrierAc64HdrMark);
-  IrSender.space(kCarrierAc64HdrSpace);
-  for (uint8_t i = 0; i < 64; ++i) {
-    IrSender.mark(kCarrierAc64BitMark);
-    IrSender.space((raw & (1ULL << i)) ? kCarrierAc64OneSpace : kCarrierAc64ZeroSpace);
+  IrSender.mark(kCarrierToshibaHdrMark);
+  IrSender.space(kCarrierToshibaHdrSpace);
+  for (uint8_t i = 0; i < length; ++i) {
+    for (uint8_t mask = 0x80; mask != 0; mask >>= 1) {
+      IrSender.mark(kCarrierToshibaBitMark);
+      IrSender.space((state[i] & mask) ? kCarrierToshibaOneSpace : kCarrierToshibaZeroSpace);
+    }
   }
-  IrSender.mark(kCarrierAc64BitMark);
-  IrSender.space(kCarrierAc64Gap);
+  IrSender.mark(kCarrierToshibaBitMark);
+  IrSender.space(kCarrierToshibaGap);
   IrSender.IRLedOff();
+}
+
+void carrierSendToshibaState(bool includeSwingFrame) {
+  uint8_t state[kCarrierToshibaStateLengthLong];
+  uint8_t length = carrierBuildToshibaState(state);
+  carrierSendToshibaMessage(state, length);
+  if (includeSwingFrame) {
+    length = carrierBuildToshibaSwingState(state);
+    carrierSendToshibaMessage(state, length);
+  }
 }
 }  // namespace
 
 const char* carrierModeName(uint8_t mode) {
   switch (mode) {
-    case kCarrierAc64Cool:
+    case kCarrierToshibaAuto:
+      return "Auto";
+    case kCarrierToshibaCool:
       return "Cool";
-    case kCarrierAc64Fan:
+    case kCarrierToshibaDry:
+      return "Dry";
+    case kCarrierToshibaFan:
       return "Fan";
-    case kCarrierAc64Heat:
+    case kCarrierToshibaHeat:
       return "Heat";
     default:
       return "AC";
@@ -1153,11 +1200,11 @@ const char* carrierModeName(uint8_t mode) {
 
 String carrierFanName() {
   switch (gCarrierFan) {
-    case kCarrierAc64FanLow:
+    case kCarrierToshibaFanLow:
       return "Low";
-    case kCarrierAc64FanMedium:
+    case kCarrierToshibaFanMedium:
       return "Med";
-    case kCarrierAc64FanHigh:
+    case kCarrierToshibaFanHigh:
       return "High";
     default:
       return "Auto";
@@ -1170,8 +1217,8 @@ String carrierStateSummary() {
   if (gCarrierSwingV) {
     state += " Swing";
   }
-  if (gCarrierSleep) {
-    state += " Sleep";
+  if (gCarrierEco) {
+    state += " Eco";
   }
   return state;
 }
@@ -1181,7 +1228,7 @@ bool isSamsungRemoteSlot() {
 }
 
 const char* irRemotePresetName(uint8_t slotIndex) {
-  return slotIndex == kIrRemoteSlotSamsung ? "Samsung A59-00818A" : "Carrier FTU01";
+  return slotIndex == kIrRemoteSlotSamsung ? "Samsung A59-00818A" : "Carrier WC-UA04NE";
 }
 
 void selectIrRemoteSlot(uint8_t slotIndex) {
@@ -1205,15 +1252,15 @@ void initIrRemote() {
   gIrRemoteLearning = false;
   gIrRemoteAutoLearning = false;
   gSelectedIrRemoteSlot = kIrRemoteSlotCarrier;
-  gIrRemoteStatus = "Slot 1 Carrier FTU01, Slot 2 Samsung A59-00818A";
+  gIrRemoteStatus = "Slot 1 Carrier WC-UA04NE, Slot 2 Samsung A59-00818A";
   appendRuntimeLog("IR", gIrRemoteStatus, true);
 }
 
-void sendCarrierAcState(const String& commandLabel) {
+void sendCarrierAcState(const String& commandLabel, bool includeSwingFrame = false) {
   initIrRemote();
-  carrierSend64(carrierBuildState());
+  carrierSendToshibaState(includeSwingFrame);
   gCarrierLastCommand = commandLabel;
-  gIrRemoteStatus = String("Carrier FTU01 ") + commandLabel + ": " + carrierStateSummary();
+  gIrRemoteStatus = String("Carrier WC-UA04NE ") + commandLabel + ": " + carrierStateSummary();
   setStatus(gIrRemoteStatus, 1100);
   appendRuntimeLog("IR", gIrRemoteStatus, true);
   flashActivityLed(255, 80, 20, 120);
@@ -1227,7 +1274,7 @@ void setCarrierModeAndSend(uint8_t mode, const String& label) {
 
 void cycleCarrierFanAndSend() {
   gCarrierPower = true;
-  static constexpr uint8_t kFanCycle[] = {kCarrierAc64FanAuto, kCarrierAc64FanLow, kCarrierAc64FanMedium, kCarrierAc64FanHigh};
+  static constexpr uint8_t kFanCycle[] = {kCarrierToshibaFanAuto, kCarrierToshibaFanLow, kCarrierToshibaFanMedium, kCarrierToshibaFanHigh};
   uint8_t next = 0;
   for (uint8_t i = 0; i < sizeof(kFanCycle); ++i) {
     if (gCarrierFan == kFanCycle[i]) {
@@ -1378,26 +1425,34 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
     return true;
   }
   if (lowerKey == 'w') {
-    setCarrierModeAndSend(kCarrierAc64Cool, "Cool");
+    setCarrierModeAndSend(kCarrierToshibaCool, "Cool");
     return true;
   }
   if (lowerKey == 'e') {
-    setCarrierModeAndSend(kCarrierAc64Fan, "Fan only");
+    setCarrierModeAndSend(kCarrierToshibaFan, "Fan only");
+    return true;
+  }
+  if (lowerKey == 'r') {
+    setCarrierModeAndSend(kCarrierToshibaDry, "Dry");
     return true;
   }
   if (lowerKey == 't') {
-    setCarrierModeAndSend(kCarrierAc64Heat, "Heat");
+    setCarrierModeAndSend(kCarrierToshibaHeat, "Heat");
+    return true;
+  }
+  if (lowerKey == 'y') {
+    setCarrierModeAndSend(kCarrierToshibaAuto, "Auto");
     return true;
   }
   if (lowerKey == 'a' || key == '-' || key == '_') {
     gCarrierPower = true;
-    gCarrierTempC = static_cast<uint8_t>(clampValue<int>(gCarrierTempC - 1, kCarrierAc64TempMin, kCarrierAc64TempMax));
+    gCarrierTempC = static_cast<uint8_t>(clampValue<int>(gCarrierTempC - 1, kCarrierToshibaTempMin, kCarrierToshibaTempMax));
     sendCarrierAcState("Temp -");
     return true;
   }
   if (lowerKey == 's' || key == '+' || key == '=') {
     gCarrierPower = true;
-    gCarrierTempC = static_cast<uint8_t>(clampValue<int>(gCarrierTempC + 1, kCarrierAc64TempMin, kCarrierAc64TempMax));
+    gCarrierTempC = static_cast<uint8_t>(clampValue<int>(gCarrierTempC + 1, kCarrierToshibaTempMin, kCarrierToshibaTempMax));
     sendCarrierAcState("Temp +");
     return true;
   }
@@ -1408,16 +1463,16 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
   if (lowerKey == 'f') {
     gCarrierPower = true;
     gCarrierSwingV = !gCarrierSwingV;
-    sendCarrierAcState(gCarrierSwingV ? "Swing on" : "Swing off");
+    sendCarrierAcState(gCarrierSwingV ? "Swing on" : "Swing off", true);
     return true;
   }
   if (lowerKey == 'g') {
     gCarrierPower = true;
-    gCarrierSleep = !gCarrierSleep;
-    sendCarrierAcState(gCarrierSleep ? "Sleep on" : "Sleep off");
+    gCarrierEco = !gCarrierEco;
+    sendCarrierAcState(gCarrierEco ? "Eco on" : "Eco off");
     return true;
   }
-  if (lowerKey == 'o' || lowerKey == 'y') {
+  if (lowerKey == 'o') {
     gCarrierPower = true;
     sendCarrierAcState("Power on");
     return true;
@@ -1432,8 +1487,8 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
     return true;
   }
 
-  gIrRemoteStatus = "Carrier keys: Q power, W/E/T mode, A/S temp";
-  setStatus("Carrier: Q W/E/T A/S D/F/G Enter", 1200);
+  gIrRemoteStatus = "Carrier WC-UA04NE keys: Q power, W/E/R/T/Y mode";
+  setStatus("WC-UA04NE: Q W/E/R/T/Y A/S D/F/G", 1200);
   return true;
 }
 
