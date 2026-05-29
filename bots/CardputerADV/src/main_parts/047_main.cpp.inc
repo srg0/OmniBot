@@ -431,6 +431,154 @@ bool handleCalculatorKey(char key, const Keyboard_Class::KeysState& keys) {
   return true;
 }
 
+String rfidHexByte(uint8_t value) {
+  char buf[3];
+  snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned>(value));
+  return String(buf);
+}
+
+String rfidVersionName(uint8_t version) {
+  if (version == 0x90) {
+    return "MFRC522 v0.0";
+  }
+  if (version == 0x91) {
+    return "MFRC522 v1.0";
+  }
+  if (version == 0x92) {
+    return "MFRC522 v2.0";
+  }
+  if (version == 0x88) {
+    return "FM17522 clone";
+  }
+  if (version == 0x00 || version == 0xFF) {
+    return "no chip response";
+  }
+  return String("ver 0x") + rfidHexByte(version);
+}
+
+bool rfidI2cAddressPresent() {
+  if (!gRfidWireReady) {
+    return false;
+  }
+  Wire.beginTransmission(kRfidI2cAddr);
+  return Wire.endTransmission() == 0;
+}
+
+void clearRfidCardSnapshot(const String& statusText = "Ready: present card") {
+  gRfidUid = "-";
+  gRfidType = "-";
+  gRfidUidSize = 0;
+  gRfidSak = 0;
+  gRfidStatus = statusText;
+}
+
+void initRfidLab(bool force) {
+  uint32_t now = millis();
+  if (!force && gRfidReady) {
+    return;
+  }
+  if (!force && gRfidLastInitMs != 0 && now - gRfidLastInitMs < kRfidReconnectIntervalMs) {
+    return;
+  }
+  gRfidLastInitMs = now;
+  Wire.begin(kRfidSdaPin, kRfidSclPin);
+  Wire.setClock(kRfidI2cHz);
+  Wire.setTimeOut(50);
+  gRfidWireReady = true;
+
+  if (!rfidI2cAddressPresent()) {
+    gRfidReady = false;
+    gRfidVersionReg = 0;
+    clearRfidCardSnapshot("No RFID unit at 0x28");
+    return;
+  }
+
+  gRfidReader.PCD_Init();
+  delay(8);
+  gRfidVersionReg = gRfidReader.PCD_ReadRegister(MFRC522_I2C::VersionReg);
+  if (gRfidVersionReg == 0x00 || gRfidVersionReg == 0xFF) {
+    gRfidReady = false;
+    clearRfidCardSnapshot("RFID chip not responding");
+    appendRuntimeLog("RFID", "unit addr ack but chip version invalid", true);
+    return;
+  }
+
+  gRfidReady = true;
+  clearRfidCardSnapshot("Ready: present card");
+  appendRuntimeLog("RFID", String("ready ") + rfidVersionName(gRfidVersionReg), true);
+}
+
+bool readRfidCardSnapshot() {
+  if (!gRfidReady) {
+    return false;
+  }
+  if (!gRfidReader.PICC_IsNewCardPresent()) {
+    return false;
+  }
+  if (!gRfidReader.PICC_ReadCardSerial()) {
+    gRfidStatus = "Card select failed";
+    return false;
+  }
+
+  String uid;
+  for (byte i = 0; i < gRfidReader.uid.size; ++i) {
+    if (i > 0) {
+      uid += ":";
+    }
+    uid += rfidHexByte(gRfidReader.uid.uidByte[i]);
+  }
+  uint8_t piccType = gRfidReader.PICC_GetType(gRfidReader.uid.sak);
+  gRfidUid = uid;
+  gRfidUidSize = gRfidReader.uid.size;
+  gRfidSak = gRfidReader.uid.sak;
+  gRfidType = String(gRfidReader.PICC_GetTypeName(piccType));
+  gRfidStatus = "Card read; write disabled";
+  gRfidReader.PICC_HaltA();
+  gRfidReader.PCD_StopCrypto1();
+  appendRuntimeLog("RFID", String("card type=") + gRfidType + " uid_bytes=" + String(gRfidUidSize), false);
+  return true;
+}
+
+void serviceRfidLab() {
+  if (gUiMode != UiMode::RfidLab) {
+    return;
+  }
+  if (!gRfidReady) {
+    initRfidLab(false);
+    return;
+  }
+  uint32_t now = millis();
+  if (now - gRfidLastPollMs < kRfidPollIntervalMs) {
+    return;
+  }
+  gRfidLastPollMs = now;
+  if (readRfidCardSnapshot()) {
+    setStatus("RFID card read", 900);
+  }
+}
+
+bool handleRfidLabKey(char key, const Keyboard_Class::KeysState& keys) {
+  (void)keys;
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'r') {
+    gRfidReady = false;
+    initRfidLab(true);
+    setStatus(gRfidReady ? "RFID reconnected" : "RFID not found", 900);
+    return true;
+  }
+  if (lowerKey == 'c') {
+    clearRfidCardSnapshot(gRfidReady ? "Ready: present card" : "No RFID unit at 0x28");
+    setStatus("RFID cleared", 700);
+    return true;
+  }
+  if (key == '?' || lowerKey == 'h') {
+    gRfidHelpVisible = !gRfidHelpVisible;
+    setStatus(gRfidHelpVisible ? "RFID wiring help" : "RFID scan", 700);
+    return true;
+  }
+  return true;
+}
+
 constexpr uint8_t kTetrisCols = 10;
 constexpr uint8_t kTetrisRows = 16;
 constexpr uint8_t kTetrisPieceCount = 7;

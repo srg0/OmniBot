@@ -1069,6 +1069,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/rfid" || cmd == "/rc522" || cmd == "/mfrc522" || cmd == "/nfc") {
+    setUiMode(UiMode::RfidLab);
+    return true;
+  }
+
   if (cmd == "/tetris" || cmd == "/game") {
     setUiMode(UiMode::Tetris);
     return true;

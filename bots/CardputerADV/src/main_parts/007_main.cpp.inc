@@ -42,6 +42,8 @@ const char* uiModeName(UiMode mode) {
       return "Stopwatch";
     case UiMode::Calendar:
       return "Calendar";
+    case UiMode::RfidLab:
+      return "RFID Lab";
     case UiMode::IrRemote:
       return "IR Remote";
     case UiMode::Tetris:

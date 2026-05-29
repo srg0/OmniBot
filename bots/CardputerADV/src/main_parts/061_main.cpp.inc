@@ -55,6 +55,9 @@
       case UiMode::Calendar:
         renderCalendarUi();
         break;
+      case UiMode::RfidLab:
+        renderRfidLabUi();
+        break;
       case UiMode::IrRemote:
         renderIrRemoteUi();
         break;
@@ -283,6 +286,7 @@ void loop() {
   if (gUiMode == UiMode::IrRemote || gIrRemoteLearning) {
     serviceIrRemote();
   }
+  serviceRfidLab();
   servicePet();
   processCompletedTopicTask();
   processCompletedTextTurn();

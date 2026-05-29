@@ -16,6 +16,7 @@
 #include <WiFiClient.h>
 #include <Wire.h>
 #include <Update.h>
+#include <MFRC522_I2C.h>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
@@ -52,7 +53,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.114-dev"
+#define APP_VERSION "0.2.115-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -66,10 +67,10 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.114-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02112";
+constexpr const char* kPostInstallStoryVersion = "0.2.115-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02115";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. Pomodoro meditation assets are syncing for Russian, English, and Spanish.";
+    "Firmware installed. RFID Lab is ready in Utilities. It reads card identifiers only; copy and write are disabled.";
 constexpr const char* kPomodoroAssetSyncVersion = "0.2.114-dev";
 constexpr const char* kPomodoroAssetSyncPrefsKey = "pomasset_02112";
 constexpr const char* kWsPath = "/ws/stream";
@@ -173,7 +174,7 @@ constexpr uint32_t kVoiceSocketSettleMs = 300;
 constexpr uint32_t kCtrlDoubleTapWindowMs = 420;
 constexpr uint32_t kLauncherToggleDebounceMs = 140;
 constexpr uint8_t kLauncherGroupCount = 8;
-constexpr uint8_t kLauncherMaxSubItems = 4;
+constexpr uint8_t kLauncherMaxSubItems = 5;
 constexpr uint8_t kDeviceSettingsItemCount = 7;
 constexpr uint8_t kFocusSettingsItemCount = 7;
 constexpr uint8_t kScreenSettingsItemCount = 8;
@@ -255,6 +256,13 @@ constexpr uint8_t kIrRemoteSlotCount = 6;
 constexpr uint32_t kIrLearnTimeoutMs = 15000;
 constexpr uint32_t kIrReceivePinProbeMs = 650;
 constexpr uint32_t kIrPersistMagic = 0x49523031;  // "IR01"
+constexpr uint8_t kRfidI2cAddr = 0x28;
+constexpr uint8_t kRfidSdaPin = 2;          // Cardputer HY2.0/Grove Port A: yellow G2 = SDA.
+constexpr uint8_t kRfidSclPin = 1;          // Cardputer HY2.0/Grove Port A: white G1 = SCL.
+constexpr int8_t kRfidResetPin = -1;        // M5Stack Unit RFID/RFID2 reset is not wired on Grove.
+constexpr uint32_t kRfidI2cHz = 400000;
+constexpr uint32_t kRfidPollIntervalMs = 350;
+constexpr uint32_t kRfidReconnectIntervalMs = 1500;
 constexpr const char* kFocusCuePath = "/pomodoro/audio/focus_ru.wav";
 constexpr const char* kBreakCuePath = "/pomodoro/audio/break_ru.wav";
 constexpr const char* kReflectionCuePath = "/pomodoro/audio/reflection_ru.wav";

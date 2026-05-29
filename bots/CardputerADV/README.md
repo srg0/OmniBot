@@ -72,8 +72,26 @@ Type these on the Cardputer and press `Enter`:
 - `/status`
 - `/btsetup`
 - `/clearwifi`
+- `/rfid` — open RFID Lab for a connected M5Stack Unit RFID/RFID2 / MFRC522 I2C reader
 
 `Tab` is a shortcut for `/help`.
+
+## RFID Lab wiring
+
+RFID Lab is intentionally read-only: it detects the reader and shows card UID,
+SAK, UID length, and PICC type. It does not copy hotel/access cards and does not
+write protected MIFARE sectors.
+
+Default supported module: M5Stack Unit RFID/RFID2 or compatible MFRC522 I2C unit
+at address `0x28` on the Cardputer HY2.0/Grove Port A:
+
+- red → 5V
+- black → GND
+- yellow/G2 → SDA, GPIO2
+- white/G1 → SCL, GPIO1
+
+Generic SPI RC522 boards are not enabled by this firmware profile; use an I2C
+Unit RFID/RFID2 adapter for the default Cardputer wiring.
 
 ## Voice Flow
 

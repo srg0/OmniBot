@@ -292,6 +292,9 @@ void setUiMode(UiMode mode) {
   if (modeChanged && (mode == UiMode::Settings || mode == UiMode::FocusSettings || mode == UiMode::ScreenSettings)) {
     gSelectedSetting = 0;
   }
+  if (mode == UiMode::RfidLab) {
+    initRfidLab(false);
+  }
   if (gLauncherSelection >= 0 && gLauncherSelection < kLauncherGroupCount &&
       gLauncherSubSelection >= 0 && gLauncherSubSelection < kLauncherGroups[gLauncherSelection].count &&
       kLauncherGroups[gLauncherSelection].items[gLauncherSubSelection].mode == mode) {

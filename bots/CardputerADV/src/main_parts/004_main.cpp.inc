@@ -108,8 +108,8 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}, {"Cimatrix", UiMode::CMatrix}}},
     {"Device", "DEV", "Power and settings", rgb565_local(203, 216, 226), 3,
      {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Display", UiMode::ScreenSettings}}},
-    {"Utilities", "UTIL", "Tools and games", rgb565_local(255, 150, 80), 4,
-     {{"Calculator", UiMode::Calculator}, {"IR Remote", UiMode::IrRemote}, {"Tetris", UiMode::Tetris}, {"Calendar", UiMode::Calendar}}},
+    {"Utilities", "UTIL", "Tools and games", rgb565_local(255, 150, 80), 5,
+     {{"Calculator", UiMode::Calculator}, {"RFID Lab", UiMode::RfidLab}, {"IR Remote", UiMode::IrRemote}, {"Tetris", UiMode::Tetris}, {"Calendar", UiMode::Calendar}}},
     {"Visuals", "C", "Ambient screen savers", rgb565_local(88, 240, 141), 2,
      {{"C-Matrix", UiMode::CMatrix}, {"Saver Setup", UiMode::ScreenSettings}}},
 };
@@ -122,6 +122,7 @@ WebServer gSetupServer(80);
 M5Canvas gCanvas(&M5Cardputer.Display);
 Adafruit_TCA8418 gTcaKeyboard;
 SPIClass gSdSpi(FSPI);
+MFRC522_I2C gRfidReader(kRfidI2cAddr, static_cast<byte>(kRfidResetPin), &Wire);
 
 String gDeviceId;
 String gDisplayName = kDefaultDisplayName;
@@ -145,6 +146,9 @@ String gCalcExpression;
 String gCalcResult = "0";
 String gCalcStatus = "Ready";
 String gIrRemoteStatus = "IR idle";
+String gRfidStatus = "RFID idle";
+String gRfidUid = "-";
+String gRfidType = "-";
 String gStopwatchStatus = "Ready";
 String gTetrisStatus = "Ready";
 String gAlarmStatus = "Ready";
@@ -265,10 +269,18 @@ bool gAlarmRinging = false;
 bool gIrRemoteReady = false;
 bool gIrRemoteLearning = false;
 bool gIrRemoteAutoLearning = false;
+bool gRfidWireReady = false;
+bool gRfidReady = false;
+bool gRfidHelpVisible = false;
 uint32_t gAlarmTriggeredAtMs = 0;
 uint32_t gAlarmNextBeepMs = 0;
 uint32_t gIrRemoteLearnStartedMs = 0;
 uint32_t gIrLastReceivePinProbeMs = 0;
+uint32_t gRfidLastPollMs = 0;
+uint32_t gRfidLastInitMs = 0;
+uint8_t gRfidVersionReg = 0;
+uint8_t gRfidUidSize = 0;
+uint8_t gRfidSak = 0;
 uint8_t gIrReceivePinIndex = 0;
 time_t gAlarmSnoozeEpoch = 0;
 int16_t gAlarmLastTriggerYear = -1;

@@ -151,6 +151,81 @@ void renderCalculatorUi() {
   renderDebugOverlay();
 }
 
+void renderRfidLabUi() {
+  initRfidLab(false);
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 12, 22);
+  const uint16_t panel = rgb565_local(6, 22, 34);
+  const uint16_t panel2 = rgb565_local(10, 33, 48);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(255, 194, 74);
+  const uint16_t red = rgb565_local(255, 110, 92);
+  const uint16_t muted = rgb565_local(156, 185, 203);
+  const uint16_t accent = gRfidReady ? green : red;
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, accent);
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(16, 13);
+  d.print("RFID LAB");
+  d.setFont(&fonts::Font0);
+  String addr = String("I2C 0x") + rfidHexByte(kRfidI2cAddr);
+  d.setTextColor(muted, panel);
+  d.setCursor(224 - d.textWidth(addr), 17);
+  d.print(addr);
+
+  d.fillRoundRect(14, 31, 212, 22, 7, panel2);
+  d.setTextColor(accent, panel2);
+  d.setCursor(20, 36);
+  d.print(fitCurrentFontToWidth(gRfidStatus, 198));
+
+  d.fillRoundRect(14, 58, 212, 34, 8, rgb565_local(2, 18, 28));
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, rgb565_local(2, 18, 28));
+  d.setCursor(21, 63);
+  d.print("UID");
+  d.setTextColor(TFT_WHITE, rgb565_local(2, 18, 28));
+  d.setCursor(47, 63);
+  d.print(fitCurrentFontToWidth(gRfidUid, 170));
+  d.setTextColor(muted, rgb565_local(2, 18, 28));
+  d.setCursor(21, 78);
+  d.print("TYPE");
+  d.setTextColor(green, rgb565_local(2, 18, 28));
+  d.setCursor(52, 78);
+  d.print(fitCurrentFontToWidth(gRfidType, 122));
+  String meta = String(gRfidUidSize) + "B SAK " + rfidHexByte(gRfidSak);
+  d.setTextColor(amber, rgb565_local(2, 18, 28));
+  d.setCursor(221 - d.textWidth(meta), 78);
+  d.print(meta);
+
+  if (gRfidHelpVisible) {
+    d.setTextColor(TFT_LIGHTGREY, panel);
+    d.setCursor(17, 98);
+    d.print("Port A: red 5V, black GND");
+    d.setCursor(17, 110);
+    d.print("yellow SDA=G2, white SCL=G1");
+  } else {
+    String version = rfidVersionName(gRfidVersionReg);
+    d.setTextColor(muted, panel);
+    d.setCursor(17, 98);
+    d.print(fitCurrentFontToWidth(version, 125));
+    d.setTextColor(amber, panel);
+    d.setCursor(145, 98);
+    d.print("read-only");
+    d.setTextColor(TFT_LIGHTGREY, panel);
+    d.setCursor(17, 112);
+    d.print("R reconnect  C clear  ? wiring");
+  }
+  d.setFont(&fonts::Font2);
+
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 void resetCMatrixColumns() {
   for (uint8_t col = 0; col < kCMatrixCols; ++col) {
     gCMatrixHead[col] = -static_cast<int8_t>(random(0, 18));
