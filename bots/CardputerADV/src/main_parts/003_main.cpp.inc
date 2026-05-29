@@ -138,6 +138,19 @@ struct AudioFolder {
   uint32_t totalBytes = 0;
 };
 
+struct RfidClassicDump {
+  bool valid = false;
+  uint8_t piccType = 0;
+  uint8_t uidSize = 0;
+  uint8_t sak = 0;
+  uint16_t blockCount = 0;
+  uint16_t readableBlocks = 0;
+  uint8_t uid[10] = {};
+  bool blockValid[kRfidDumpMaxBlocks] = {};
+  uint8_t data[kRfidDumpMaxBlocks][kRfidBlockBytes] = {};
+  String typeName;
+};
+
 struct AssetManifestSummary {
   bool present = false;
   bool parsed = false;

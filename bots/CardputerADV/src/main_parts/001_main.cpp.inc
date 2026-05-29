@@ -53,7 +53,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.115-dev"
+#define APP_VERSION "0.2.116-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -67,10 +67,10 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.115-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02115";
+constexpr const char* kPostInstallStoryVersion = "0.2.116-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02116";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. RFID Lab is ready in Utilities. It reads card identifiers only; copy and write are disabled.";
+    "Firmware installed. RFID Lab can copy authorized MIFARE Classic cards with default keys and write them to compatible blanks. Use D to copy and W to write.";
 constexpr const char* kPomodoroAssetSyncVersion = "0.2.114-dev";
 constexpr const char* kPomodoroAssetSyncPrefsKey = "pomasset_02112";
 constexpr const char* kWsPath = "/ws/stream";
@@ -263,6 +263,8 @@ constexpr int8_t kRfidResetPin = -1;        // M5Stack Unit RFID/RFID2 reset is 
 constexpr uint32_t kRfidI2cHz = 400000;
 constexpr uint32_t kRfidPollIntervalMs = 350;
 constexpr uint32_t kRfidReconnectIntervalMs = 1500;
+constexpr uint16_t kRfidDumpMaxBlocks = 256;
+constexpr uint8_t kRfidBlockBytes = 16;
 constexpr const char* kFocusCuePath = "/pomodoro/audio/focus_ru.wav";
 constexpr const char* kBreakCuePath = "/pomodoro/audio/break_ru.wav";
 constexpr const char* kReflectionCuePath = "/pomodoro/audio/reflection_ru.wav";

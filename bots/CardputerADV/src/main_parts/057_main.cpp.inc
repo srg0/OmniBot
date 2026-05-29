@@ -212,13 +212,13 @@ void renderRfidLabUi() {
     String version = rfidVersionName(gRfidVersionReg);
     d.setTextColor(muted, panel);
     d.setCursor(17, 98);
-    d.print(fitCurrentFontToWidth(version, 125));
+    d.print(fitCurrentFontToWidth(version, 98));
     d.setTextColor(amber, panel);
-    d.setCursor(145, 98);
-    d.print("read-only");
+    d.setCursor(118, 98);
+    d.print(fitCurrentFontToWidth(gRfidCopyStatus, 105));
     d.setTextColor(TFT_LIGHTGREY, panel);
     d.setCursor(17, 112);
-    d.print("R reconnect  C clear  ? wiring");
+    d.print("D copy  W write  R/C/?");
   }
   d.setFont(&fonts::Font2);
 
