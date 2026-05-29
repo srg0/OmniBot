@@ -173,7 +173,7 @@ void renderRfidLabUi() {
   d.setCursor(16, 13);
   d.print("RFID LAB");
   d.setFont(&fonts::Font0);
-  String addr = String("I2C 0x") + rfidHexByte(kRfidI2cAddr);
+  String addr = "SPI CS G5";
   d.setTextColor(muted, panel);
   d.setCursor(224 - d.textWidth(addr), 17);
   d.print(addr);
@@ -205,9 +205,9 @@ void renderRfidLabUi() {
   if (gRfidHelpVisible) {
     d.setTextColor(TFT_LIGHTGREY, panel);
     d.setCursor(17, 98);
-    d.print("Port A: red 5V, black GND");
+    d.print("RC522: 3.3V only, GND=GND");
     d.setCursor(17, 110);
-    d.print("yellow SDA=G2, white SCL=G1");
+    d.print("SCK40 MOSI14 MISO39 CS5 RST3");
   } else {
     String version = rfidVersionName(gRfidVersionReg);
     d.setTextColor(muted, panel);

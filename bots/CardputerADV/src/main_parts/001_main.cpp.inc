@@ -16,7 +16,7 @@
 #include <WiFiClient.h>
 #include <Wire.h>
 #include <Update.h>
-#include <MFRC522_I2C.h>
+#include <MFRC522.h>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
@@ -53,7 +53,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.116-dev"
+#define APP_VERSION "0.2.117-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -67,10 +67,10 @@ constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 constexpr const char* kAppVersion = APP_VERSION;
 constexpr const char* kBuildGitSha = BUILD_GIT_SHA;
 constexpr const char* kBuildTime = BUILD_TIME;
-constexpr const char* kPostInstallStoryVersion = "0.2.116-dev";
-constexpr const char* kPostInstallStoryPrefsKey = "story_02116";
+constexpr const char* kPostInstallStoryVersion = "0.2.117-dev";
+constexpr const char* kPostInstallStoryPrefsKey = "story_02117";
 constexpr const char* kPostInstallStoryText =
-    "Firmware installed. RFID Lab can copy authorized MIFARE Classic cards with default keys and write them to compatible blanks. Use D to copy and W to write.";
+    "Firmware installed. RFID Lab now targets the 8-pin SPI RFID-RC522 module on the EXT header. Use D to copy and W to write.";
 constexpr const char* kPomodoroAssetSyncVersion = "0.2.114-dev";
 constexpr const char* kPomodoroAssetSyncPrefsKey = "pomasset_02112";
 constexpr const char* kWsPath = "/ws/stream";
@@ -256,11 +256,11 @@ constexpr uint8_t kIrRemoteSlotCount = 6;
 constexpr uint32_t kIrLearnTimeoutMs = 15000;
 constexpr uint32_t kIrReceivePinProbeMs = 650;
 constexpr uint32_t kIrPersistMagic = 0x49523031;  // "IR01"
-constexpr uint8_t kRfidI2cAddr = 0x28;
-constexpr uint8_t kRfidSdaPin = 2;          // Cardputer HY2.0/Grove Port A: yellow G2 = SDA.
-constexpr uint8_t kRfidSclPin = 1;          // Cardputer HY2.0/Grove Port A: white G1 = SCL.
-constexpr int8_t kRfidResetPin = -1;        // M5Stack Unit RFID/RFID2 reset is not wired on Grove.
-constexpr uint32_t kRfidI2cHz = 400000;
+constexpr uint8_t kRfidSckPin = 40;         // Cardputer ADV EXT: G40/SCK -> RC522 SCK.
+constexpr uint8_t kRfidMosiPin = 14;        // Cardputer ADV EXT: G14/MOSI -> RC522 MOSI.
+constexpr uint8_t kRfidMisoPin = 39;        // Cardputer ADV EXT: G39/MISO -> RC522 MISO.
+constexpr uint8_t kRfidCsPin = 5;           // Cardputer ADV EXT: G5/CS -> RC522 SDA/SS.
+constexpr uint8_t kRfidResetPin = 3;        // Cardputer ADV EXT: G3 -> RC522 RST.
 constexpr uint32_t kRfidPollIntervalMs = 350;
 constexpr uint32_t kRfidReconnectIntervalMs = 1500;
 constexpr uint16_t kRfidDumpMaxBlocks = 256;

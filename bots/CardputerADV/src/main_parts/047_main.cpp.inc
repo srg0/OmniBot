@@ -457,19 +457,19 @@ String rfidVersionName(uint8_t version) {
 }
 
 bool rfidIsClassicType(uint8_t piccType) {
-  return piccType == MFRC522_I2C::PICC_TYPE_MIFARE_MINI ||
-         piccType == MFRC522_I2C::PICC_TYPE_MIFARE_1K ||
-         piccType == MFRC522_I2C::PICC_TYPE_MIFARE_4K;
+  return piccType == MFRC522::PICC_TYPE_MIFARE_MINI ||
+         piccType == MFRC522::PICC_TYPE_MIFARE_1K ||
+         piccType == MFRC522::PICC_TYPE_MIFARE_4K;
 }
 
 uint16_t rfidClassicBlockCount(uint8_t piccType) {
-  if (piccType == MFRC522_I2C::PICC_TYPE_MIFARE_MINI) {
+  if (piccType == MFRC522::PICC_TYPE_MIFARE_MINI) {
     return 20;
   }
-  if (piccType == MFRC522_I2C::PICC_TYPE_MIFARE_1K) {
+  if (piccType == MFRC522::PICC_TYPE_MIFARE_1K) {
     return 64;
   }
-  if (piccType == MFRC522_I2C::PICC_TYPE_MIFARE_4K) {
+  if (piccType == MFRC522::PICC_TYPE_MIFARE_4K) {
     return 256;
   }
   return 0;
@@ -489,8 +489,8 @@ bool rfidIsSectorTrailer(uint16_t blockAddr) {
   return ((blockAddr - 128) % 16) == 15;
 }
 
-void rfidDefaultKey(MFRC522_I2C::MIFARE_Key& key) {
-  for (uint8_t i = 0; i < MFRC522_I2C::MF_KEY_SIZE; ++i) {
+void rfidDefaultKey(MFRC522::MIFARE_Key& key) {
+  for (uint8_t i = 0; i < MFRC522::MF_KEY_SIZE; ++i) {
     key.keyByte[i] = 0xFF;
   }
 }
@@ -530,7 +530,7 @@ bool rfidSelectPresentedCard(String& error) {
   byte atqa[2];
   byte atqaSize = sizeof(atqa);
   byte wake = gRfidReader.PICC_WakeupA(atqa, &atqaSize);
-  if (wake != MFRC522_I2C::STATUS_OK && wake != MFRC522_I2C::STATUS_COLLISION) {
+  if (wake != MFRC522::STATUS_OK && wake != MFRC522::STATUS_COLLISION) {
     if (!gRfidReader.PICC_IsNewCardPresent()) {
       error = "Present card";
       return false;
@@ -548,7 +548,7 @@ void updateRfidSnapshotFromSelectedCard(uint8_t piccType, const String& statusTe
   gRfidUid = rfidUidString(gRfidReader.uid.uidByte, gRfidReader.uid.size);
   gRfidUidSize = gRfidReader.uid.size;
   gRfidSak = gRfidReader.uid.sak;
-  gRfidType = String(gRfidReader.PICC_GetTypeName(piccType));
+  gRfidType = String(gRfidReader.PICC_GetTypeName(static_cast<MFRC522::PICC_Type>(piccType)));
   gRfidStatus = statusText;
 }
 
@@ -575,10 +575,10 @@ bool copyRfidClassicDump() {
   gRfidDump.uidSize = min<uint8_t>(gRfidReader.uid.size, sizeof(gRfidDump.uid));
   gRfidDump.sak = gRfidReader.uid.sak;
   gRfidDump.blockCount = rfidClassicBlockCount(piccType);
-  gRfidDump.typeName = String(gRfidReader.PICC_GetTypeName(piccType));
+  gRfidDump.typeName = String(gRfidReader.PICC_GetTypeName(static_cast<MFRC522::PICC_Type>(piccType)));
   memcpy(gRfidDump.uid, gRfidReader.uid.uidByte, gRfidDump.uidSize);
 
-  MFRC522_I2C::MIFARE_Key key;
+  MFRC522::MIFARE_Key key;
   rfidDefaultKey(key);
   uint16_t readBlocks = 0;
   uint16_t failedBlocks = 0;
@@ -586,9 +586,9 @@ bool copyRfidClassicDump() {
 
   for (uint16_t firstBlock = 0; firstBlock < gRfidDump.blockCount; firstBlock = rfidNextSectorFirstBlock(firstBlock)) {
     uint16_t nextFirst = min<uint16_t>(rfidNextSectorFirstBlock(firstBlock), gRfidDump.blockCount);
-    byte auth = gRfidReader.PCD_Authenticate(MFRC522_I2C::PICC_CMD_MF_AUTH_KEY_A,
+    byte auth = gRfidReader.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A,
                                              static_cast<byte>(firstBlock), &key, &gRfidReader.uid);
-    if (auth != MFRC522_I2C::STATUS_OK) {
+    if (auth != MFRC522::STATUS_OK) {
       failedBlocks = static_cast<uint16_t>(failedBlocks + (nextFirst - firstBlock));
       gRfidReader.PCD_StopCrypto1();
       continue;
@@ -597,7 +597,7 @@ bool copyRfidClassicDump() {
     for (uint16_t block = firstBlock; block < nextFirst; ++block) {
       byte size = sizeof(buffer);
       byte status = gRfidReader.MIFARE_Read(static_cast<byte>(block), buffer, &size);
-      if (status == MFRC522_I2C::STATUS_OK && size >= kRfidBlockBytes) {
+      if (status == MFRC522::STATUS_OK && size >= kRfidBlockBytes) {
         memcpy(gRfidDump.data[block], buffer, kRfidBlockBytes);
         gRfidDump.blockValid[block] = true;
         ++readBlocks;
@@ -656,7 +656,7 @@ bool writeRfidClassicDumpToTarget() {
     return false;
   }
 
-  MFRC522_I2C::MIFARE_Key key;
+  MFRC522::MIFARE_Key key;
   rfidDefaultKey(key);
   uint16_t writtenBlocks = 0;
   uint16_t skippedBlocks = 0;
@@ -664,9 +664,9 @@ bool writeRfidClassicDumpToTarget() {
 
   for (uint16_t firstBlock = 0; firstBlock < gRfidDump.blockCount; firstBlock = rfidNextSectorFirstBlock(firstBlock)) {
     uint16_t nextFirst = min<uint16_t>(rfidNextSectorFirstBlock(firstBlock), gRfidDump.blockCount);
-    byte auth = gRfidReader.PCD_Authenticate(MFRC522_I2C::PICC_CMD_MF_AUTH_KEY_A,
+    byte auth = gRfidReader.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A,
                                              static_cast<byte>(firstBlock), &key, &gRfidReader.uid);
-    if (auth != MFRC522_I2C::STATUS_OK) {
+    if (auth != MFRC522::STATUS_OK) {
       failedBlocks = static_cast<uint16_t>(failedBlocks + (nextFirst - firstBlock));
       gRfidReader.PCD_StopCrypto1();
       continue;
@@ -682,7 +682,7 @@ bool writeRfidClassicDumpToTarget() {
         continue;
       }
       byte status = gRfidReader.MIFARE_Write(static_cast<byte>(block), gRfidDump.data[block], kRfidBlockBytes);
-      if (status == MFRC522_I2C::STATUS_OK) {
+      if (status == MFRC522::STATUS_OK) {
         ++writtenBlocks;
       } else {
         ++failedBlocks;
@@ -717,14 +717,6 @@ bool writeRfidClassicDumpToTarget() {
   return writtenBlocks > 0 && failedBlocks == 0;
 }
 
-bool rfidI2cAddressPresent() {
-  if (!gRfidWireReady) {
-    return false;
-  }
-  Wire.beginTransmission(kRfidI2cAddr);
-  return Wire.endTransmission() == 0;
-}
-
 void clearRfidCardSnapshot(const String& statusText = "Ready: present card") {
   gRfidUid = "-";
   gRfidType = "-";
@@ -742,31 +734,26 @@ void initRfidLab(bool force) {
     return;
   }
   gRfidLastInitMs = now;
-  Wire.begin(kRfidSdaPin, kRfidSclPin);
-  Wire.setClock(kRfidI2cHz);
-  Wire.setTimeOut(50);
-  gRfidWireReady = true;
-
-  if (!rfidI2cAddressPresent()) {
-    gRfidReady = false;
-    gRfidVersionReg = 0;
-    clearRfidCardSnapshot("No RFID unit at 0x28");
-    return;
-  }
+  pinMode(kSdCsPin, OUTPUT);
+  digitalWrite(kSdCsPin, HIGH);
+  pinMode(kRfidCsPin, OUTPUT);
+  digitalWrite(kRfidCsPin, HIGH);
+  SPI.begin(kRfidSckPin, kRfidMisoPin, kRfidMosiPin, kRfidCsPin);
+  gRfidBusReady = true;
 
   gRfidReader.PCD_Init();
   delay(8);
-  gRfidVersionReg = gRfidReader.PCD_ReadRegister(MFRC522_I2C::VersionReg);
+  gRfidVersionReg = gRfidReader.PCD_ReadRegister(MFRC522::VersionReg);
   if (gRfidVersionReg == 0x00 || gRfidVersionReg == 0xFF) {
     gRfidReady = false;
-    clearRfidCardSnapshot("RFID chip not responding");
-    appendRuntimeLog("RFID", "unit addr ack but chip version invalid", true);
+    clearRfidCardSnapshot("RC522 not responding");
+    appendRuntimeLog("RFID", "SPI RC522 version invalid", true);
     return;
   }
 
   gRfidReady = true;
   clearRfidCardSnapshot("Ready: present card");
-  appendRuntimeLog("RFID", String("ready ") + rfidVersionName(gRfidVersionReg), true);
+  appendRuntimeLog("RFID", String("SPI ready ") + rfidVersionName(gRfidVersionReg), true);
 }
 
 bool readRfidCardSnapshot() {
@@ -817,7 +804,7 @@ bool handleRfidLabKey(char key, const Keyboard_Class::KeysState& keys) {
     return true;
   }
   if (lowerKey == 'c') {
-    clearRfidCardSnapshot(gRfidReady ? "Ready: present card" : "No RFID unit at 0x28");
+    clearRfidCardSnapshot(gRfidReady ? "Ready: present card" : "RC522 not responding");
     setStatus("RFID cleared", 700);
     return true;
   }

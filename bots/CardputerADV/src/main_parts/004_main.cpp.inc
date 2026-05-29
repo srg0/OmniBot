@@ -122,7 +122,7 @@ WebServer gSetupServer(80);
 M5Canvas gCanvas(&M5Cardputer.Display);
 Adafruit_TCA8418 gTcaKeyboard;
 SPIClass gSdSpi(FSPI);
-MFRC522_I2C gRfidReader(kRfidI2cAddr, static_cast<byte>(kRfidResetPin), &Wire);
+MFRC522 gRfidReader(kRfidCsPin, kRfidResetPin);
 
 String gDeviceId;
 String gDisplayName = kDefaultDisplayName;
@@ -271,7 +271,7 @@ bool gAlarmRinging = false;
 bool gIrRemoteReady = false;
 bool gIrRemoteLearning = false;
 bool gIrRemoteAutoLearning = false;
-bool gRfidWireReady = false;
+bool gRfidBusReady = false;
 bool gRfidReady = false;
 bool gRfidHelpVisible = false;
 uint32_t gAlarmTriggeredAtMs = 0;
