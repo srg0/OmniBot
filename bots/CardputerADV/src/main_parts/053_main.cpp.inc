@@ -1,67 +1,71 @@
-  d.setFont(&fonts::Font7);
-  d.setTextColor(TFT_WHITE, 0x0841);
-  if (levelKnown) {
-    d.setCursor(166, 22);
-    d.print(String(level));
-    d.setFont(&fonts::Font4);
-    d.setCursor(208, 36);
-    d.print("%");
-  } else {
-    d.setCursor(166, 25);
-    d.print("--");
-  }
-
-  d.setFont(&fonts::Font2);
-  d.setTextColor(TFT_CYAN, 0x0841);
-  d.setCursor(22, 70);
-  d.print("State");
-  d.setCursor(92, 70);
-  d.setTextColor(TFT_WHITE, 0x0841);
-  d.print(batteryChargeLabel(gBatterySnapshot.charging));
+  d.setFont(&fonts::Font4);
+  d.setCursor(levelKnown && level < 100 ? 73 : 90, 45);
+  d.print("%");
   if (gBatterySnapshot.levelEstimated) {
-    d.print(" est");
+    d.setFont(&fonts::Font0);
+    d.setTextColor(rgb565_local(246, 194, 74), panel);
+    d.setCursor(18, 72);
+    d.print("voltage-est");
   }
 
-  d.setTextColor(TFT_CYAN, 0x0841);
-  d.setCursor(22, 84);
-  d.print("Voltage");
-  d.setCursor(92, 84);
-  d.setTextColor(TFT_WHITE, 0x0841);
-  if (gBatterySnapshot.voltageMv > 0) {
-    d.print(String(gBatterySnapshot.voltageMv / 1000.0f, 2) + "V");
-  } else {
-    d.print("--");
-  }
-
-  d.setTextColor(TFT_CYAN, 0x0841);
-  d.setCursor(22, 98);
-  d.print("Current");
-  d.setCursor(92, 98);
-  d.setTextColor(TFT_WHITE, 0x0841);
-  d.print(String(gBatterySnapshot.currentMa) + "mA");
+  int16_t barX = 16;
+  int16_t barY = 82;
+  int16_t barW = 84;
+  int16_t barH = 10;
+  int16_t fillW = levelKnown ? ((barW - 6) * level) / 100 : 0;
+  d.drawRoundRect(barX, barY, barW, barH, 4, rgb565_local(76, 89, 98));
+  d.fillRect(barX + barW, barY + 3, 4, 4, rgb565_local(76, 89, 98));
+  d.fillRoundRect(barX + 3, barY + 3, max<int16_t>(0, fillW), barH - 6, 3, barColor);
 
   d.setFont(&fonts::Font0);
-  d.setTextColor(TFT_CYAN, 0x0841);
-  d.setCursor(22, 113);
-  d.print("Storage");
-  d.setCursor(92, 113);
-  d.setTextColor(TFT_WHITE, 0x0841);
-  if (gStorageReady) {
-    uint64_t totalKb = activeStorageTotalBytes() / 1024ULL;
-    uint64_t usedKb = activeStorageUsedBytes() / 1024ULL;
-    String unit = "KB";
-    uint64_t totalShown = totalKb;
-    uint64_t usedShown = usedKb;
-    if (totalKb > 1024ULL * 10ULL) {
-      unit = "MB";
-      totalShown = totalKb / 1024ULL;
-      usedShown = usedKb / 1024ULL;
-    }
-    d.print(gStorageLabel + " " + String(static_cast<unsigned long>(usedShown)) + "/" +
-            String(static_cast<unsigned long>(totalShown)) + unit);
+  d.setTextColor(muted, panel);
+  d.setCursor(116, 18);
+  d.print("state");
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(158, 18);
+  d.print(fitCurrentFontToWidth(batteryChargeLabel(gBatterySnapshot.charging), 62));
+
+  d.setTextColor(muted, panel);
+  d.setCursor(116, 31);
+  d.print("volt");
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(158, 31);
+  d.print(gBatterySnapshot.voltageMv > 0 ? String(gBatterySnapshot.voltageMv / 1000.0f, 2) + "V" : "--");
+
+  d.setTextColor(muted, panel);
+  d.setCursor(116, 44);
+  d.print("drain");
+  d.setTextColor(gBatteryDrainKnown ? rgb565_local(255, 194, 74) : muted, panel);
+  d.setCursor(158, 44);
+  if (batteryExternalPowerPresent()) {
+    d.print("plug");
+  } else if (gBatteryDrainKnown && gBatteryDrainPctPerHour > 0.05f) {
+    d.print("-" + String(gBatteryDrainPctPerHour, 1) + "%/h");
+  } else if (gBatteryDrainKnown && gBatteryDrainMvPerHour > 0) {
+    d.print("-" + String(gBatteryDrainMvPerHour) + "mV/h");
   } else {
-    d.print("off");
+    d.print("wait");
   }
+
+  d.setTextColor(muted, panel);
+  d.setCursor(116, 57);
+  d.print("eta");
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(158, 57);
+  d.print(batteryEtaText());
+
+  d.setTextColor(muted, panel);
+  d.setCursor(116, 70);
+  d.print("sensor");
+  d.setTextColor(gBatterySnapshot.currentMa == 0 ? muted : TFT_WHITE, panel);
+  d.setCursor(158, 70);
+  d.print(String(gBatterySnapshot.currentMa) + "mA");
+
+  drawBatteryHistoryGraph(14, 98, 212, 24, panel);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(20, 124);
+  d.print(fitCurrentFontToWidth(gBatteryDrainKnown ? "30s samples, 5m trend window" : "open Battery and leave it running", 198));
   d.setFont(&fonts::Font2);
 
   renderLauncherOverlay();

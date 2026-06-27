@@ -53,7 +53,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.117-dev"
+#define APP_VERSION "0.2.118-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -190,6 +190,9 @@ constexpr uint8_t kHidKeyEscape = 0x29;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr uint32_t kClockTickMs = 1000;
 constexpr uint32_t kBatterySampleIntervalMs = 2000;
+constexpr uint32_t kBatteryHistorySampleIntervalMs = 30000;
+constexpr uint32_t kBatteryDrainMinWindowMs = 5UL * 60UL * 1000UL;
+constexpr uint8_t kBatteryHistoryCapacity = 120;
 constexpr uint32_t kInboxAutoPollIntervalMs = 15000;
 constexpr uint32_t kTimeSyncRetryMs = 15000;
 constexpr uint32_t kTimeResyncMs = 6UL * 60UL * 60UL * 1000UL;
@@ -319,6 +322,22 @@ constexpr uint16_t rgb565_local(uint8_t r, uint8_t g, uint8_t b) {
 
 #ifndef DEFAULT_WIFI_PASSWORD
 #define DEFAULT_WIFI_PASSWORD ""
+#endif
+
+#ifndef TEMP_MIDA_CAPTIVE_AUTOCONNECT
+#define TEMP_MIDA_CAPTIVE_AUTOCONNECT 0
+#endif
+
+#ifndef TEMP_MIDA_WIFI_SSID
+#define TEMP_MIDA_WIFI_SSID "MIDA GUEST"
+#endif
+
+#ifndef TEMP_MIDA_CAPTIVE_LOGIN_URL
+#define TEMP_MIDA_CAPTIVE_LOGIN_URL "http://172.16.16.1/login?dst=http%3A%2F%2F172.16.17.1%2F&username=T-{mac_url}"
+#endif
+
+#ifndef TEMP_MIDA_CAPTIVE_PROBE_URL
+#define TEMP_MIDA_CAPTIVE_PROBE_URL "http://connectivitycheck.gstatic.com/generate_204"
 #endif
 
 #ifndef DEFAULT_HUB_HOST
