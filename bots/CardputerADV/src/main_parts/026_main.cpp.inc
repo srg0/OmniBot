@@ -120,6 +120,9 @@ void applyCompileTimeDefaults() {
   if (gWifiPassword.isEmpty() && strlen(DEFAULT_WIFI_PASSWORD) > 0) {
     gWifiPassword = DEFAULT_WIFI_PASSWORD;
   }
+  if (gWifiSsid.isEmpty()) {
+    activateTemporaryMidaWifi("missing-credentials");
+  }
   if (gHubHost.isEmpty() && strlen(DEFAULT_HUB_HOST) > 0) {
     gHubHost = DEFAULT_HUB_HOST;
   }

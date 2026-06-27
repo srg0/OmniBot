@@ -123,6 +123,30 @@ uint16_t compileTimeHubPort() {
   return static_cast<uint16_t>(parsed);
 }
 
+bool temporaryMidaCaptiveEnabled() {
+  return TEMP_MIDA_CAPTIVE_AUTOCONNECT && strlen(TEMP_MIDA_WIFI_SSID) > 0 &&
+         strlen(TEMP_MIDA_CAPTIVE_LOGIN_URL) > 0;
+}
+
+bool usingTemporaryMidaWifi() {
+  if (!temporaryMidaCaptiveEnabled()) {
+    return false;
+  }
+  String active = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "";
+  return gWifiSsid == TEMP_MIDA_WIFI_SSID || active == TEMP_MIDA_WIFI_SSID;
+}
+
+bool activateTemporaryMidaWifi(const char* reason) {
+  if (!temporaryMidaCaptiveEnabled() || gWifiSsid == TEMP_MIDA_WIFI_SSID) {
+    return false;
+  }
+  gWifiSsid = TEMP_MIDA_WIFI_SSID;
+  gWifiPassword = "";
+  appendRuntimeLog("WIFI", String("temporary MIDA fallback ") + (reason ? reason : "wifi"), true);
+  logf("[WIFI] temporary MIDA fallback reason=%s", reason ? reason : "wifi");
+  return true;
+}
+
 bool isLocalOrPrivateBridgeHost(const String& host) {
   if (host == "localhost" || host == "127.0.0.1" || host.startsWith("192.168.") || host.startsWith("10.")) {
     return true;

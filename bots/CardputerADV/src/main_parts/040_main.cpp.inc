@@ -214,28 +214,121 @@ void serviceSetupPortal() {
   gSetupServer.handleClient();
 }
 
+String captivePortalTemplateValue(const String& templ) {
+  String mac = WiFi.macAddress();
+  mac.toUpperCase();
+  String macUrl = mac;
+  macUrl.replace(":", "%3A");
+  String macPlain = mac;
+  macPlain.replace(":", "");
+
+  String out = templ;
+  out.replace("{mac_url}", macUrl);
+  out.replace("{mac_plain}", macPlain);
+  out.replace("{mac}", mac);
+  return out;
+}
+
+int captivePortalHttpGet(const String& url) {
+  WiFiClient client;
+  HTTPClient http;
+  http.setTimeout(8000);
+  http.setReuse(false);
+  if (!http.begin(client, url)) {
+    return -1000;
+  }
+  http.addHeader("User-Agent", "Mozilla/5.0 CardputerADV");
+  int code = http.GET();
+  http.end();
+  return code;
+}
+
+bool captivePortalProbeOk() {
+  if (!usingTemporaryMidaWifi() || strlen(TEMP_MIDA_CAPTIVE_PROBE_URL) == 0) {
+    return true;
+  }
+  String probeUrl = captivePortalTemplateValue(TEMP_MIDA_CAPTIVE_PROBE_URL);
+  int code = captivePortalHttpGet(probeUrl);
+  bool expect204 = probeUrl.indexOf("generate_204") >= 0;
+  bool ok = expect204 ? code == 204 : (code >= 200 && code < 300);
+  logf("[WIFI] captive probe code=%d ok=%d", code, ok ? 1 : 0);
+  return ok;
+}
+
+bool ensureCaptivePortalAccess(bool force, const char* reason) {
+  if (!usingTemporaryMidaWifi()) {
+    return true;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+
+  uint32_t now = millis();
+  constexpr uint32_t kCaptivePortalRefreshMs = 20UL * 60UL * 1000UL;
+  constexpr uint32_t kCaptivePortalMinRetryMs = 30UL * 1000UL;
+  if (!force && gCaptivePortalLastOkMs != 0 && now - gCaptivePortalLastOkMs < kCaptivePortalRefreshMs) {
+    return true;
+  }
+  if (!force && gCaptivePortalLastAttemptMs != 0 && now - gCaptivePortalLastAttemptMs < kCaptivePortalMinRetryMs) {
+    return true;
+  }
+
+  gCaptivePortalLastAttemptMs = now;
+  setStatus("Accepting Wi-Fi portal", 900);
+  String loginUrl = captivePortalTemplateValue(TEMP_MIDA_CAPTIVE_LOGIN_URL);
+  int loginCode = captivePortalHttpGet(loginUrl);
+  bool loginOk = loginCode >= 200 && loginCode < 400;
+  bool probeOk = loginOk && captivePortalProbeOk();
+  logf("[WIFI] captive login reason=%s code=%d ok=%d",
+       reason ? reason : "wifi", loginCode, probeOk ? 1 : 0);
+  if (probeOk) {
+    gCaptivePortalLastOkMs = millis();
+    appendRuntimeLog("WIFI", "temporary captive portal accepted", true);
+    return true;
+  }
+  appendRuntimeLog("WIFI", "temporary captive portal auth failed", true);
+  return false;
+}
+
+void beginWifiStationConnect(const char* statusText = "Connecting to Wi-Fi...") {
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  WiFi.disconnect(false, false);
+  delay(80);
+  WiFi.begin(gWifiSsid.c_str(), gWifiPassword.c_str());
+  setStatus(statusText, 900);
+}
+
+bool waitForWifiConnection(uint32_t timeoutMs) {
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
+    handleHostSerialInput();
+    delay(120);
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
 bool ensureWifi() {
+  if (gWifiSsid.isEmpty()) {
+    activateTemporaryMidaWifi("wifi-missing");
+  }
   if (gWifiSsid.isEmpty()) {
     pushError("Wi-Fi credentials are missing. Setup AP started.");
     startSetupPortal("wifi-missing");
     return false;
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.setAutoReconnect(true);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  esp_wifi_set_ps(WIFI_PS_NONE);
-  WiFi.begin(gWifiSsid.c_str(), gWifiPassword.c_str());
-  setStatus("Connecting to Wi-Fi...");
-
-  uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < kWifiConnectTimeoutMs) {
-    handleHostSerialInput();
-    delay(120);
+  beginWifiStationConnect("Connecting to Wi-Fi...");
+  bool connected = waitForWifiConnection(kWifiConnectTimeoutMs);
+  if (!connected && activateTemporaryMidaWifi("wifi-connect-failed")) {
+    beginWifiStationConnect("Trying MIDA Wi-Fi");
+    connected = waitForWifiConnection(kWifiConnectTimeoutMs);
   }
 
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!connected) {
     pushError("Wi-Fi connection failed. Setup AP started.");
     logf("[WIFI] connect failed ssid=%s", gWifiSsid.c_str());
     startSetupPortal("wifi-connect-failed");
@@ -246,11 +339,17 @@ bool ensureWifi() {
   setStatus("Wi-Fi connected", 1000);
   pushSystem("Wi-Fi connected: " + WiFi.localIP().toString());
   logf("[WIFI] connected ssid=%s ip=%s", gWifiSsid.c_str(), WiFi.localIP().toString().c_str());
+  if (!ensureCaptivePortalAccess(true, "wifi")) {
+    pushError("Wi-Fi portal auth failed");
+  }
   syncClockFromNtp(true);
   return true;
 }
 
 bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs) {
+  if (gWifiSsid.isEmpty()) {
+    activateTemporaryMidaWifi("http-missing-wifi");
+  }
   if (gWifiSsid.isEmpty() || gHubHost.isEmpty()) {
     gWifiReady = false;
     return false;
@@ -262,29 +361,24 @@ bool ensureWifiForHttp(const char* reason, uint32_t timeoutMs) {
     WiFi.setAutoReconnect(true);
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
     esp_wifi_set_ps(WIFI_PS_NONE);
-    return true;
+    return ensureCaptivePortalAccess(false, reason);
   }
 
   logf("[WIFI] reconnect for %s", reason ? reason : "http");
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.setAutoReconnect(true);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  esp_wifi_set_ps(WIFI_PS_NONE);
-  WiFi.disconnect(false, false);
-  delay(80);
-  WiFi.begin(gWifiSsid.c_str(), gWifiPassword.c_str());
-
-  uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
-    handleHostSerialInput();
-    delay(120);
+  beginWifiStationConnect("Reconnecting Wi-Fi");
+  bool connected = waitForWifiConnection(timeoutMs);
+  if (!connected && activateTemporaryMidaWifi("http-reconnect-failed")) {
+    beginWifiStationConnect("Trying MIDA Wi-Fi");
+    connected = waitForWifiConnection(timeoutMs);
   }
 
-  gWifiReady = WiFi.status() == WL_CONNECTED;
+  gWifiReady = connected;
   if (gWifiReady) {
     logf("[WIFI] reconnect ok reason=%s ip=%s", reason ? reason : "http",
          WiFi.localIP().toString().c_str());
+    if (!ensureCaptivePortalAccess(true, reason)) {
+      pushError("Wi-Fi portal auth failed");
+    }
   } else {
     logf("[WIFI] reconnect failed reason=%s", reason ? reason : "http");
   }
@@ -365,6 +459,9 @@ void beginDeferredWifi() {
   gBootWifiStarted = true;
   gBootWifiStartMs = millis();
   if (gWifiSsid.isEmpty()) {
+    activateTemporaryMidaWifi("deferred-wifi-missing");
+  }
+  if (gWifiSsid.isEmpty()) {
     pushError("Wi-Fi credentials are missing. Setup AP started.");
     startSetupPortal("deferred-wifi-missing");
     gBootBackgroundStep = 10;
@@ -420,10 +517,19 @@ void serviceDeferredBoot() {
         setStatus("Wi-Fi connected", 1000);
         pushSystem("Wi-Fi connected: " + WiFi.localIP().toString());
         logf("[WIFI] connected ssid=%s ip=%s", gWifiSsid.c_str(), WiFi.localIP().toString().c_str());
+        if (!ensureCaptivePortalAccess(true, "deferred-wifi")) {
+          pushError("Wi-Fi portal auth failed");
+        }
         syncClockFromNtp(true);
         gBootBackgroundStep = 8;
         gBootStepStartedMs = millis();
       } else if (gBootWifiStarted && millis() - gBootWifiStartMs >= kWifiConnectTimeoutMs) {
+        if (activateTemporaryMidaWifi("deferred-connect-failed")) {
+          beginDeferredWifi();
+          gBootBackgroundStep = 7;
+          gBootStepStartedMs = millis();
+          break;
+        }
         pushError("Wi-Fi connection failed. Setup AP started.");
         logf("[WIFI] deferred connect failed ssid=%s", gWifiSsid.c_str());
         startSetupPortal("deferred-wifi-failed");

@@ -195,6 +195,13 @@ struct BatterySnapshot {
   bool levelEstimated = false;
 };
 
+struct BatteryHistorySample {
+  uint32_t ms = 0;
+  int16_t level = -1;
+  int16_t voltageMv = -1;
+  bool externalPower = false;
+};
+
 struct TextTurnTaskPayload {
   String text;
   String url;

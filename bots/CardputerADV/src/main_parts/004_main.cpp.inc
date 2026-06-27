@@ -239,6 +239,7 @@ uint32_t gLastTimeSyncMs = 0;
 uint32_t gLastLauncherToggleMs = 0;
 uint32_t gLedFlashUntilMs = 0;
 uint32_t gLastBatterySampleMs = 0;
+uint32_t gLastBatteryHistorySampleMs = 0;
 uint32_t gClientTurnSeq = 0;
 uint32_t gLastBlockingRenderPumpMs = 0;
 bool gBlockingRenderPumpEnabled = false;

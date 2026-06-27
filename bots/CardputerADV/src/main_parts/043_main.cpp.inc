@@ -623,7 +623,7 @@ bool runHostOtaApply(bool refreshManifest) {
 
 void printHostDiag() {
   updateBatterySnapshot(true);
-  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d setup=%d ap=%s rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%% raw=%ld est=%d/%dmV/%ldmA/%s vbus=%dmV loop_max=%u pump_input=%u/%u voice=%s http=%s key=%s",
+  logf("[DBG] version=%s git=%s heap_free=%u heap_largest=%u wifi=%d ip=%s hub=%s:%u tls=%d setup=%d ap=%s rt_verify=%s rt_active=%d rt_connected=%d rt_recording=%d rt_awaiting=%d rt_hf=%d rt_restart=%d ota=%s/%s pending=%d applying=%d battery=%ld%% raw=%ld est=%d/%dmV/%ldmA/%s vbus=%dmV drain=%.2f%%h/%dmVh eta=%umin samples=%u loop_max=%u pump_input=%u/%u voice=%s http=%s key=%s",
        kAppVersion,
        kBuildGitSha,
        static_cast<unsigned>(ESP.getFreeHeap()),
@@ -653,6 +653,10 @@ void printHostDiag() {
        static_cast<long>(gBatterySnapshot.currentMa),
        batteryChargeLabel(gBatterySnapshot.charging),
        static_cast<int>(gBatterySnapshot.vbusMv),
+       static_cast<double>(gBatteryDrainPctPerHour),
+       static_cast<int>(gBatteryDrainMvPerHour),
+       static_cast<unsigned>(gBatteryEtaMinutes),
+       static_cast<unsigned>(gBatteryHistoryCount),
        static_cast<unsigned>(gLoopMaxMs),
        static_cast<unsigned>(gBlockingPumpInputEvents),
        static_cast<unsigned>(gLastBlockingPumpInputMs),
@@ -663,14 +667,18 @@ void printHostDiag() {
 
 void printHostBatteryStatus() {
   updateBatterySnapshot(true);
-  logf("[HOST] battery.status level=%ld raw_level=%ld estimated=%d voltage_mv=%d current_ma=%ld charging=%s vbus_mv=%d",
+  logf("[HOST] battery.status level=%ld raw_level=%ld estimated=%d voltage_mv=%d current_ma=%ld charging=%s vbus_mv=%d drain_pct_h=%.2f drain_mv_h=%d eta_min=%u samples=%u",
        static_cast<long>(gBatterySnapshot.level),
        static_cast<long>(gBatterySnapshot.rawLevel),
        static_cast<int>(gBatterySnapshot.levelEstimated),
        static_cast<int>(gBatterySnapshot.voltageMv),
        static_cast<long>(gBatterySnapshot.currentMa),
        batteryChargeLabel(gBatterySnapshot.charging),
-       static_cast<int>(gBatterySnapshot.vbusMv));
+       static_cast<int>(gBatterySnapshot.vbusMv),
+       static_cast<double>(gBatteryDrainPctPerHour),
+       static_cast<int>(gBatteryDrainMvPerHour),
+       static_cast<unsigned>(gBatteryEtaMinutes),
+       static_cast<unsigned>(gBatteryHistoryCount));
 }
 
 bool handleHostOtaMinBatteryCommand(const String& line) {

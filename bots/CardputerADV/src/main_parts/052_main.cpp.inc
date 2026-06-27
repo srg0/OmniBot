@@ -203,31 +203,83 @@ void renderLauncherOverlay() {
   drawTinyFooter(panel, muted, "Up/Down group  Left/Right item  Enter", 15, 118, 210);
 }
 
+String batteryEtaText() {
+  if (!gBatteryDrainKnown || gBatteryEtaMinutes == 0 || batteryExternalPowerPresent()) {
+    return "--";
+  }
+  uint16_t h = gBatteryEtaMinutes / 60;
+  uint16_t m = gBatteryEtaMinutes % 60;
+  if (h > 0) {
+    return String(h) + "h" + String(m) + "m";
+  }
+  return String(m) + "m";
+}
+
+void drawBatteryHistoryGraph(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t panel) {
+  auto& d = gCanvas;
+  uint16_t grid = rgb565_local(39, 54, 64);
+  uint16_t line = rgb565_local(47, 227, 255);
+  uint16_t muted = rgb565_local(126, 143, 157);
+  d.fillRoundRect(x, y, w, h, 5, rgb565_local(5, 14, 19));
+  d.drawRoundRect(x, y, w, h, 5, grid);
+  d.drawFastHLine(x + 4, y + h / 2, w - 8, rgb565_local(21, 31, 38));
+  if (gBatteryHistoryCount < 2) {
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, rgb565_local(5, 14, 19));
+    d.setCursor(x + 8, y + 9);
+    d.print("collecting drain history");
+    return;
+  }
+
+  int16_t prevX = -1;
+  int16_t prevY = -1;
+  for (uint8_t i = 0; i < gBatteryHistoryCount; ++i) {
+    BatteryHistorySample sample = batteryHistorySampleAt(i);
+    int value = sample.level >= 0 ? sample.level : estimateBatteryLevelFromVoltage(sample.voltageMv);
+    if (value < 0) {
+      continue;
+    }
+    int16_t px = x + 4 + (gBatteryHistoryCount <= 1 ? 0 : (static_cast<int32_t>(i) * (w - 8)) / (gBatteryHistoryCount - 1));
+    int16_t py = y + h - 4 - (clampValue<int>(value, 0, 100) * (h - 8)) / 100;
+    if (prevX >= 0) {
+      d.drawLine(prevX, prevY, px, py, line);
+    }
+    d.fillCircle(px, py, sample.externalPower ? 2 : 1, sample.externalPower ? rgb565_local(88, 240, 141) : line);
+    prevX = px;
+    prevY = py;
+  }
+}
+
 void renderBatteryUi() {
   updateBatterySnapshot();
   auto& d = gCanvas;
-  d.fillScreen(0x0210);
-
-  d.fillRoundRect(8, 8, 224, 118, 16, 0x0841);
-  d.drawRoundRect(8, 8, 224, 118, 16, 0x31C7);
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(8, 17, 23);
+  const uint16_t border = rgb565_local(48, 54, 61);
+  const uint16_t accent = rgb565_local(47, 227, 255);
+  const uint16_t muted = rgb565_local(126, 143, 157);
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 12, panel);
+  d.drawRoundRect(6, 5, 228, 124, 12, border);
 
   bool levelKnown = gBatterySnapshot.level >= 0;
   int level = levelKnown ? clampValue<int>(gBatterySnapshot.level, 0, 100) : 0;
-  int barX = 22;
-  int barY = 28;
-  int barW = 140;
-  int barH = 28;
-  int fillW = (barW - 8) * level / 100;
   uint16_t barColor = !levelKnown ? rgb565_local(80, 130, 180)
-                     : level >= 60 ? rgb565_local(90, 255, 150)
-                     : level >= 25 ? TFT_GOLD
-                                   : rgb565_local(255, 110, 80);
+                     : level >= 60 ? rgb565_local(88, 240, 141)
+                     : level >= 25 ? rgb565_local(246, 194, 74)
+                                   : rgb565_local(255, 93, 88);
 
   d.setFont(&fonts::Font2);
-  d.setTextColor(TFT_YELLOW, 0x0841);
-  d.setCursor(22, 16);
-  d.print("Battery");
+  d.setTextColor(accent, panel);
+  d.setCursor(14, 12);
+  d.print("BATTERY");
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  d.setCursor(68, 15);
+  d.print(gBatteryHistoryCount);
+  d.print(" samples");
 
-  d.drawRoundRect(barX, barY, barW, barH, 8, TFT_LIGHTGREY);
-  d.fillRect(barX + barW, barY + 8, 6, 12, TFT_LIGHTGREY);
-  d.fillRoundRect(barX + 4, barY + 4, max(0, fillW), barH - 8, 5, barColor);
+  d.setFont(&fonts::Font7);
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(16, 28);
+  d.print(levelKnown ? String(level) : "--");

@@ -71,6 +71,95 @@ int32_t estimateBatteryLevelFromVoltage(int16_t voltageMv) {
   return clampValue<int32_t>((static_cast<int32_t>(voltageMv) - 3300) * 100 / 900, 0, 100);
 }
 
+BatteryHistorySample batteryHistorySampleAt(uint8_t index) {
+  if (index >= gBatteryHistoryCount || gBatteryHistoryCount == 0) {
+    return BatteryHistorySample();
+  }
+  uint8_t oldest = (gBatteryHistoryHead + kBatteryHistoryCapacity - gBatteryHistoryCount) % kBatteryHistoryCapacity;
+  uint8_t slot = (oldest + index) % kBatteryHistoryCapacity;
+  return gBatteryHistory[slot];
+}
+
+void updateBatteryDrainEstimate() {
+  gBatteryDrainKnown = false;
+  gBatteryDrainPctPerHour = 0.0f;
+  gBatteryDrainMvPerHour = 0;
+  gBatteryEtaMinutes = 0;
+
+  if (gBatteryHistoryCount < 2) {
+    return;
+  }
+  BatteryHistorySample latest = batteryHistorySampleAt(gBatteryHistoryCount - 1);
+  if (latest.ms == 0 || latest.externalPower) {
+    return;
+  }
+
+  BatteryHistorySample baseline;
+  bool found = false;
+  for (int i = static_cast<int>(gBatteryHistoryCount) - 2; i >= 0; --i) {
+    BatteryHistorySample candidate = batteryHistorySampleAt(static_cast<uint8_t>(i));
+    if (candidate.ms == 0 || candidate.externalPower || candidate.ms >= latest.ms) {
+      continue;
+    }
+    if (latest.ms - candidate.ms >= kBatteryDrainMinWindowMs) {
+      baseline = candidate;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    return;
+  }
+
+  uint32_t dtMs = latest.ms - baseline.ms;
+  if (dtMs == 0) {
+    return;
+  }
+  int16_t pctDrop = (baseline.level >= 0 && latest.level >= 0) ? baseline.level - latest.level : 0;
+  int16_t mvDrop = (baseline.voltageMv > 0 && latest.voltageMv > 0) ? baseline.voltageMv - latest.voltageMv : 0;
+  if (pctDrop <= 0 && mvDrop <= 0) {
+    return;
+  }
+
+  if (pctDrop > 0) {
+    gBatteryDrainPctPerHour = (static_cast<float>(pctDrop) * 3600000.0f) / static_cast<float>(dtMs);
+    if (latest.level > 0 && gBatteryDrainPctPerHour > 0.05f) {
+      long etaMinutes = static_cast<long>((static_cast<float>(latest.level) / gBatteryDrainPctPerHour) * 60.0f);
+      gBatteryEtaMinutes = static_cast<uint16_t>(clampValue<long>(etaMinutes, 1, 999));
+    }
+  }
+  if (mvDrop > 0) {
+    long mvPerHour = (static_cast<long>(mvDrop) * 3600000L) / static_cast<long>(dtMs);
+    gBatteryDrainMvPerHour = static_cast<int16_t>(clampValue<long>(mvPerHour, 0, 32767));
+  }
+  gBatteryDrainKnown = true;
+}
+
+void recordBatteryHistorySample(uint32_t now, bool force) {
+  if (!force && gLastBatteryHistorySampleMs != 0 &&
+      now - gLastBatteryHistorySampleMs < kBatteryHistorySampleIntervalMs) {
+    updateBatteryDrainEstimate();
+    return;
+  }
+  if (gBatterySnapshot.level < 0 && gBatterySnapshot.voltageMv <= 0) {
+    updateBatteryDrainEstimate();
+    return;
+  }
+
+  BatteryHistorySample sample;
+  sample.ms = now;
+  sample.level = static_cast<int16_t>(gBatterySnapshot.level);
+  sample.voltageMv = gBatterySnapshot.voltageMv;
+  sample.externalPower = batteryExternalPowerPresent();
+  gBatteryHistory[gBatteryHistoryHead] = sample;
+  gBatteryHistoryHead = (gBatteryHistoryHead + 1) % kBatteryHistoryCapacity;
+  if (gBatteryHistoryCount < kBatteryHistoryCapacity) {
+    ++gBatteryHistoryCount;
+  }
+  gLastBatteryHistorySampleMs = now;
+  updateBatteryDrainEstimate();
+}
+
 void updateBatterySnapshot(bool force) {
   uint32_t now = millis();
   if (!force && gLastBatterySampleMs != 0 && now - gLastBatterySampleMs < kBatterySampleIntervalMs) {
@@ -96,6 +185,7 @@ void updateBatterySnapshot(bool force) {
   gBatterySnapshot.vbusMv = vbusMv;
   gBatterySnapshot.currentMa = M5.Power.getBatteryCurrent();
   gBatterySnapshot.charging = M5.Power.isCharging();
+  recordBatteryHistorySample(now, force);
 }
 
 void textTurnTask(void* arg) {
