@@ -53,7 +53,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.119-dev"
+#define APP_VERSION "0.2.120-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -177,12 +177,16 @@ constexpr uint8_t kLauncherGroupCount = 8;
 constexpr uint8_t kLauncherMaxSubItems = 5;
 constexpr uint8_t kDeviceSettingsItemCount = 7;
 constexpr uint8_t kFocusSettingsItemCount = 7;
-constexpr uint8_t kScreenSettingsItemCount = 8;
+constexpr uint8_t kScreenSettingsItemCount = 9;
 constexpr uint8_t kSettingsItemCount = kScreenSettingsItemCount;
 constexpr uint8_t kDefaultDisplayBrightnessPct = 70;
 constexpr uint8_t kDefaultScreensaverTimeoutMin = 5;
 constexpr uint8_t kDefaultScreensaverDimAfterMin = 30;
 constexpr uint8_t kDefaultScreensaverDimBrightnessPct = 15;
+constexpr uint8_t kScreensaverStyleCMatrix = 0;
+constexpr uint8_t kScreensaverStyleChessSquare = 1;
+constexpr uint8_t kScreensaverStyleCount = 2;
+constexpr uint32_t kChessSquareRotateMs = 60UL * 1000UL;
 constexpr uint8_t kDefaultScreenOffAfterMin = 60;
 constexpr uint8_t kDefaultNotificationVolumePct = 100;
 constexpr uint8_t kClockFaceCount = 1;

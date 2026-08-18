@@ -280,6 +280,7 @@ struct DeviceSettings {
   uint8_t clockFace = 0;
   uint8_t displayBrightnessPct = kDefaultDisplayBrightnessPct;
   bool screensaverEnabled = true;
+  uint8_t screensaverStyle = kScreensaverStyleCMatrix;
   uint8_t screensaverTimeoutMin = kDefaultScreensaverTimeoutMin;
   uint8_t screensaverDimAfterMin = kDefaultScreensaverDimAfterMin;
   uint8_t screensaverDimBrightnessPct = kDefaultScreensaverDimBrightnessPct;

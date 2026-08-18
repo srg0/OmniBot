@@ -241,6 +241,7 @@ void enterScreensaver() {
   gLauncherVisible = false;
   setUiMode(UiMode::CMatrix);
   gCMatrixInitialized = false;
+  gChessSquareInitialized = false;
   setStatus("Screensaver", 700);
   applyDisplayBrightness();
 }

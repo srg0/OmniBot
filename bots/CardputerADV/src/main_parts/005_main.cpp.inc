@@ -163,6 +163,9 @@ uint8_t gCMatrixSpeed[kCMatrixCols] = {};
 uint32_t gCMatrixLastStepMs = 0;
 uint16_t gCMatrixTick = 0;
 bool gCMatrixInitialized = false;
+uint8_t gChessSquareIndex = 0;
+uint32_t gChessSquareSelectedMs = 0;
+bool gChessSquareInitialized = false;
 
 void IRAM_ATTR onTcaKeyboardInterrupt() {
   gTcaInterruptPending = true;

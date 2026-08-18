@@ -26,16 +26,18 @@ String settingValue(uint8_t index) {
       case 1:
         return gDeviceSettings.screensaverEnabled ? "on" : "off";
       case 2:
-        return String(gDeviceSettings.screensaverTimeoutMin) + "m";
+        return screensaverStyleName(gDeviceSettings.screensaverStyle);
       case 3:
-        return String(gDeviceSettings.screensaverDimAfterMin) + "m";
+        return String(gDeviceSettings.screensaverTimeoutMin) + "m";
       case 4:
-        return String(gDeviceSettings.screensaverDimBrightnessPct) + "%";
+        return String(gDeviceSettings.screensaverDimAfterMin) + "m";
       case 5:
-        return gDeviceSettings.screenAutoOffEnabled ? "on" : "off";
+        return String(gDeviceSettings.screensaverDimBrightnessPct) + "%";
       case 6:
-        return String(gDeviceSettings.screenOffAfterMin) + "m";
+        return gDeviceSettings.screenAutoOffEnabled ? "on" : "off";
       case 7:
+        return String(gDeviceSettings.screenOffAfterMin) + "m";
+      case 8:
         return gDeviceSettings.screensaverClockOnWake ? "on" : "off";
       default:
         return "-";
@@ -244,7 +246,80 @@ char cMatrixGlyphAt(uint8_t col, int16_t row, uint8_t trail) {
   return glyphs[mix % glyphCount];
 }
 
+void selectNextChessSquare() {
+  uint8_t next = static_cast<uint8_t>(random(0, 64));
+  if (gChessSquareInitialized && next == gChessSquareIndex) {
+    next = static_cast<uint8_t>((next + 1 + random(0, 63)) % 64);
+  }
+  gChessSquareIndex = next;
+  gChessSquareSelectedMs = millis();
+  gChessSquareInitialized = true;
+}
+
+void renderChessSquareScreensaverUi() {
+  auto& d = gCanvas;
+  uint32_t now = millis();
+  if (!gChessSquareInitialized || now - gChessSquareSelectedMs >= kChessSquareRotateMs) {
+    selectNextChessSquare();
+  }
+
+  const uint16_t bg = rgb565_local(3, 8, 13);
+  const uint16_t panel = rgb565_local(8, 19, 28);
+  const uint16_t panelEdge = rgb565_local(40, 76, 91);
+  const uint16_t cyan = rgb565_local(76, 224, 255);
+  const uint16_t amber = rgb565_local(255, 198, 92);
+  const uint16_t muted = rgb565_local(126, 153, 166);
+
+  String hhmm = "--:--";
+  time_t ts = time(nullptr);
+  if (ts > 100000) {
+    struct tm timeinfo;
+    localtime_r(&ts, &timeinfo);
+    char buf[6];
+    strftime(buf, sizeof(buf), "%H:%M", &timeinfo);
+    hhmm = buf;
+  }
+
+  char squareBuf[3] = {
+      static_cast<char>('a' + (gChessSquareIndex % 8)),
+      static_cast<char>('1' + (gChessSquareIndex / 8)),
+      '\0',
+  };
+  String square = squareBuf;
+
+  d.fillScreen(bg);
+  d.fillRoundRect(7, 6, 226, 123, 13, panel);
+  d.drawRoundRect(7, 6, 226, 123, 13, panelEdge);
+
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(17, 14);
+  d.print("CHESS SQUARE");
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(222 - d.textWidth(hhmm), 14);
+  d.print(hhmm);
+
+  d.fillRoundRect(43, 35, 154, 67, 14, rgb565_local(4, 12, 18));
+  d.drawRoundRect(43, 35, 154, 67, 14, rgb565_local(58, 107, 120));
+  d.setFont(&fonts::Font7);
+  d.setTextColor(amber, rgb565_local(4, 12, 18));
+  d.setCursor((240 - d.textWidth(square)) / 2, 42);
+  d.print(square);
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, panel);
+  const String hint = "find it on the board";
+  d.setCursor((240 - d.textWidth(hint)) / 2, 113);
+  d.print(hint);
+
+  renderDebugOverlay();
+}
+
 void renderCMatrixUi() {
+  if (gScreensaverActive && gDeviceSettings.screensaverStyle == kScreensaverStyleChessSquare) {
+    renderChessSquareScreensaverUi();
+    return;
+  }
   auto& d = gCanvas;
   constexpr int16_t cellW = 8;
   constexpr int16_t cellH = 8;
