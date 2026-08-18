@@ -161,7 +161,8 @@ void serviceRealtimePlayback() {
                               gRealtimePlaybackBufferedBytes == 0 && !speakerIdle &&
                               gRealtimePlaybackProgressMs != 0 &&
                               now - gRealtimePlaybackProgressMs > kRealtimeSpeakerStallTimeoutMs;
-  const bool terminalEventMissing = gRealtimeAudioComplete && !gRealtimeResponseComplete &&
+  const bool terminalEventMissing = !gRealtimeS1Thinking &&
+                                    gRealtimeAudioComplete && !gRealtimeResponseComplete &&
                                     !gRealtimePlaybackActive && gRealtimeAudioDoneMs != 0 &&
                                     now - gRealtimeAudioDoneMs > kRealtimeTerminalEventGraceMs;
   if (streamStalled || speakerStalled || terminalEventMissing) {
