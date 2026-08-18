@@ -762,19 +762,63 @@ bool queueRealtimeChunk(uint8_t chunkIndex) {
                                 kRealtimeInputSampleRate);
 }
 
-void upsampleRealtimeChunk(const int16_t* input) {
-  for (size_t i = 0; i < kRealtimeInputChunkSamples; ++i) {
-    const int16_t sample = input[i];
-    const size_t out = i * kRealtimeUpsampleRatio;
-    for (size_t r = 0; r < kRealtimeUpsampleRatio; ++r) {
-      gRealtimeUpsampleBuffer[out + r] = sample;
-    }
+void writeRealtimeLe32(uint8_t* out, uint32_t value) {
+  out[0] = static_cast<uint8_t>(value);
+  out[1] = static_cast<uint8_t>(value >> 8);
+  out[2] = static_cast<uint8_t>(value >> 16);
+  out[3] = static_cast<uint8_t>(value >> 24);
+}
+
+bool sendRealtimeTextFrame(const String& text) {
+  if (!gRealtimeWs.isConnected() || text.isEmpty()) {
+    return false;
   }
+  const size_t payloadLen = text.length();
+  uint8_t* frame = static_cast<uint8_t*>(
+      malloc(kRealtimeWsHeaderReserve + payloadLen + 1));
+  if (!frame) {
+    logf("[RT] text frame oom payload=%u free=%u largest=%u",
+         static_cast<unsigned>(payloadLen),
+         static_cast<unsigned>(ESP.getFreeHeap()),
+         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    return false;
+  }
+  memcpy(frame + kRealtimeWsHeaderReserve, text.c_str(), payloadLen);
+  frame[kRealtimeWsHeaderReserve + payloadLen] = '\0';
+  // Keep the WebSocket header reserve and payload in one owned buffer, matching
+  // the library's headerToPayload contract and the binary-audio send path.
+  const bool sent = gRealtimeWs.sendTXT(frame, payloadLen, true);
+  free(frame);
+  return sent;
+}
+
+bool sendRealtimeBinaryMicFrame(const int16_t* samples, size_t sampleCount) {
+  if (!samples || sampleCount != kRealtimeInputChunkSamples) {
+    return false;
+  }
+  uint8_t* payload = gRealtimeBinaryMicFrame + kRealtimeWsHeaderReserve;
+  payload[0] = kRealtimeBinaryMicPcmType;
+  payload[1] = kRealtimeBinaryVersion;
+  payload[2] = 0;
+  payload[3] = 0;
+  writeRealtimeLe32(payload + 4, gRealtimeMicSequence);
+  memcpy(payload + kRealtimeBinaryHeaderBytes, samples, kRealtimeInputChunkBytes);
+  const size_t payloadBytes = kRealtimeBinaryHeaderBytes + kRealtimeInputChunkBytes;
+  const bool sent = gRealtimeWs.sendBIN(gRealtimeBinaryMicFrame, payloadBytes, true);
+  if (sent) {
+    ++gRealtimeMicSequence;
+  } else {
+    ++gRealtimeBinaryTxFailures;
+  }
+  return sent;
 }
 
 bool sendRealtimeAudioChunk(const int16_t* samples, size_t sampleCount) {
   if (!gRealtimeActive || !gRealtimeConnected) {
     return false;
+  }
+  if (gRealtimeBinaryAudio) {
+    return sendRealtimeBinaryMicFrame(samples, sampleCount);
   }
   String encoded = base64::encode(reinterpret_cast<const uint8_t*>(samples),
                                   sampleCount * sizeof(int16_t));
@@ -791,11 +835,10 @@ bool sendRealtimeAudioChunk(const int16_t* samples, size_t sampleCount) {
 
   static constexpr const char* kAudioPrefix = "{\"type\":\"audio.append\",\"audio\":\"";
   static constexpr const char* kAudioSuffix = "\"}";
-  static constexpr size_t kWsHeaderReserve = 14;
   const size_t prefixLen = strlen(kAudioPrefix);
   const size_t suffixLen = strlen(kAudioSuffix);
   const size_t payloadLen = prefixLen + encoded.length() + suffixLen;
-  uint8_t* frame = static_cast<uint8_t*>(malloc(kWsHeaderReserve + payloadLen + 1));
+  uint8_t* frame = static_cast<uint8_t*>(malloc(kRealtimeWsHeaderReserve + payloadLen + 1));
   if (!frame) {
     logf("[RT] audio frame oom payload=%u b64=%u free=%u largest=%u",
          static_cast<unsigned>(payloadLen),
@@ -805,7 +848,7 @@ bool sendRealtimeAudioChunk(const int16_t* samples, size_t sampleCount) {
     return false;
   }
 
-  char* payload = reinterpret_cast<char*>(frame + kWsHeaderReserve);
+  char* payload = reinterpret_cast<char*>(frame + kRealtimeWsHeaderReserve);
   memcpy(payload, kAudioPrefix, prefixLen);
   memcpy(payload + prefixLen, encoded.c_str(), encoded.length());
   memcpy(payload + prefixLen + encoded.length(), kAudioSuffix, suffixLen);
@@ -831,7 +874,7 @@ bool commitRealtimeAudioBuffer(const char* logPrefix) {
   doc["type"] = "audio.commit";
   String payload;
   serializeJson(doc, payload);
-  bool sent = gRealtimeConnected && gRealtimeWs.sendTXT(payload);
+  bool sent = gRealtimeConnected && sendRealtimeTextFrame(payload);
   if (!sent) {
     logf("[%s] audio commit send failed connected=%d",
          logPrefix ? logPrefix : "RT",
@@ -907,8 +950,7 @@ void serviceRealtimeAudioSmoke() {
     gRealtimeInputBuffers[0][i] = amp;
   }
   updateVoiceLevelFromSamples(gRealtimeInputBuffers[0], kRealtimeInputChunkSamples);
-  upsampleRealtimeChunk(gRealtimeInputBuffers[0]);
-  if (!sendRealtimeAudioChunk(gRealtimeUpsampleBuffer, kRealtimeOutputChunkSamples)) {
+  if (!sendRealtimeAudioChunk(gRealtimeInputBuffers[0], kRealtimeInputChunkSamples)) {
     logf("[SMOKE] realtime audio send failed chunk=%u", static_cast<unsigned>(chunk));
     stopRealtimeAudioSmoke(false);
     setStatus("Realtime audio smoke failed", 1600);

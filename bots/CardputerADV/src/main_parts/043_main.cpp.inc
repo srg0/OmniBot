@@ -6,9 +6,8 @@ void stopRealtimeRecordingAndCommit() {
   gRealtimeHandsFreeActive = false;
   gRealtimeRestartAfterPlayback = false;
   pulseButtonPress();
-  drainRealtimeRecording();
-  stopMic();
-  gRealtimeInflightChunks.clear();
+  stopRealtimeMicNonBlocking();
+  markRealtimeLatencyOrigin("commit");
   bool sent = commitRealtimeAudioBuffer("RT");
   if (!sent) {
     appendRuntimeLog("RT", "commit send failed", true);
@@ -36,8 +35,9 @@ void toggleRealtimeVoice() {
     startRealtimeSession(true);
     return;
   }
-  if (gRealtimeAwaiting) {
-    setStatus("Realtime waiting...", 700);
+  if (gRealtimeAwaiting || gRealtimePlaybackActive || gPlaybackActive) {
+    closeRealtimeSession("user stop");
+    setStatus("Realtime stopped", 900);
     return;
   }
   startRealtimeRecording();
@@ -75,8 +75,19 @@ void serviceRealtimeVoice() {
     return;
   }
   gRealtimeWs.loop();
+  now = millis();
+  if (gRealtimeAuthPending &&
+      static_cast<int32_t>(now - gRealtimeAuthDueMs) >= 0) {
+    gRealtimeAuthPending = false;
+    gRealtimeAuthDueMs = 0;
+    if (!sendRealtimeConnectFrame()) {
+      logf("[RT] deferred auth send failed ws_connected=%d",
+           static_cast<int>(gRealtimeWs.isConnected()));
+    }
+  }
   serviceRealtimeAudioSmoke();
   serviceRealtimeRecording(true);
+  serviceRealtimePlayback();
   if (gRealtimeRestartAfterPlayback && gRealtimeHandsFreeActive &&
       gRealtimeActive && gRealtimeConnected && !gRealtimeRecording &&
       !gRealtimeAwaiting && !gPlaybackActive &&
@@ -794,6 +805,24 @@ bool handleHostSerialCommand(String line) {
     gRealtimeSmokeAudioStreaming = false;
     closeRealtimeSession("host close");
     logf("[SMOKE] realtime closed by host");
+    return true;
+  }
+  if (cmd == "rt.listen" || cmd == "/rt.listen" || cmd == "realtime.listen") {
+    gRealtimeTlsVerify = true;
+    toggleRealtimeVoice();
+    logf("[HOST] realtime listen toggle verify=ca active=%d connected=%d recording=%d",
+         static_cast<int>(gRealtimeActive),
+         static_cast<int>(gRealtimeConnected),
+         static_cast<int>(gRealtimeRecording));
+    return true;
+  }
+  if (cmd == "rt.listen.insecure" || cmd == "/rt.listen.insecure") {
+    gRealtimeTlsVerify = false;
+    toggleRealtimeVoice();
+    logf("[HOST] realtime listen toggle verify=insecure active=%d connected=%d recording=%d",
+         static_cast<int>(gRealtimeActive),
+         static_cast<int>(gRealtimeConnected),
+         static_cast<int>(gRealtimeRecording));
     return true;
   }
   if (cmd == "inbox.poll" || cmd == "/inbox.poll" || cmd == "inbox.play" || cmd == "/inbox.play") {

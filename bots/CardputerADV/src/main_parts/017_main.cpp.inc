@@ -109,11 +109,9 @@ void prepareOtaMaintenanceMode() {
   gRealtimeRecording = false;
   gRealtimeAwaiting = false;
   stopPlaybackStream();
+  resetRealtimePlaybackState(true);
   releaseRecordBuffer();
   releaseTtsBuffer();
-  if (gRealtimeReplyFile) {
-    gRealtimeReplyFile.close();
-  }
   if (gActiveRecordFile) {
     gActiveRecordFile.close();
   }

@@ -254,12 +254,48 @@ void setup() {
   render();
 }
 
+void serviceRealtimeExclusiveLoop(uint32_t loopStartMs) {
+  // Realtime owns the loop while active. Do not service storage, OTA, normal
+  // hub traffic, clocks, inbox, games, sensors, or background application work.
+  gWifiReady = WiFi.status() == WL_CONNECTED;
+  pollTyping();
+  serviceRealtimeVoice();
+  updateBlink();
+
+  const uint32_t now = millis();
+  if (now - gLastRenderMs >= kBusyRenderIntervalMs) {
+    render();
+    gLastRenderMs = now;
+  }
+  const uint32_t loopCostMs = millis() - loopStartMs;
+  if (loopCostMs > gLoopMaxMs) {
+    gLoopMaxMs = loopCostMs;
+  }
+  if (loopCostMs >= 80U && now - gLastLoopSlowMs >= 2000U) {
+    gLastLoopSlowMs = now;
+    logf("[RT][LOOP] slow ms=%u max=%u connected=%d awaiting=%d playback=%d",
+         static_cast<unsigned>(loopCostMs),
+         static_cast<unsigned>(gLoopMaxMs),
+         static_cast<int>(gRealtimeConnected),
+         static_cast<int>(gRealtimeAwaiting),
+         static_cast<int>(gRealtimePlaybackActive));
+  }
+}
+
 void loop() {
   uint32_t loopStartMs = millis();
-  handleHostSerialInput();
-  serviceSetupPortal();
   M5Cardputer.update();
   refreshKeyboardState();
+
+  // Keep the USB debug/control path alive even while Realtime owns every
+  // other subsystem. This lets automated smoke tests and rt.close recover a
+  // session without a physical reset.
+  handleHostSerialInput();
+  if (gRealtimeExclusiveMode) {
+    serviceRealtimeExclusiveLoop(loopStartMs);
+    return;
+  }
+  serviceSetupPortal();
   updateImuMotion();
   updateStatusLed();
   gTimeValid = hasValidSystemTime();
@@ -295,6 +331,9 @@ void loop() {
   updateVoiceTrigger();
   pollTyping();
   serviceRealtimeVoice();
+  if (gRealtimeExclusiveMode) {
+    return;
+  }
   serviceRecordingToFile();
   servicePlaybackStream();
   serviceDeferredDeviceActions();
@@ -303,10 +342,11 @@ void loop() {
   serviceIdleScreensaver();
   serviceAutoInboxPoll();
 
-  if (gPlaybackActive && !gPlaybackStreaming && !M5Cardputer.Speaker.isPlaying()) {
+  if (gPlaybackActive && !gPlaybackStreaming && !gRealtimePlaybackActive &&
+      !M5Cardputer.Speaker.isPlaying()) {
     gPlaybackActive = false;
     if (gRealtimeRestartAfterPlayback && gRealtimeHandsFreeActive) {
-      gRealtimeNextListenMs = millis() + 1800;
+      gRealtimeNextListenMs = millis() + kRealtimeListenRestartDelayMs;
     }
     if (gDynamicPlaybackBuffer) {
       free(gDynamicPlaybackBuffer);

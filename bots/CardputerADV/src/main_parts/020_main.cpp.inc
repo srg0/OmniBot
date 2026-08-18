@@ -284,6 +284,13 @@ bool autoInboxPollAllowed() {
 
 void serviceAutoInboxPoll() {
   uint32_t now = millis();
+  // Boot must stay immediately usable. In particular, do not let a pending
+  // inbox TTS/download seize the main loop while the user is entering
+  // Realtime. Background sync is delayed and remains silent; messages are
+  // still rendered and acknowledged.
+  if (now < 30000U) {
+    return;
+  }
   if (gLastInboxAutoPollMs != 0 && now - gLastInboxAutoPollMs < kInboxAutoPollIntervalMs) {
     return;
   }
@@ -291,9 +298,12 @@ void serviceAutoInboxPoll() {
     return;
   }
   gLastInboxAutoPollMs = now;
-  bool ok = fetchLatestInboxMessage(false, true, true, true);
+  // Background delivery updates the screen/history but never starts the
+  // synchronous TTS path. Audio remains available through explicit inbox
+  // playback, while keyboard and Realtime no longer disappear for ~20 s.
+  bool ok = fetchLatestInboxMessage(false, false, true, true);
   if (ok) {
-    appendRuntimeLog("INBOX", "auto poll played seq=" + String(gInboxLastSeq), true);
+    appendRuntimeLog("INBOX", "auto poll synced seq=" + String(gInboxLastSeq), true);
   }
 }
 

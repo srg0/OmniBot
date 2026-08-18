@@ -12,6 +12,12 @@ void drainRecordingToFile() {
 }
 
 void startRecording() {
+  if (gRealtimeExclusiveMode || gRealtimeActive) {
+    logf("[VOICE] start blocked by realtime exclusive mode");
+    setStatus("Exit Realtime first", 900);
+    setVoiceDiag("voice: realtime owns audio");
+    return;
+  }
   if (gRecording || gSubmitting || gThinking || gPlaybackActive) {
     logf("[VOICE] start ignored rec=%d submit=%d think=%d play=%d", gRecording, gSubmitting,
          gThinking, gPlaybackActive);

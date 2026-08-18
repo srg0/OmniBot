@@ -12,10 +12,10 @@
   uint16_t fg = white;
   const char* label = "LISTEN";
   const bool realtime = state == AssistantPulseState::Realtime;
-  const char* rtPhase = gRealtimeRecording ? "LIVE"
+  const char* rtPhase = gRealtimeRecording ? "MIC"
                         : gRealtimeAwaiting ? "WAIT"
-                        : gPlaybackActive ? "PLAY"
-                        : gRealtimeConnected ? "RDY"
+                        : gPlaybackActive ? "TALK"
+                        : gRealtimeConnected ? "READY"
                         : "LINK";
 
   if (state == AssistantPulseState::Recording) {
@@ -37,11 +37,36 @@
     fg = rgb565_local(241, 255, 246);
     label = "PLAY";
   } else if (realtime) {
-    c1 = rgb565_local(255, 143, 36);
-    c2 = rgb565_local(255, 213, 98);
-    c3 = rgb565_local(90, 45, 11);
-    fg = rgb565_local(255, 246, 226);
-    label = "RT";
+    if (gRealtimeRecording) {
+      c1 = red;
+      c2 = rgb565_local(255, 178, 59);
+      c3 = rgb565_local(88, 32, 42);
+      fg = rgb565_local(255, 241, 239);
+      label = "LISTEN";
+    } else if (gRealtimeAwaiting) {
+      c1 = amber;
+      c2 = cyan;
+      c3 = rgb565_local(64, 52, 26);
+      fg = rgb565_local(255, 248, 232);
+      label = "THINK";
+    } else if (gPlaybackActive) {
+      c1 = green;
+      c2 = cyan;
+      c3 = rgb565_local(22, 73, 46);
+      fg = rgb565_local(241, 255, 246);
+      label = "SPEAK";
+    } else if (gRealtimeConnected) {
+      c1 = cyan;
+      c2 = violet;
+      c3 = rgb565_local(23, 77, 90);
+      label = "READY";
+    } else {
+      c1 = rgb565_local(255, 143, 36);
+      c2 = rgb565_local(255, 213, 98);
+      c3 = rgb565_local(90, 45, 11);
+      fg = rgb565_local(255, 246, 226);
+      label = "LINK";
+    }
   }
 
   d.fillScreen(bg);

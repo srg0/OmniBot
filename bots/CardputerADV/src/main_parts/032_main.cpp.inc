@@ -195,6 +195,19 @@ void startMic() {
   M5Cardputer.Mic.begin();
 }
 
+void startRealtimeMic() {
+  M5Cardputer.Speaker.end();
+  auto micCfg = M5Cardputer.Mic.config();
+  micCfg.sample_rate = kRealtimeInputSampleRate;
+  micCfg.magnification = 64;
+  micCfg.noise_filter_level = 64;
+  micCfg.dma_buf_len = kRealtimeInputChunkSamples;
+  micCfg.dma_buf_count = kRealtimeChunkBufferCount;
+  micCfg.task_priority = 3;
+  M5Cardputer.Mic.config(micCfg);
+  M5Cardputer.Mic.begin();
+}
+
 void stopMic() {
   M5Cardputer.Mic.end();
   initSpeaker();

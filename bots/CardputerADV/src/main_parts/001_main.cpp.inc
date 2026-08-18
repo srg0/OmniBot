@@ -53,7 +53,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.118-dev"
+#define APP_VERSION "0.2.123-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -193,7 +193,7 @@ constexpr uint32_t kBatterySampleIntervalMs = 2000;
 constexpr uint32_t kBatteryHistorySampleIntervalMs = 30000;
 constexpr uint32_t kBatteryDrainMinWindowMs = 5UL * 60UL * 1000UL;
 constexpr uint8_t kBatteryHistoryCapacity = 120;
-constexpr uint32_t kInboxAutoPollIntervalMs = 15000;
+constexpr uint32_t kInboxAutoPollIntervalMs = 60000;
 constexpr uint32_t kTimeSyncRetryMs = 15000;
 constexpr uint32_t kTimeResyncMs = 6UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t kFocusMinDurationSec = 60;
@@ -277,7 +277,6 @@ constexpr size_t kPomodoroAudioLanguageCount = sizeof(kPomodoroAudioLanguages) /
 constexpr size_t kPomodoroAudioCueCount = sizeof(kPomodoroAudioCues) / sizeof(kPomodoroAudioCues[0]);
 constexpr const char* kActiveRecordPcmPath = "/voice/__active_record.pcm";
 constexpr const char* kActiveTtsPcmPath = "/voice/__active_tts.pcm";
-constexpr const char* kRealtimeReplyPcmPath = "/voice/__realtime_reply.pcm";
 constexpr uint8_t kSdSckPin = 40;
 constexpr uint8_t kSdMisoPin = 39;
 constexpr uint8_t kSdMosiPin = 14;
@@ -289,14 +288,67 @@ constexpr uint32_t kSdFrequencyHz = 8000000;
 constexpr size_t kRecordChunkSamples = 1024;
 constexpr size_t kRecordChunkBytes = kRecordChunkSamples * sizeof(int16_t);
 constexpr size_t kRecordChunkBufferCount = 3;
-constexpr uint32_t kRealtimeInputSampleRate = kMicSampleRate;
+// Realtime uses the model's native PCM clock. Keep the ordinary voice-note
+// path at kMicSampleRate; it has a separate codec lifecycle.
+constexpr uint32_t kRealtimeInputSampleRate = 24000;
 constexpr uint32_t kRealtimeModelSampleRate = 24000;
-constexpr size_t kRealtimeInputChunkSamples = 512;
+// 720 mono PCM16 samples are exactly 30 ms at 24 kHz.
+constexpr size_t kRealtimeInputChunkSamples = 720;
 constexpr size_t kRealtimeInputChunkBytes = kRealtimeInputChunkSamples * sizeof(int16_t);
-constexpr size_t kRealtimeUpsampleRatio = kRealtimeModelSampleRate / kRealtimeInputSampleRate;
-constexpr size_t kRealtimeOutputChunkSamples = kRealtimeInputChunkSamples * kRealtimeUpsampleRatio;
-constexpr size_t kRealtimeOutputChunkBytes = kRealtimeOutputChunkSamples * sizeof(int16_t);
 constexpr size_t kRealtimeChunkBufferCount = 3;
+constexpr size_t kRealtimeBinaryHeaderBytes = 8;
+constexpr size_t kRealtimeWsHeaderReserve = 14;
+constexpr uint8_t kRealtimeBinaryMicPcmType = 0x01;
+constexpr uint8_t kRealtimeBinaryModelPcmType = 0x02;
+constexpr uint8_t kRealtimeBinaryVersion = 1;
+// Realtime playback is fixed-memory and half-duplex on CardPuter ADV.
+// 4 KiB is ~85 ms of 24 kHz mono PCM16; the ring absorbs ~341 ms.
+constexpr size_t kRealtimePlaybackRingBytes = 16 * 1024;
+constexpr size_t kRealtimePlaybackPrebufferBytes = 4 * 1024;
+constexpr size_t kRealtimePlaybackChunkBytes = 2 * 1024;
+constexpr uint32_t kRealtimeListenRestartDelayMs = 120;
+constexpr uint32_t kRealtimeStreamStallTimeoutMs = 4000;
+constexpr uint32_t kRealtimeSpeakerStallTimeoutMs = 2500;
+constexpr uint32_t kRealtimeTerminalEventGraceMs = 4000;
+static_assert(kRealtimeInputSampleRate == kRealtimeModelSampleRate,
+              "Realtime mic must run at the negotiated model PCM clock");
+static_assert(kRealtimeInputChunkSamples * 1000 / kRealtimeInputSampleRate >= 20 &&
+              kRealtimeInputChunkSamples * 1000 / kRealtimeInputSampleRate <= 40,
+              "Realtime mic DMA chunk must remain between 20 and 40 ms");
+
+struct RealtimeChunkQueue {
+  uint8_t values[kRealtimeChunkBufferCount] = {};
+  uint8_t count = 0;
+
+  bool empty() const { return count == 0; }
+  size_t size() const { return count; }
+  uint8_t front() const { return values[0]; }
+  void clear() { count = 0; }
+  bool contains(uint8_t value) const {
+    for (uint8_t i = 0; i < count; ++i) {
+      if (values[i] == value) {
+        return true;
+      }
+    }
+    return false;
+  }
+  bool push(uint8_t value) {
+    if (count >= kRealtimeChunkBufferCount) {
+      return false;
+    }
+    values[count++] = value;
+    return true;
+  }
+  void pop() {
+    if (count == 0) {
+      return;
+    }
+    for (uint8_t i = 1; i < count; ++i) {
+      values[i - 1] = values[i];
+    }
+    --count;
+  }
+};
 constexpr uint32_t kRecordDrainTimeoutMs = 900;
 constexpr size_t kPlaybackChunkSamples = 2048;
 constexpr size_t kPlaybackChunkBytes = kPlaybackChunkSamples * sizeof(int16_t);

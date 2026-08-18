@@ -1,9 +1,17 @@
 String currentConversationKey() {
+  // Single-topic firmware must never reuse a legacy UI/context key from the
+  // on-device registry. Bridge authentication is scoped to the canonical
+  // topic key, so a stale `ConversationContext::key` makes Realtime connect,
+  // get rejected, and immediately fall back to Home.
+  if (kSingleCardputerTopicMode) {
+    return kPrimaryCardputerTopicKey;
+  }
   if (gContexts.empty()) {
     return kPrimaryCardputerTopicKey;
   }
   gSelectedContext = clampValue<int>(gSelectedContext, 0, static_cast<int>(gContexts.size()) - 1);
-  return gContexts[gSelectedContext].key;
+  const ConversationContext& context = gContexts[gSelectedContext];
+  return context.topicKey.isEmpty() ? context.key : context.topicKey;
 }
 
 bool fetchRemoteTopicCatalog() {
