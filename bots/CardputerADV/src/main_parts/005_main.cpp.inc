@@ -84,6 +84,7 @@ uint32_t gRealtimeExpectedModelSequence = 0;
 uint32_t gRealtimeBinaryTxFailures = 0;
 uint32_t gRealtimeBinaryRxSequenceErrors = 0;
 uint32_t gRealtimePlaybackUnderruns = 0;
+bool gRealtimeS1Thinking = false;
 uint32_t gBlockingPumpInputEvents = 0;
 uint32_t gLastBlockingPumpInputMs = 0;
 uint32_t gLastLoopSlowMs = 0;

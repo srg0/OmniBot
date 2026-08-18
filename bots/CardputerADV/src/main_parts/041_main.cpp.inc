@@ -87,6 +87,7 @@ void resetRealtimePlaybackState(bool stopSpeaker) {
   gRealtimePlaybackBufferedBytes = 0;
   gRealtimePlaybackDroppedBytes = 0;
   gRealtimePlaybackUnderruns = 0;
+  gRealtimeS1Thinking = false;
   gRealtimePlaybackNextBuffer = 0;
   gRealtimeReplyBytes = 0;
   gRealtimeLatencyOriginMs = 0;
@@ -149,7 +150,10 @@ void serviceRealtimePlayback() {
   const uint32_t now = millis();
   const bool speakerIdle = M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0;
 
-  const bool streamStalled = gRealtimeGotAudio && !gRealtimeAudioComplete && speakerIdle &&
+  // S1 tool calls can legitimately pause model audio for tens of seconds.
+  // Do not mistake that explicit thinking phase for a broken audio stream.
+  const bool streamStalled = !gRealtimeS1Thinking &&
+                             gRealtimeGotAudio && !gRealtimeAudioComplete && speakerIdle &&
                              gRealtimePlaybackBufferedBytes < kRealtimePlaybackChunkBytes &&
                              gRealtimeLastAudioDeltaMs != 0 &&
                              now - gRealtimeLastAudioDeltaMs > kRealtimeStreamStallTimeoutMs;

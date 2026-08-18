@@ -62,6 +62,7 @@ bool acceptRealtimePcmBytes(const uint8_t* pcm, size_t pcmBytes) {
   if (!pcm || pcmBytes == 0 || (pcmBytes & 1U) != 0) {
     return false;
   }
+  gRealtimeS1Thinking = false;
   const uint32_t now = millis();
   const bool firstAudio = gRealtimeFirstAudioDeltaMs == 0;
   if (firstAudio) {
@@ -223,6 +224,8 @@ bool sendRealtimeConnectFrame() {
   doc["type"] = "connect";
   doc["device_id"] = gDeviceId;
   doc["device_token"] = gDeviceToken;
+  doc["firmware_version"] = kAppVersion;
+  doc["firmware_git"] = kBuildGitSha;
   doc["topic_key"] = currentConversationKey();
   doc["sample_rate"] = kRealtimeModelSampleRate;
   doc["binary_audio"] = true;
@@ -300,8 +303,10 @@ void handleRealtimeJson(const JsonDocument& doc) {
   }
   if (type == "realtime.thinking") {
     gRealtimeAwaiting = true;
+    const String phase = doc["phase"] | "";
+    gRealtimeS1Thinking = phase == "s1";
     setFaceMode(FaceMode::Thinking);
-    setStatus("Realtime thinking...");
+    setStatus(gRealtimeS1Thinking ? "S1 working..." : "Realtime thinking...");
     return;
   }
   if (type == "transcript.done") {
@@ -342,13 +347,11 @@ void handleRealtimeJson(const JsonDocument& doc) {
         gRealtimeSmokeActive = false;
       }
       gRealtimeAwaiting = false;
+      gRealtimeS1Thinking = false;
       gRealtimeResponseComplete = true;
-      if (gRealtimeGotAudio && !gRealtimeAudioComplete) {
-        // response.done is terminal; flush a short final PCM block even if the
-        // bridge-side audio.done event was lost.
-        gRealtimeAudioComplete = true;
-        gRealtimeAudioDoneMs = millis();
-      }
+      // audio.done is the playback boundary. The Bridge may deliberately
+      // pace PCM after response.done, so completing audio here would truncate
+      // that queue and restart the microphone too early.
       serviceRealtimePlayback();
       const uint32_t firstDeltaMs = gRealtimeLatencyOriginMs == 0 || gRealtimeFirstAudioDeltaMs == 0
         ? 0 : gRealtimeFirstAudioDeltaMs - gRealtimeLatencyOriginMs;
@@ -374,9 +377,11 @@ void handleRealtimeJson(const JsonDocument& doc) {
     return;
   }
   if (type == "audio.delta" || type == "response.output_audio.delta") {
+    gRealtimeS1Thinking = false;
     return;
   }
   if (type == "audio.done" || type == "response.output_audio.done") {
+    gRealtimeS1Thinking = false;
     gRealtimeAudioComplete = true;
     gRealtimeAudioDoneMs = millis();
     if (gRealtimeReplyBytes > 0) {
