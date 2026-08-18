@@ -83,7 +83,8 @@ void servicePlaybackStream() {
   }
   constexpr int kPlaybackChannel = 0;
   constexpr uint32_t kPlaybackFinishGraceMs = 2500;
-  while (gPlaybackStreamRemainingBytes > 0 && M5Cardputer.Speaker.isPlaying(kPlaybackChannel) < 2) {
+  while (gPlaybackStreamRemainingBytes > 0 &&
+         M5Cardputer.Speaker.isPlaying(kPlaybackChannel) < kPlaybackSpeakerQueueDepth) {
     size_t chunk = gPlaybackStreamRemainingBytes;
     if (chunk > kPlaybackChunkBytes) {
       chunk = kPlaybackChunkBytes;

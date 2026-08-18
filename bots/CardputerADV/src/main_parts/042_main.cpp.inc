@@ -354,10 +354,11 @@ void handleRealtimeJson(const JsonDocument& doc) {
         ? 0 : gRealtimeFirstAudioDeltaMs - gRealtimeLatencyOriginMs;
       const uint32_t playbackMs = gRealtimeLatencyOriginMs == 0 || gRealtimePlaybackStartMs == 0
         ? 0 : gRealtimePlaybackStartMs - gRealtimeLatencyOriginMs;
-      logf("[RT][LAT] response_done first_delta_ms=%u playback_ms=%u received=%u dropped=%u",
+      logf("[RT][LAT] response_done first_delta_ms=%u playback_ms=%u received=%u dropped=%u underruns=%u",
            static_cast<unsigned>(firstDeltaMs), static_cast<unsigned>(playbackMs),
            static_cast<unsigned>(gRealtimeReplyBytes),
-           static_cast<unsigned>(gRealtimePlaybackDroppedBytes));
+           static_cast<unsigned>(gRealtimePlaybackDroppedBytes),
+           static_cast<unsigned>(gRealtimePlaybackUnderruns));
       scheduleRealtimeListenAfterPlayback();
       if (!gPlaybackActive && !gRealtimeGotAudio) {
         setFaceMode(FaceMode::Idle);

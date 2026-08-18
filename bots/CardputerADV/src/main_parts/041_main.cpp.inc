@@ -86,6 +86,7 @@ void resetRealtimePlaybackState(bool stopSpeaker) {
   gRealtimePlaybackWrite = 0;
   gRealtimePlaybackBufferedBytes = 0;
   gRealtimePlaybackDroppedBytes = 0;
+  gRealtimePlaybackUnderruns = 0;
   gRealtimePlaybackNextBuffer = 0;
   gRealtimeReplyBytes = 0;
   gRealtimeLatencyOriginMs = 0;
@@ -176,7 +177,17 @@ void serviceRealtimePlayback() {
   if (gRealtimePlaybackFeeding && speakerIdle && !gRealtimeAudioComplete &&
       gRealtimePlaybackBufferedBytes < kRealtimePlaybackChunkBytes) {
     gRealtimePlaybackFeeding = false;
-    appendRuntimeLog("RT", "playback underrun; rebuffer", true);
+    ++gRealtimePlaybackUnderruns;
+    appendRuntimeLog(
+      "RT",
+      "playback underrun=" + String(static_cast<unsigned>(gRealtimePlaybackUnderruns)) +
+        " buffered=" + String(static_cast<unsigned>(gRealtimePlaybackBufferedBytes)) +
+        "; rebuffer",
+      true);
+    logf("[RT] playback underrun count=%u buffered=%u prebuffer=%u",
+         static_cast<unsigned>(gRealtimePlaybackUnderruns),
+         static_cast<unsigned>(gRealtimePlaybackBufferedBytes),
+         static_cast<unsigned>(kRealtimePlaybackPrebufferBytes));
   }
 
   if (!gRealtimePlaybackFeeding) {
@@ -206,7 +217,7 @@ void serviceRealtimePlayback() {
   }
 
   while (gRealtimePlaybackBufferedBytes >= sizeof(int16_t) &&
-         M5Cardputer.Speaker.isPlaying(kPlaybackChannel) < kPlaybackBufferCount) {
+         M5Cardputer.Speaker.isPlaying(kPlaybackChannel) < kPlaybackSpeakerQueueDepth) {
     size_t chunk = min(gRealtimePlaybackBufferedBytes, kRealtimePlaybackChunkBytes);
     if (!gRealtimeAudioComplete && chunk < kRealtimePlaybackChunkBytes) {
       break;
@@ -288,9 +299,11 @@ bool enterRealtimeExclusiveMode() {
   gRealtimeWifiSleepSaved = true;
   WiFi.setSleep(WIFI_PS_NONE);
   gRealtimeExclusiveMode = true;
-  logf("[RT] exclusive enter duplex=half ring=%u prebuffer=%u restart_ms=%u",
+  logf("[RT] exclusive enter duplex=half ring=%u prebuffer=%u buffers=%u queue=%u restart_ms=%u",
        static_cast<unsigned>(kRealtimePlaybackRingBytes),
        static_cast<unsigned>(kRealtimePlaybackPrebufferBytes),
+       static_cast<unsigned>(kPlaybackBufferCount),
+       static_cast<unsigned>(kPlaybackSpeakerQueueDepth),
        static_cast<unsigned>(kRealtimeListenRestartDelayMs));
   return true;
 }

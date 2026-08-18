@@ -53,7 +53,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.123-dev"
+#define APP_VERSION "0.2.124-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -302,9 +302,10 @@ constexpr uint8_t kRealtimeBinaryMicPcmType = 0x01;
 constexpr uint8_t kRealtimeBinaryModelPcmType = 0x02;
 constexpr uint8_t kRealtimeBinaryVersion = 1;
 // Realtime playback is fixed-memory and half-duplex on CardPuter ADV.
-// 4 KiB is ~85 ms of 24 kHz mono PCM16; the ring absorbs ~341 ms.
-constexpr size_t kRealtimePlaybackRingBytes = 16 * 1024;
-constexpr size_t kRealtimePlaybackPrebufferBytes = 4 * 1024;
+// 8 KiB is ~171 ms of 24 kHz mono PCM16; the ring absorbs ~683 ms.
+// This absorbs normal model/network jitter without allocating during a turn.
+constexpr size_t kRealtimePlaybackRingBytes = 32 * 1024;
+constexpr size_t kRealtimePlaybackPrebufferBytes = 8 * 1024;
 constexpr size_t kRealtimePlaybackChunkBytes = 2 * 1024;
 constexpr uint32_t kRealtimeListenRestartDelayMs = 120;
 constexpr uint32_t kRealtimeStreamStallTimeoutMs = 4000;
@@ -315,6 +316,8 @@ static_assert(kRealtimeInputSampleRate == kRealtimeModelSampleRate,
 static_assert(kRealtimeInputChunkSamples * 1000 / kRealtimeInputSampleRate >= 20 &&
               kRealtimeInputChunkSamples * 1000 / kRealtimeInputSampleRate <= 40,
               "Realtime mic DMA chunk must remain between 20 and 40 ms");
+static_assert(kRealtimePlaybackPrebufferBytes < kRealtimePlaybackRingBytes,
+              "Realtime prebuffer must fit inside playback ring");
 
 struct RealtimeChunkQueue {
   uint8_t values[kRealtimeChunkBufferCount] = {};
@@ -352,7 +355,12 @@ struct RealtimeChunkQueue {
 constexpr uint32_t kRecordDrainTimeoutMs = 900;
 constexpr size_t kPlaybackChunkSamples = 2048;
 constexpr size_t kPlaybackChunkBytes = kPlaybackChunkSamples * sizeof(int16_t);
-constexpr size_t kPlaybackBufferCount = 2;
+// M5Unified may retain queued PCM buffers until DMA consumes them. Keep a
+// third rotating owner buffer while limiting the hardware queue to two.
+constexpr size_t kPlaybackBufferCount = 3;
+constexpr size_t kPlaybackSpeakerQueueDepth = 2;
+static_assert(kPlaybackBufferCount > kPlaybackSpeakerQueueDepth,
+              "Playback needs one owner buffer beyond the speaker queue");
 constexpr uint8_t kPlaybackSpectrumBands = 16;
 constexpr uint8_t kPlaybackSpectrumMaxBar = 18;
 constexpr size_t kOtaIoBufferBytes = 4096;
