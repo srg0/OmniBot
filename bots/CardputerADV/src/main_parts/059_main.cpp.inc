@@ -249,6 +249,149 @@
   renderDebugOverlay();
 }
 
+enum class RealtimeUiPhase : uint8_t {
+  Linking,
+  Ready,
+  Listening,
+  Thinking,
+  Speaking,
+};
+
+RealtimeUiPhase realtimeUiPhase() {
+  if (!gRealtimeConnected) {
+    return RealtimeUiPhase::Linking;
+  }
+  if (gRealtimeRecording) {
+    return RealtimeUiPhase::Listening;
+  }
+  // response.done can arrive after output audio has already started. Speaking
+  // must win over the still-set awaiting flag or the screen falsely says WAIT.
+  if (gRealtimePlaybackActive || gPlaybackActive) {
+    return RealtimeUiPhase::Speaking;
+  }
+  if (gRealtimeAwaiting) {
+    return RealtimeUiPhase::Thinking;
+  }
+  return RealtimeUiPhase::Ready;
+}
+
+void renderRealtimeExclusiveUi() {
+  static RealtimeUiPhase lastPhase = RealtimeUiPhase::Linking;
+  const RealtimeUiPhase phase = realtimeUiPhase();
+  const bool fullRedraw = gRealtimeUiDirty || phase != lastPhase;
+  auto& d = M5Cardputer.Display;
+
+  const uint16_t bg = rgb565_local(3, 7, 12);
+  const uint16_t panel = rgb565_local(7, 15, 23);
+  const uint16_t grid = rgb565_local(18, 35, 48);
+  const uint16_t muted = rgb565_local(119, 143, 157);
+  uint16_t accent = rgb565_local(47, 227, 255);
+  uint16_t accent2 = rgb565_local(157, 102, 255);
+  const char* phaseLabel = "READY";
+  switch (phase) {
+    case RealtimeUiPhase::Linking:
+      accent = rgb565_local(255, 151, 44);
+      accent2 = rgb565_local(255, 211, 106);
+      phaseLabel = "LINK";
+      break;
+    case RealtimeUiPhase::Listening:
+      accent = rgb565_local(255, 68, 92);
+      accent2 = rgb565_local(255, 178, 59);
+      phaseLabel = "LISTEN";
+      break;
+    case RealtimeUiPhase::Thinking:
+      accent = rgb565_local(246, 194, 74);
+      accent2 = rgb565_local(47, 227, 255);
+      phaseLabel = gRealtimeS1Thinking ? "S1 THINK" : "THINK";
+      break;
+    case RealtimeUiPhase::Speaking:
+      accent = rgb565_local(88, 240, 141);
+      accent2 = rgb565_local(47, 227, 255);
+      phaseLabel = "SPEAK";
+      break;
+    case RealtimeUiPhase::Ready:
+    default:
+      break;
+  }
+
+  d.startWrite();
+  if (fullRedraw) {
+    d.fillScreen(bg);
+    d.fillRoundRect(5, 5, 230, 125, 10, panel);
+    d.drawRoundRect(5, 5, 230, 125, 10, accent);
+    d.setFont(&fonts::Font2);
+    d.setTextColor(rgb565_local(239, 248, 252), panel);
+    d.setCursor(14, 12);
+    d.print("OPENCLAW REALTIME");
+    d.setTextColor(muted, panel);
+    d.setCursor(14, 112);
+    d.print("HALF DUPLEX");
+    d.setCursor(184, 112);
+    d.print("ESC EXIT");
+    d.drawRoundRect(11, 31, 218, 70, 8, grid);
+  }
+
+  // The exclusive screen only repaints this small region. The former full
+  // 240x135 sprite push took 102-183 ms in hardware traces and emptied the
+  // two 42.7 ms playRaw buffers. This partial update stays off the audio path.
+  constexpr int16_t waveX = 14;
+  constexpr int16_t waveY = 34;
+  constexpr int16_t waveW = 212;
+  constexpr int16_t waveH = 64;
+  constexpr int16_t centerY = waveY + waveH / 2;
+  d.fillRect(waveX, waveY, waveW, waveH, panel);
+  d.drawFastHLine(waveX + 4, centerY, waveW - 8, grid);
+
+  uint8_t level = gVoiceLevel8;
+  if (phase != RealtimeUiPhase::Listening && phase != RealtimeUiPhase::Speaking) {
+    level = phase == RealtimeUiPhase::Thinking ? 54 : 28;
+  }
+  const int16_t amplitude = clampValue<int16_t>(
+      3 + static_cast<int16_t>((static_cast<uint16_t>(level) * 23U) / 255U), 3, 26);
+  const float travel = static_cast<float>(millis() % 5000U) * 0.0062f;
+  int16_t previousX = waveX + 5;
+  int16_t previousA = centerY;
+  int16_t previousB = centerY;
+  for (int16_t i = 0; i < 34; ++i) {
+    const int16_t x = waveX + 5 + i * 6;
+    const float envelope = 0.38f + 0.62f * sinf((static_cast<float>(i) / 33.0f) * kPi);
+    const float angle = travel + static_cast<float>(i) * 0.56f;
+    const int16_t offset = static_cast<int16_t>(sinf(angle) * amplitude * envelope);
+    const int16_t yA = centerY + offset;
+    const int16_t yB = centerY - offset;
+    if (i > 0) {
+      d.drawLine(previousX, previousA, x, yA, accent);
+      d.drawLine(previousX, previousB, x, yB, accent2);
+    }
+    if ((i % 4) == 0) {
+      d.drawFastVLine(x, min(yA, yB), max<int16_t>(1, abs(yB - yA)), grid);
+      d.fillCircle(x, yA, 2, accent);
+      d.fillCircle(x, yB, 2, accent2);
+    }
+    previousX = x;
+    previousA = yA;
+    previousB = yB;
+  }
+
+  d.fillRect(147, 10, 78, 17, panel);
+  d.setFont(&fonts::Font2);
+  d.setTextColor(accent, panel);
+  const int16_t phaseWidth = d.textWidth(phaseLabel);
+  d.setCursor(222 - phaseWidth, 12);
+  d.print(phaseLabel);
+
+  d.fillRect(91, 108, 84, 9, panel);
+  d.drawRoundRect(92, 110, 80, 5, 2, grid);
+  const int16_t meterWidth = static_cast<int16_t>((static_cast<uint16_t>(level) * 76U) / 255U);
+  if (meterWidth > 0) {
+    d.fillRoundRect(94, 112, meterWidth, 2, 1, accent);
+  }
+  d.endWrite();
+
+  lastPhase = phase;
+  gRealtimeUiDirty = false;
+}
+
 void renderClockUi() {
   renderAssistantPulseUi();
 }

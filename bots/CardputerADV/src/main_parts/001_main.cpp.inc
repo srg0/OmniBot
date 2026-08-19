@@ -53,7 +53,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.126-dev"
+#define APP_VERSION "0.2.127-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -303,10 +303,12 @@ constexpr uint8_t kRealtimeBinaryModelPcmType = 0x02;
 constexpr uint8_t kRealtimeBinaryVersion = 1;
 // Realtime playback is fixed-memory and half-duplex on CardPuter ADV.
 // The ring absorbs ~683 ms of model/network jitter without allocating during
-// a turn. Start after 4 KiB (~85 ms); the Bridge then supplies paced PCM.
+// a turn. Queue two 8 KiB owner buffers before playback (~341 ms of PCM). This
+// is deliberately larger than the measured 102-183 ms full-screen stalls and
+// keeps M5Unified's two retained playRaw buffers continuously owned.
 constexpr size_t kRealtimePlaybackRingBytes = 32 * 1024;
-constexpr size_t kRealtimePlaybackPrebufferBytes = 4 * 1024;
-constexpr size_t kRealtimePlaybackChunkBytes = 2 * 1024;
+constexpr size_t kRealtimePlaybackPrebufferBytes = 16 * 1024;
+constexpr size_t kRealtimePlaybackChunkBytes = 8 * 1024;
 constexpr uint32_t kRealtimeListenRestartDelayMs = 120;
 constexpr uint32_t kRealtimeStreamStallTimeoutMs = 4000;
 constexpr uint32_t kRealtimeSpeakerStallTimeoutMs = 2500;
@@ -353,7 +355,7 @@ struct RealtimeChunkQueue {
   }
 };
 constexpr uint32_t kRecordDrainTimeoutMs = 900;
-constexpr size_t kPlaybackChunkSamples = 2048;
+constexpr size_t kPlaybackChunkSamples = 4096;
 constexpr size_t kPlaybackChunkBytes = kPlaybackChunkSamples * sizeof(int16_t);
 // M5Unified may retain queued PCM buffers until DMA consumes them. Keep a
 // third rotating owner buffer while limiting the hardware queue to two.

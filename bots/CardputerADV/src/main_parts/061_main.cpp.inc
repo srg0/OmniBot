@@ -260,11 +260,11 @@ void serviceRealtimeExclusiveLoop(uint32_t loopStartMs) {
   gWifiReady = WiFi.status() == WL_CONNECTED;
   pollTyping();
   serviceRealtimeVoice();
-  updateBlink();
 
   const uint32_t now = millis();
-  if (now - gLastRenderMs >= kBusyRenderIntervalMs) {
-    render();
+  const uint32_t realtimeRenderIntervalMs = gRealtimePlaybackActive ? 90U : 60U;
+  if (gRealtimeUiDirty || now - gLastRenderMs >= realtimeRenderIntervalMs) {
+    renderRealtimeExclusiveUi();
     gLastRenderMs = now;
   }
   const uint32_t loopCostMs = millis() - loopStartMs;

@@ -1,0 +1,764 @@
+{
+  "verdict": "READY",
+  "release": {
+    "name": "Cardputer ADV Realtime playback 0.2.127-dev",
+    "ref": "0.2.127-dev/c6b21bd/tree-4c0d60bbbdfe61c4",
+    "evidence_cutoff": "2026-08-19T02:36:05.693097+00:00",
+    "gate_scope": "canary_entry",
+    "production_like_stateful": true,
+    "applicability": {
+      "tier": "MEANINGFUL_RISK",
+      "rationale": "Realtime crosses a paced network source, a fixed ring, retained pointer ownership, an asynchronous I2S consumer, and deadline-sensitive display work."
+    }
+  },
+  "model": {
+    "states": [
+      "buffering",
+      "playing",
+      "ui_blocked",
+      "starved",
+      "complete"
+    ],
+    "initial_states": [
+      "buffering"
+    ],
+    "transitions": [
+      {
+        "name": "receive_pcm",
+        "guard": "TCP frame available",
+        "effect": "append to fixed ring"
+      },
+      {
+        "name": "start_playback",
+        "guard": "ring >= prebuffer",
+        "effect": "queue two owner buffers"
+      },
+      {
+        "name": "consume_dma",
+        "guard": "speaker queue non-empty",
+        "effect": "consume 48 PCM bytes per millisecond"
+      },
+      {
+        "name": "refill_owner",
+        "guard": "queue slot free and ring >= chunk",
+        "effect": "queue a distinct owner buffer"
+      },
+      {
+        "name": "render_partial",
+        "guard": "visual deadline due",
+        "effect": "block Arduino loop within budget"
+      },
+      {
+        "name": "finish",
+        "guard": "source, ring, and queue empty",
+        "effect": "enter complete"
+      }
+    ],
+    "actors": [
+      {
+        "name": "bridge_pacer",
+        "ownership": "20 ms source clock and TCP writes"
+      },
+      {
+        "name": "arduino_loop",
+        "ownership": "WebSocket drain, ring producer, and owner-buffer refill"
+      },
+      {
+        "name": "m5_speaker_task",
+        "ownership": "current/next playRaw pointers and I2S consumption"
+      },
+      {
+        "name": "display",
+        "ownership": "exclusive partial Realtime region"
+      }
+    ],
+    "faults": [
+      {
+        "name": "display stall",
+        "injection": "deterministic render-cost class"
+      },
+      {
+        "name": "network pause",
+        "injection": "bounded frame pause followed by TCP catch-up"
+      },
+      {
+        "name": "timer jitter",
+        "injection": "zero-mean Bridge-frame schedule offsets"
+      },
+      {
+        "name": "short final PCM tail",
+        "injection": "response length not divisible by owner chunk"
+      }
+    ],
+    "invariants": [
+      {
+        "name": "no speaker gap after playback starts",
+        "predicate": "no speaker gap after playback starts"
+      },
+      {
+        "name": "no ring overflow",
+        "predicate": "no ring overflow"
+      },
+      {
+        "name": "two retained playRaw buffers always have distinct owners",
+        "predicate": "two retained playRaw buffers always have distinct owners"
+      },
+      {
+        "name": "speaking UI wins over stale awaiting state",
+        "predicate": "speaking UI wins over stale awaiting state"
+      },
+      {
+        "name": "screensaver cannot run in Realtime exclusive mode",
+        "predicate": "screensaver cannot run in Realtime exclusive mode"
+      }
+    ],
+    "fences": [
+      {
+        "name": "two owner buffers plus refill deadline",
+        "purpose": "keep M5Unified current/next buffers owned until consumed"
+      },
+      {
+        "name": "prebuffer before playback",
+        "purpose": "absorb Bridge and UI scheduling jitter before I2S starts"
+      },
+      {
+        "name": "partial display updates during playback",
+        "purpose": "keep repeated UI stalls below one owner-buffer duration"
+      },
+      {
+        "name": "speaking phase precedence",
+        "purpose": "prevent stale awaiting state from hiding active playback"
+      },
+      {
+        "name": "screensaver exclusion",
+        "purpose": "prevent CMatrix from owning the display in Realtime"
+      }
+    ],
+    "dimensions": [
+      {
+        "name": "playback_layout",
+        "cardinality": 3,
+        "role": "ownership"
+      },
+      {
+        "name": "ui_stall_class",
+        "cardinality": 8,
+        "role": "deadline"
+      },
+      {
+        "name": "ui_period_class",
+        "cardinality": 5,
+        "role": "timing"
+      },
+      {
+        "name": "timer_jitter_class",
+        "cardinality": 7,
+        "role": "timing"
+      },
+      {
+        "name": "network_pause_class",
+        "cardinality": 7,
+        "role": "crash"
+      },
+      {
+        "name": "response_duration_class",
+        "cardinality": 6,
+        "role": "timing"
+      },
+      {
+        "name": "phase_offset_class",
+        "cardinality": 5,
+        "role": "timing"
+      },
+      {
+        "name": "loop_cadence_class",
+        "cardinality": 5,
+        "role": "timing"
+      },
+      {
+        "name": "bridge_start_offset_class",
+        "cardinality": 5,
+        "role": "timing"
+      },
+      {
+        "name": "completion_alignment_class",
+        "cardinality": 4,
+        "role": "deadline"
+      },
+      {
+        "name": "clock_drift_class",
+        "cardinality": 5,
+        "role": "timing"
+      },
+      {
+        "name": "tcp_backlog_class",
+        "cardinality": 16,
+        "role": "timing"
+      }
+    ],
+    "reductions": [
+      {
+        "kind": "symmetry",
+        "status": "applied",
+        "artifact": "bots/CardputerADV/scripts/realtime_playback_model.py",
+        "rationale": "steady-state PCM frame indices with the same timing class are interchangeable"
+      },
+      {
+        "kind": "equivalence",
+        "status": "applied",
+        "artifact": "bots/CardputerADV/scripts/realtime_playback_model.py",
+        "rationale": "concrete delays map to boundary-preserving render, jitter, and pause classes"
+      },
+      {
+        "kind": "partial_order",
+        "status": "applied",
+        "artifact": "bots/CardputerADV/scripts/realtime_playback_model.py",
+        "rationale": "independent frame arrival and display work commute until the next loop drain"
+      }
+    ],
+    "limitations": [
+      "host model cannot measure analog amplifier, speaker, or real SPI duration",
+      "physical OTA canary remains required before broad release"
+    ]
+  },
+  "iterations": {
+    "iteration_1_current": {
+      "gap_ms": 24331,
+      "starvation_events": 1,
+      "ring_overflow_bytes": 114752,
+      "played_bytes": 269248,
+      "first_playback_ms": 80,
+      "max_tcp_backlog_bytes": 9600,
+      "max_ring_bytes": 32768,
+      "transitions": 30000,
+      "passed": false
+    },
+    "iteration_2_larger_buffer": {
+      "gap_ms": 22365,
+      "starvation_events": 1,
+      "ring_overflow_bytes": 25024,
+      "played_bytes": 358976,
+      "first_playback_ms": 160,
+      "max_tcp_backlog_bytes": 9600,
+      "max_ring_bytes": 32768,
+      "transitions": 30000,
+      "passed": false
+    },
+    "iteration_3_candidate": {
+      "gap_ms": 0,
+      "starvation_events": 0,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 384000,
+      "first_playback_ms": 345,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 17280,
+      "transitions": 8346,
+      "passed": true
+    }
+  },
+  "coverage": {
+    "raw_dimensions": {
+      "playback_layout": 3,
+      "ui_stall_class": 8,
+      "ui_period_class": 5,
+      "timer_jitter_class": 7,
+      "network_pause_class": 7,
+      "response_duration_class": 6,
+      "phase_offset_class": 5,
+      "loop_cadence_class": 5,
+      "bridge_start_offset_class": 5,
+      "completion_alignment_class": 4,
+      "clock_drift_class": 5,
+      "tcp_backlog_class": 16
+    },
+    "raw_cartesian_space": 1411200000,
+    "raw_equivalent_covered": 1411200000,
+    "raw_equivalence_artifact": "bots/CardputerADV/scripts/realtime_playback_model.py",
+    "execution_counting_method": "disjoint",
+    "actual_executed_claim": 1074952,
+    "executed_tests": {
+      "directed_iterations": 3,
+      "reduced_paths": 432,
+      "fuzz_transitions": 1074505,
+      "boundary_fixtures": 7,
+      "fence_mutations": 5
+    },
+    "actual_executed_tests": 1074952,
+    "actual_executed_transitions": 2742421,
+    "exhaustive_reduced_tests": 432,
+    "pairwise_coverage_percent": 100,
+    "critical_threewise_coverage_percent": 100,
+    "fuzz_seeds": [
+      1000,
+      1001,
+      1002,
+      1003,
+      1004,
+      1005,
+      1006,
+      1007,
+      1008,
+      1009,
+      1010,
+      1011,
+      1012,
+      1013,
+      1014,
+      1015,
+      1016,
+      1017,
+      1018,
+      1019,
+      1020,
+      1021,
+      1022,
+      1023,
+      1024,
+      1025,
+      1026,
+      1027,
+      1028,
+      1029,
+      1030,
+      1031,
+      1032,
+      1033,
+      1034,
+      1035,
+      1036,
+      1037,
+      1038,
+      1039,
+      1040,
+      1041,
+      1042,
+      1043,
+      1044,
+      1045,
+      1046,
+      1047,
+      1048,
+      1049,
+      1050,
+      1051,
+      1052,
+      1053,
+      1054,
+      1055,
+      1056,
+      1057,
+      1058,
+      1059,
+      1060,
+      1061,
+      1062,
+      1063,
+      1064,
+      1065,
+      1066,
+      1067,
+      1068,
+      1069,
+      1070,
+      1071,
+      1072,
+      1073,
+      1074,
+      1075,
+      1076,
+      1077,
+      1078,
+      1079,
+      1080,
+      1081,
+      1082,
+      1083,
+      1084,
+      1085,
+      1086,
+      1087,
+      1088,
+      1089,
+      1090,
+      1091,
+      1092,
+      1093,
+      1094,
+      1095,
+      1096,
+      1097,
+      1098,
+      1099,
+      1100,
+      1101,
+      1102,
+      1103,
+      1104,
+      1105,
+      1106,
+      1107,
+      1108,
+      1109,
+      1110,
+      1111,
+      1112,
+      1113,
+      1114,
+      1115,
+      1116,
+      1117,
+      1118,
+      1119,
+      1120,
+      1121,
+      1122,
+      1123,
+      1124,
+      1125,
+      1126,
+      1127,
+      1128,
+      1129,
+      1130,
+      1131,
+      1132,
+      1133,
+      1134,
+      1135,
+      1136,
+      1137,
+      1138,
+      1139,
+      1140,
+      1141,
+      1142,
+      1143,
+      1144,
+      1145,
+      1146,
+      1147,
+      1148,
+      1149,
+      1150,
+      1151,
+      1152,
+      1153,
+      1154,
+      1155,
+      1156,
+      1157,
+      1158,
+      1159,
+      1160,
+      1161,
+      1162,
+      1163,
+      1164,
+      1165,
+      1166,
+      1167,
+      1168,
+      1169,
+      1170,
+      1171,
+      1172,
+      1173,
+      1174,
+      1175,
+      1176,
+      1177,
+      1178,
+      1179,
+      1180,
+      1181,
+      1182,
+      1183,
+      1184,
+      1185,
+      1186,
+      1187,
+      1188,
+      1189,
+      1190,
+      1191,
+      1192,
+      1193,
+      1194,
+      1195,
+      1196,
+      1197,
+      1198,
+      1199
+    ],
+    "fuzz_transitions": 1074505,
+    "mutation_score": 100.0,
+    "mutation_score_percent": 100.0,
+    "reduced_exploration": {
+      "complete": true,
+      "states": 5,
+      "transitions": 1667916,
+      "artifact": "docs/realtime-playback-gate-0.2.127.json"
+    },
+    "pairwise": {
+      "complete": true,
+      "coverage_percent": 100,
+      "artifact": "docs/realtime-playback-gate-0.2.127.json"
+    },
+    "critical_threewise": {
+      "complete": true,
+      "coverage_percent": 100,
+      "dimensions": [
+        "playback_layout",
+        "ui_stall_class",
+        "network_pause_class",
+        "completion_alignment_class"
+      ],
+      "artifact": "docs/realtime-playback-gate-0.2.127.json"
+    },
+    "fuzz": {
+      "deterministic": true,
+      "seeds_retained": true,
+      "seed_artifact": "docs/realtime-playback-gate-0.2.127.json",
+      "executed": 1074505
+    },
+    "invariant_results": [
+      {
+        "name": "no speaker gap after playback starts",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "no ring overflow",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "two retained playRaw buffers always have distinct owners",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "speaking UI wins over stale awaiting state",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "screensaver cannot run in Realtime exclusive mode",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      }
+    ],
+    "mutations": [
+      {
+        "fence": "two owner buffers plus refill deadline",
+        "executed": true,
+        "counterexample": "iteration_1_current: small retained buffers starve"
+      },
+      {
+        "fence": "prebuffer before playback",
+        "executed": true,
+        "counterexample": "no_prebuffer: playback starts before a complete owner queue"
+      },
+      {
+        "fence": "partial display updates during playback",
+        "executed": true,
+        "counterexample": "full_screen_during_playback: repeated 360 ms display stall"
+      },
+      {
+        "fence": "speaking phase precedence",
+        "executed": true,
+        "counterexample": "awaiting-first mutant reports THINK while playback=true"
+      },
+      {
+        "fence": "screensaver exclusion",
+        "executed": true,
+        "counterexample": "exclusion mutant permits CMatrix while exclusive=true"
+      }
+    ],
+    "boundary_fixtures": [
+      {
+        "name": "zero_partial_render_cost",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "one_time_full_redraw_183ms",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "partial_render_budget_80ms",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "just_below_owner_refill_deadline_169ms",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "network_pause_160ms",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      },
+      {
+        "name": "empty_final_tail",
+        "passed": true,
+        "artifact": "docs/realtime-playback-gate-0.2.127.json"
+      }
+    ]
+  },
+  "exhaustive_failures": [],
+  "fuzz_failures": [],
+  "boundaries": {
+    "zero_partial_render_cost": {
+      "gap_ms": 0,
+      "starvation_events": 0,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 288000,
+      "first_playback_ms": 340,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 17280,
+      "transitions": 6341,
+      "passed": true
+    },
+    "one_time_full_redraw_183ms": {
+      "gap_ms": 0,
+      "starvation_events": 0,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 288000,
+      "first_playback_ms": 340,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 17280,
+      "transitions": 6341,
+      "passed": true
+    },
+    "partial_render_budget_80ms": {
+      "gap_ms": 0,
+      "starvation_events": 0,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 288000,
+      "first_playback_ms": 340,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 17280,
+      "transitions": 6364,
+      "passed": true
+    },
+    "just_below_owner_refill_deadline_169ms": {
+      "gap_ms": 0,
+      "starvation_events": 0,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 288000,
+      "first_playback_ms": 340,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 17280,
+      "transitions": 6439,
+      "passed": true
+    },
+    "owner_refill_deadline_exceeded_183ms": {
+      "gap_ms": 4,
+      "starvation_events": 1,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 288000,
+      "first_playback_ms": 340,
+      "max_tcp_backlog_bytes": 9600,
+      "max_ring_bytes": 17280,
+      "transitions": 6380,
+      "passed": false
+    },
+    "network_pause_160ms": {
+      "gap_ms": 0,
+      "starvation_events": 0,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 288000,
+      "first_playback_ms": 340,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 17280,
+      "transitions": 6341,
+      "passed": true
+    },
+    "empty_final_tail": {
+      "gap_ms": 0,
+      "starvation_events": 0,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 96048,
+      "first_playback_ms": 340,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 17280,
+      "transitions": 2342,
+      "passed": true
+    }
+  },
+  "mutations": {
+    "small_owner_buffers": {
+      "gap_ms": 27691,
+      "starvation_events": 1,
+      "ring_overflow_bytes": 12672,
+      "played_bytes": 107328,
+      "first_playback_ms": 80,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 32768,
+      "transitions": 30000,
+      "passed": false
+    },
+    "no_prebuffer": {
+      "gap_ms": 229,
+      "starvation_events": 1,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 288000,
+      "first_playback_ms": 0,
+      "max_tcp_backlog_bytes": 8640,
+      "max_ring_bytes": 11328,
+      "transitions": 6230,
+      "passed": false
+    },
+    "full_screen_during_playback": {
+      "gap_ms": 126,
+      "starvation_events": 1,
+      "ring_overflow_bytes": 0,
+      "played_bytes": 120000,
+      "first_playback_ms": 340,
+      "max_tcp_backlog_bytes": 17280,
+      "max_ring_bytes": 22208,
+      "transitions": 3044,
+      "passed": false
+    }
+  },
+  "phase_invariants": {
+    "speaking_wins_over_awaiting": true,
+    "listening_wins_over_stale_playback": true,
+    "disconnected_is_linking": true,
+    "screensaver_fence_present": true
+  },
+  "firmware_contract": {
+    "ring_32k": true,
+    "prebuffer_16k": true,
+    "owner_chunk_8k": true,
+    "three_owner_buffers": true,
+    "speaker_queue_depth_two": true,
+    "realtime_analyzer_is_level_only": true,
+    "exclusive_loop_uses_partial_ui": true,
+    "speaking_precedes_awaiting": true,
+    "screensaver_excluded": true
+  },
+  "canaries": {
+    "synthetic": {
+      "name": "OTA deterministic Realtime response",
+      "owner": "Codex plus Cardputer user",
+      "criteria": "Launch Realtime and require underruns=0, dropped=0, no periodic gap, and correct phase",
+      "observability": "device serial RT latency/starvation logs plus Bridge session journal",
+      "rollback": "republish tagged cardputer-realtime-stable-0.2.123-dev firmware",
+      "executed": false,
+      "passed": null
+    },
+    "natural": {
+      "name": "three hands-free user turns",
+      "owner": "Cardputer user",
+      "criteria": "No crackle or screensaver; DNA reacts to microphone and model PCM; LISTEN/THINK/SPEAK match reality",
+      "observability": "human audio/UI observation correlated with Bridge and optional serial logs",
+      "rollback": "republish tagged cardputer-realtime-stable-0.2.123-dev firmware",
+      "executed": false,
+      "passed": null
+    }
+  }
+}

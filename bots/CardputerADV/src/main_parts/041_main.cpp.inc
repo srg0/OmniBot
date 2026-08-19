@@ -88,6 +88,7 @@ void resetRealtimePlaybackState(bool stopSpeaker) {
   gRealtimePlaybackDroppedBytes = 0;
   gRealtimePlaybackUnderruns = 0;
   gRealtimeS1Thinking = false;
+  gRealtimeUiDirty = true;
   gRealtimePlaybackNextBuffer = 0;
   gRealtimeReplyBytes = 0;
   gRealtimeLatencyOriginMs = 0;
@@ -179,8 +180,11 @@ void serviceRealtimePlayback() {
     return;
   }
 
-  if (gRealtimePlaybackFeeding && speakerIdle && !gRealtimeAudioComplete &&
-      gRealtimePlaybackBufferedBytes < kRealtimePlaybackChunkBytes) {
+  // Any idle speaker after playback has started is an audible starvation,
+  // even when the ring still contains data. The old predicate only counted an
+  // empty ring and therefore reported zero while UI stalls emptied playRaw.
+  if (gRealtimePlaybackFeeding && speakerIdle && gRealtimePlaybackEverStarted &&
+      (!gRealtimeAudioComplete || gRealtimePlaybackBufferedBytes > 0)) {
     gRealtimePlaybackFeeding = false;
     ++gRealtimePlaybackUnderruns;
     appendRuntimeLog(
@@ -233,9 +237,10 @@ void serviceRealtimePlayback() {
     }
     uint8_t* buffer = gPlaybackStreamBuffers[gRealtimePlaybackNextBuffer];
     const size_t readBytes = readRealtimePlaybackRing(buffer, chunk);
-    updatePlaybackAnalyzerFromSamples(reinterpret_cast<const int16_t*>(buffer),
-                                      readBytes / sizeof(int16_t),
-                                      kRealtimeModelSampleRate);
+    // Realtime needs a responsive level meter, not the 16-band Goertzel pass
+    // used by the file player. Keep audio feeding ahead of visualization.
+    updateVoiceLevelFromSamples(reinterpret_cast<const int16_t*>(buffer),
+                                readBytes / sizeof(int16_t));
     const bool firstChunk = M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0;
     const bool queued = M5Cardputer.Speaker.playRaw(reinterpret_cast<const int16_t*>(buffer),
                                                      readBytes / sizeof(int16_t),
@@ -300,10 +305,17 @@ bool enterRealtimeExclusiveMode() {
     gDynamicPlaybackBuffer = nullptr;
   }
   pauseHubWebSocketForVoice();
+  // Realtime owns the display too. Wake an already active screensaver before
+  // the exclusive early-return loop starts, otherwise CMatrix remains the
+  // selected UI and is repeatedly drawn over the voice state.
+  if (!handleScreensaverWake()) {
+    markUserActivity();
+  }
   gRealtimePreviousWifiSleep = WiFi.getSleep();
   gRealtimeWifiSleepSaved = true;
   WiFi.setSleep(WIFI_PS_NONE);
   gRealtimeExclusiveMode = true;
+  gRealtimeUiDirty = true;
   logf("[RT] exclusive enter duplex=half ring=%u prebuffer=%u buffers=%u queue=%u restart_ms=%u",
        static_cast<unsigned>(kRealtimePlaybackRingBytes),
        static_cast<unsigned>(kRealtimePlaybackPrebufferBytes),
@@ -317,6 +329,8 @@ void leaveRealtimeExclusiveMode(const String& reason) {
   resetRealtimePlaybackState(true);
   gPlaybackActive = false;
   gRealtimeExclusiveMode = false;
+  gRealtimeUiDirty = true;
+  gLastRenderMs = 0;
   if (gRealtimeWifiSleepSaved) {
     WiFi.setSleep(gRealtimePreviousWifiSleep);
     gRealtimeWifiSleepSaved = false;
