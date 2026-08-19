@@ -226,7 +226,8 @@ void pollTyping() {
   bool downHeld = hasHidKey(keys, 0xD9);
   bool leftHeld = hasHidKey(keys, 0xD8);
   bool rightHeld = hasHidKey(keys, 0xD7);
-  bool escHeld = hasHidKey(keys, kHidKeyEscape);
+  const bool physicalTcaEscHeld = gUseTcaKeyboard && gTcaPressedKeys[0][0];
+  bool escHeld = hasHidKey(keys, kHidKeyEscape) || physicalTcaEscHeld;
   bool upDown = upHeld && !pUp;
   bool downDown = downHeld && !pDown;
   bool leftDown = leftHeld && !pLeft;
@@ -239,7 +240,9 @@ void pollTyping() {
   }
   char curWordChar = keys.word.empty() ? 0 : keys.word[0];
   bool charDown = !wordSignature.isEmpty() && wordSignature != pWordSignature;
-  bool escDown = (escHeld && !pEsc) || (charDown && (curWordChar == '`' || curWordChar == '~'));
+  bool escDown = (escHeld && !pEsc) ||
+                 (charDown && (curWordChar == '`' || curWordChar == '~')) ||
+                 (gPlaybackActive && physicalTcaEscHeld);
   bool tabPrevCombo = keys.tab && (leftDown || upDown ||
                                    (charDown && (curWordChar == ',' || curWordChar == ';' || curWordChar == '<')));
   bool tabNextCombo = keys.tab && (rightDown || downDown ||

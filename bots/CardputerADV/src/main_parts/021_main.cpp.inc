@@ -216,6 +216,7 @@ void stopPlaybackStream() {
   gPlaybackStreamRawPcm = false;
   gPlaybackStartedMs = 0;
   gPlaybackDurationMs = 0;
+  gPlaybackLastProgressMs = 0;
   resetPlaybackAnalyzer();
   if (gDynamicPlaybackBuffer) {
     free(gDynamicPlaybackBuffer);

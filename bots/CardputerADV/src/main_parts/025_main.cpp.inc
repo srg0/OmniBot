@@ -175,7 +175,10 @@ void pollTcaKeyboardEvents() {
       continue;
     }
 
-    bool pressed = (keyEvent & 0x80) != 0;
+    // TCA8418 events 0x01..0x50 are presses; bit 7 marks releases.
+    // Treating bit 7 as "pressed" leaves every released key latched and can
+    // pin the UI in the launcher/playback screen until reset.
+    bool pressed = (keyEvent & 0x80) == 0;
     uint8_t rawValue = static_cast<uint8_t>(keyEvent & 0x7F);
     uint8_t row = 0xFF;
     uint8_t col = 0xFF;

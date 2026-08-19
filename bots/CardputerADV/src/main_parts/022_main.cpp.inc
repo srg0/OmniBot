@@ -18,6 +18,7 @@ bool startPlaybackStreamFromRawPcmFile(const String& path, uint32_t sampleRate, 
   gPlaybackStreamRawPcm = true;
   gPlaybackStartedMs = 0;
   gPlaybackDurationMs = playbackDurationMsForBytes(audioLen, sampleRate);
+  gPlaybackLastProgressMs = millis();
   resetPlaybackAnalyzer();
   gPlaybackStreaming = true;
   gPlaybackActive = true;
@@ -65,6 +66,7 @@ bool startPlaybackStreamFromWavFile(const String& path, const String& diag) {
   gPlaybackStreamRawPcm = false;
   gPlaybackStartedMs = 0;
   gPlaybackDurationMs = playbackDurationMsForBytes(info.dataBytes, info.sampleRate);
+  gPlaybackLastProgressMs = millis();
   resetPlaybackAnalyzer();
   gPlaybackStreaming = true;
   gPlaybackActive = true;
@@ -124,17 +126,25 @@ void servicePlaybackStream() {
       gPlaybackStartedMs = millis();
     }
     gPlaybackStreamRemainingBytes -= readBytes;
+    gPlaybackLastProgressMs = millis();
     gPlaybackStreamNextBuffer = (gPlaybackStreamNextBuffer + 1) % kPlaybackBufferCount;
   }
 
-  const bool speakerDone = M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0;
+  const uint32_t now = millis();
+  const int speakerQueue = M5Cardputer.Speaker.isPlaying(kPlaybackChannel);
+  const bool speakerDone = speakerQueue == 0;
+  const bool playbackComplete = gPlaybackStreamRemainingBytes == 0 && speakerDone;
   const bool playbackTimedOut =
-    gPlaybackStreamRemainingBytes == 0 &&
     gPlaybackStartedMs != 0 &&
-    millis() - gPlaybackStartedMs > gPlaybackDurationMs + kPlaybackFinishGraceMs;
-  if (gPlaybackStreamRemainingBytes == 0 && (speakerDone || playbackTimedOut)) {
-    if (playbackTimedOut && !speakerDone) {
-      appendRuntimeLog("AUDIO", "playback forced finish after speaker busy", true);
+    now - gPlaybackStartedMs > gPlaybackDurationMs + kPlaybackFinishGraceMs;
+  const bool playbackStalled =
+    gPlaybackLastProgressMs != 0 &&
+    now - gPlaybackLastProgressMs > kPlaybackFinishGraceMs;
+  if (playbackComplete || playbackTimedOut || playbackStalled) {
+    if (!playbackComplete) {
+      appendRuntimeLog("AUDIO", "playback watchdog remaining=" +
+                                    String(static_cast<unsigned>(gPlaybackStreamRemainingBytes)) +
+                                    " queue=" + String(speakerQueue), true);
     }
     bool removeTempPcm = gPlaybackStreamPath == kActiveTtsPcmPath;
     fs::FS* fs = activeVoiceFs();

@@ -127,6 +127,7 @@ uint8_t gPlaybackStreamBuffers[kPlaybackBufferCount][kPlaybackChunkBytes];
 uint8_t gOtaIoBuffer[kOtaIoBufferBytes];
 uint32_t gPlaybackStartedMs = 0;
 uint32_t gPlaybackDurationMs = 0;
+uint32_t gPlaybackLastProgressMs = 0;
 int16_t gVoiceTickerX = 90;
 uint8_t gVoiceGraphSpeed = 0;
 uint8_t gVoiceLevel8 = 28;
