@@ -120,7 +120,6 @@ WebSocketsClient gRealtimeWs;
 DNSServer gSetupDns;
 WebServer gSetupServer(80);
 M5Canvas gCanvas(&M5Cardputer.Display);
-Adafruit_TCA8418 gTcaKeyboard;
 SPIClass gSdSpi(FSPI);
 MFRC522 gRfidReader(kRfidCsPin, kRfidResetPin);
 
@@ -180,7 +179,6 @@ bool gPlaybackActive = false;
 bool gResumeWsAfterVoice = false;
 bool gImuEnabled = false;
 bool gDebugOverlayVisible = false;
-bool gUseTcaKeyboard = false;
 bool gStorageReady = false;
 bool gLittleFsReady = false;
 bool gSdReady = false;

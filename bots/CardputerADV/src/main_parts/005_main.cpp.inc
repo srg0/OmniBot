@@ -27,7 +27,6 @@ String gLastKeySignature;
 EmojiCacheEntry gEmojiCache[kEmojiCacheCap];
 uint8_t gEmojiCacheSize = 0;
 size_t gEmojiAssetCount = 0;
-bool gTcaPressedKeys[4][14] = {};
 bool gCtrlSoloHeld = false;
 bool gCtrlSoloCandidate = false;
 bool gG0VoiceHeld = false;
@@ -35,7 +34,6 @@ bool gRecordingToFile = false;
 bool gRecordFileWriteFailed = false;
 bool gPlaybackStreaming = false;
 uint8_t* gDynamicPlaybackBuffer = nullptr;
-volatile bool gTcaInterruptPending = false;
 bool gTimeZoneConfigured = false;
 bool gTimeValid = false;
 bool gRealtimeActive = false;
@@ -192,10 +190,6 @@ uint8_t gCMatrixSpeed[kCMatrixCols] = {};
 uint32_t gCMatrixLastStepMs = 0;
 uint16_t gCMatrixTick = 0;
 bool gCMatrixInitialized = false;
-
-void IRAM_ATTR onTcaKeyboardInterrupt() {
-  gTcaInterruptPending = true;
-}
 
 void startHubWebSocket();
 void pauseHubWebSocketForVoice();
@@ -367,16 +361,3 @@ void applySpeakerVolumeSetting();
 bool handleScreensaverWake();
 void markUserActivity();
 void serviceIdleScreensaver();
-
-void mapTcaRawKeyToPhysical(uint8_t keyValue, uint8_t& row, uint8_t& col) {
-  uint8_t unit = keyValue % 10;
-  uint8_t tens = keyValue / 10;
-  if (unit >= 1 && unit <= 8 && tens <= 6) {
-    uint8_t unitZero = unit - 1;
-    row = unitZero & 0x03;
-    col = (tens << 1) | (unitZero >> 2);
-    return;
-  }
-  row = 0xFF;
-  col = 0xFF;
-}

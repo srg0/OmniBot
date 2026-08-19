@@ -176,7 +176,7 @@ void setup() {
 
   auto cfg = M5.config();
   cfg.internal_imu = true;
-  M5Cardputer.begin(cfg, false);
+  M5Cardputer.begin(cfg, true);
   M5Cardputer.Display.setRotation(1);
   M5Cardputer.Display.setBrightness(180);
   M5Cardputer.Display.setFont(&fonts::Font2);
