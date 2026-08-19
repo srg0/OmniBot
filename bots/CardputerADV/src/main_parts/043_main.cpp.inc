@@ -61,8 +61,11 @@ void serviceRealtimeVoice() {
     setFaceMode(FaceMode::Error);
     return;
   }
+  const uint32_t responseTimeoutMs = gRealtimeS1Thinking
+    ? kRealtimeS1ResponseTimeoutMs
+    : kRealtimeResponseTimeoutMs;
   if (gRealtimeAwaiting && gRealtimeAwaitingStartedMs != 0 &&
-      now - gRealtimeAwaitingStartedMs > 45000) {
+      now - gRealtimeAwaitingStartedMs > responseTimeoutMs) {
     logf("[RT] response timeout connected=%d free=%u largest=%u",
          static_cast<int>(gRealtimeConnected),
          static_cast<unsigned>(ESP.getFreeHeap()),

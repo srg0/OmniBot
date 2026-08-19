@@ -149,6 +149,11 @@ uint32_t currentRecordLimitMs() {
 }
 
 void initSpeaker() {
+  auto speakerCfg = M5Cardputer.Speaker.config();
+  // M5Unified consumes retained playRaw buffers on its own task. Keep that
+  // consumer above the UI/network loop so a sprite push cannot starve I2S.
+  speakerCfg.task_priority = max<uint8_t>(speakerCfg.task_priority, 3);
+  M5Cardputer.Speaker.config(speakerCfg);
   M5Cardputer.Speaker.begin();
   M5Cardputer.Speaker.setVolume(gSpeakerVolume);
 }

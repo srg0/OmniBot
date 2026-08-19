@@ -77,6 +77,13 @@
       modeName = action["screen"] | "";
     }
     if (mapActionUiMode(modeName, mode)) {
+      if (gRealtimeActive || gRealtimeConnected || gRealtimeRecording || gRealtimeAwaiting) {
+        gRealtimeDeferredUiMode = mode;
+        gRealtimeUiOpenDeferred = true;
+        setStatus("Open after Realtime", 1200);
+        logf("[ACT] ui.open deferred mode=%s", uiModeName(mode));
+        return true;
+      }
       setUiMode(mode);
       return true;
     }

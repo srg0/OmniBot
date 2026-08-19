@@ -179,8 +179,8 @@ void serviceRealtimePlayback() {
     return;
   }
 
-  if (gRealtimePlaybackFeeding && speakerIdle && !gRealtimeAudioComplete &&
-      gRealtimePlaybackBufferedBytes < kRealtimePlaybackChunkBytes) {
+  if (gRealtimePlaybackFeeding && speakerIdle && gRealtimePlaybackEverStarted &&
+      (!gRealtimeAudioComplete || gRealtimePlaybackBufferedBytes > 0)) {
     gRealtimePlaybackFeeding = false;
     ++gRealtimePlaybackUnderruns;
     appendRuntimeLog(
@@ -233,9 +233,10 @@ void serviceRealtimePlayback() {
     }
     uint8_t* buffer = gPlaybackStreamBuffers[gRealtimePlaybackNextBuffer];
     const size_t readBytes = readRealtimePlaybackRing(buffer, chunk);
-    updatePlaybackAnalyzerFromSamples(reinterpret_cast<const int16_t*>(buffer),
-                                      readBytes / sizeof(int16_t),
-                                      kRealtimeModelSampleRate);
+    // The full 16-band Goertzel analyzer belongs to file playback. Realtime
+    // only needs a cheap level sample so audio ownership stays deterministic.
+    updateVoiceLevelFromSamples(reinterpret_cast<const int16_t*>(buffer),
+                                readBytes / sizeof(int16_t));
     const bool firstChunk = M5Cardputer.Speaker.isPlaying(kPlaybackChannel) == 0;
     const bool queued = M5Cardputer.Speaker.playRaw(reinterpret_cast<const int16_t*>(buffer),
                                                      readBytes / sizeof(int16_t),
@@ -323,6 +324,13 @@ void leaveRealtimeExclusiveMode(const String& reason) {
   }
   resumeHubWebSocketAfterVoice();
   logf("[RT] exclusive leave reason=%s", reason.c_str());
+  if (gRealtimeUiOpenDeferred) {
+    const UiMode deferredMode = gRealtimeDeferredUiMode;
+    gRealtimeUiOpenDeferred = false;
+    gRealtimeDeferredUiMode = UiMode::Home;
+    logf("[ACT] ui.open apply deferred mode=%s", uiModeName(deferredMode));
+    setUiMode(deferredMode);
+  }
 }
 
 void resetRealtimeTurnState() {
@@ -345,8 +353,9 @@ void closeRealtimeSession(const String& reason) {
   gRealtimeConnected = false;
   gRealtimeAwaiting = false;
   if (wasConnected) {
-    DynamicJsonDocument doc(128);
+    DynamicJsonDocument doc(256);
     doc["type"] = "close";
+    doc["reason"] = reason.substring(0, 80);
     String payload;
     serializeJson(doc, payload);
     sendRealtimeTextFrame(payload);

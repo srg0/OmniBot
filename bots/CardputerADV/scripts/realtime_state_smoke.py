@@ -9,10 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-PREBUFFER = 4 * 1024
+PREBUFFER = 16 * 1024
 STREAM_STALL_MS = 4000
 SPEAKER_STALL_MS = 2500
 TERMINAL_GRACE_MS = 4000
+RESPONSE_TIMEOUT_MS = 45000
+S1_RESPONSE_TIMEOUT_MS = 90000
 RESTART_MS = 120
 BINARY_HEADER_BYTES = 8
 BINARY_MIC_PCM = 0x01
@@ -54,6 +56,10 @@ class RealtimeState:
     last_delta_ms: int = 0
     playback_progress_ms: int = 0
     audio_done_ms: int = 0
+    awaiting_started_ms: int = 0
+    s1_thinking: bool = False
+    deferred_ui: str = ""
+    opened_ui: str = ""
     closed_reason: str = ""
 
     def close(self, reason: str) -> None:
@@ -64,7 +70,22 @@ class RealtimeState:
         self.speaker_playing = False
         self.buffered = 0
         self.restart_at_ms = 0
+        self.s1_thinking = False
         self.closed_reason = reason
+        if self.deferred_ui:
+            self.opened_ui = self.deferred_ui
+            self.deferred_ui = ""
+
+    def thinking_s1(self, now: int) -> None:
+        self.awaiting = True
+        self.s1_thinking = True
+        self.awaiting_started_ms = now
+
+    def request_ui(self, mode: str) -> None:
+        if self.active or self.connected or self.awaiting:
+            self.deferred_ui = mode
+        else:
+            self.opened_ui = mode
 
     def delta(self, byte_count: int, now: int) -> None:
         self.got_audio = True
@@ -101,7 +122,12 @@ class RealtimeState:
                 self.restart_at_ms = now + RESTART_MS
 
     def tick(self, now: int) -> None:
-        if (
+        timeout_ms = S1_RESPONSE_TIMEOUT_MS if self.s1_thinking else RESPONSE_TIMEOUT_MS
+        if self.awaiting and self.awaiting_started_ms and now - self.awaiting_started_ms > timeout_ms:
+            self.close("response timeout")
+        elif (
+            not self.s1_thinking
+            and
             self.got_audio
             and not self.audio_done
             and not self.speaker_playing
@@ -116,6 +142,8 @@ class RealtimeState:
         ):
             self.close("speaker stalled")
         elif (
+            not self.s1_thinking
+            and
             self.audio_done
             and not self.response_done
             and not self.playback
@@ -195,6 +223,35 @@ def test_explicit_failures_clear_all_busy_state() -> None:
         assert not state.speaker_playing
 
 
+def test_s1_wait_uses_long_timeout_and_suppresses_audio_watchdogs() -> None:
+    state = RealtimeState()
+    state.delta(100, 100)
+    state.audio_terminal(120)
+    state.speaker_idle(130)
+    state.thinking_s1(1000)
+    state.tick(1000 + RESPONSE_TIMEOUT_MS + 1)
+    assert state.active and state.awaiting and state.s1_thinking
+    state.tick(1000 + S1_RESPONSE_TIMEOUT_MS)
+    assert state.active
+    state.tick(1000 + S1_RESPONSE_TIMEOUT_MS + 1)
+    assert state.closed_reason == "response timeout"
+
+
+def test_ui_open_is_deferred_until_realtime_exit() -> None:
+    state = RealtimeState()
+    state.request_ui("battery")
+    assert state.active and state.deferred_ui == "battery" and not state.opened_ui
+    state.close("escape")
+    assert state.opened_ui == "battery" and not state.deferred_ui
+
+
+def test_close_reason_is_bounded_and_present() -> None:
+    reason = "mode change"
+    frame = {"type": "close", "reason": reason[:80]}
+    assert frame == {"type": "close", "reason": "mode change"}
+    assert len(frame["reason"]) <= 80
+
+
 def test_binary_v1_header_and_sequence() -> None:
     pcm = bytes(range(32))
     frame = binary_frame(BINARY_MODEL_PCM, 0x78563412, pcm)
@@ -228,6 +285,9 @@ def test_firmware_wiring() -> None:
     escape = (parts / "047_main.cpp.inc").read_text()
     voice = (parts / "033_main.cpp.inc").read_text()
     realtime = (parts / "043_main.cpp.inc").read_text()
+    actions = (parts / "024_main.cpp.inc").read_text()
+    speaker = (parts / "027_main.cpp.inc").read_text()
+    ui = (parts / "059_main.cpp.inc").read_text()
     contexts = (parts / "019_main.cpp.inc").read_text()
     globals_ = (parts / "005_main.cpp.inc").read_text()
     constants = (parts / "001_main.cpp.inc").read_text()
@@ -290,6 +350,22 @@ def test_firmware_wiring() -> None:
     assert 'type == "auth_error"' in events
     assert 'setStatus("Realtime retrying...")' in events
     assert "gRealtimeWs.setReconnectInterval(750)" in events
+    assert "constexpr size_t kRealtimePlaybackPrebufferBytes = 16 * 1024;" in constants
+    assert "constexpr size_t kRealtimePlaybackChunkBytes = 8 * 1024;" in constants
+    assert "constexpr size_t kPlaybackChunkSamples = 4096;" in constants
+    assert "speakerCfg.task_priority" in speaker
+    assert "updateVoiceLevelFromSamples" in playback
+    assert "updatePlaybackAnalyzerFromSamples" not in playback
+    ui_open = actions[actions.index('if (type == "ui.open")'):
+                      actions.index('if (type == "audio.play")')]
+    assert "gRealtimeUiOpenDeferred = true;" in ui_open
+    assert ui_open.index("gRealtimeUiOpenDeferred = true;") < ui_open.index("setUiMode(mode);")
+    assert 'closeRealtimeSession("mode change")' not in ui_open
+    assert 'doc["reason"] = reason.substring(0, 80);' in playback
+    assert "kRealtimeS1ResponseTimeoutMs" in realtime
+    assert "gRealtimeAwaitingStartedMs = millis();" in events
+    assert "renderRealtimeExclusiveUi" not in ui + loop
+    assert "render();" in exclusive
 
 
 def main() -> None:

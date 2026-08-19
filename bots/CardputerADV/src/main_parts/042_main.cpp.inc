@@ -305,6 +305,9 @@ void handleRealtimeJson(const JsonDocument& doc) {
     gRealtimeAwaiting = true;
     const String phase = doc["phase"] | "";
     gRealtimeS1Thinking = phase == "s1";
+    if (gRealtimeS1Thinking) {
+      gRealtimeAwaitingStartedMs = millis();
+    }
     setFaceMode(FaceMode::Thinking);
     setStatus(gRealtimeS1Thinking ? "S1 working..." : "Realtime thinking...");
     return;
