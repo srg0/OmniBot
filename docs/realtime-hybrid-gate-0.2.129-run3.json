@@ -1,0 +1,381 @@
+{
+  "canaries": {
+    "natural": {
+      "criteria": "10 minutes normal use; no unexpected session exit or repeated crackle",
+      "executed": false,
+      "name": "bounded owner conversation",
+      "observability": "Bridge journal and user report",
+      "owner": "Cardputer owner",
+      "passed": null,
+      "rollback": "republish tagged cardputer-realtime-rollback-stable-0.2.128-dev"
+    },
+    "synthetic": {
+      "criteria": "3 direct turns, 2 S1 turns, 1 deferred ui.open; no premature close or audio underrun",
+      "executed": false,
+      "name": "five-turn Realtime hardware probe",
+      "observability": "Bridge realtime timing/client_close logs plus device-visible phase",
+      "owner": "Codex + Cardputer owner",
+      "passed": null,
+      "rollback": "republish tagged cardputer-realtime-rollback-stable-0.2.128-dev"
+    }
+  },
+  "coverage": {
+    "actual_executed_claim": 1005079,
+    "boundary_fixtures": [
+      {
+        "artifact": "realtime_hybrid_gate.py:boundary_fixtures",
+        "name": "normal timeout equality and +1",
+        "passed": true
+      },
+      {
+        "artifact": "realtime_hybrid_gate.py:boundary_fixtures",
+        "name": "S1 timeout equality and +1",
+        "passed": true
+      },
+      {
+        "artifact": "realtime_hybrid_gate.py:boundary_fixtures",
+        "name": "prebuffer 16383/16384",
+        "passed": true
+      },
+      {
+        "artifact": "realtime_hybrid_gate.py:boundary_fixtures",
+        "name": "deferred UI release on exit",
+        "passed": true
+      },
+      {
+        "artifact": "realtime_hybrid_gate.py:boundary_fixtures",
+        "name": "close reason truncation 80/81",
+        "passed": true
+      }
+    ],
+    "critical_threewise": {
+      "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+      "complete": true,
+      "coverage_percent": 100,
+      "dimensions": [
+        "phase",
+        "ui_action",
+        "s1_latency_class",
+        "ws_outcome",
+        "close_cause"
+      ],
+      "rows": 2070
+    },
+    "executed_tests": {
+      "boundaries": 5,
+      "covering_arrays": 4860,
+      "fuzz": 1000000,
+      "mutants": 6,
+      "reduced_paths": 208
+    },
+    "execution_counting_method": "disjoint",
+    "execution_counting_note": "reduced graph + pair rows + critical triple rows + fuzz transitions + boundaries + mutants",
+    "fuzz": {
+      "deterministic": true,
+      "executed": 1000000,
+      "seed_artifact": "seed=12903",
+      "seeds_retained": true
+    },
+    "invariant_results": [
+      {
+        "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+        "name": "UI remains deferred while Realtime is active",
+        "passed": true
+      },
+      {
+        "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+        "name": "every firmware close has a bounded reason",
+        "passed": true
+      },
+      {
+        "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+        "name": "S1 thinking belongs to an active awaiting session",
+        "passed": true
+      },
+      {
+        "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+        "name": "retained PCM pointers have distinct owners",
+        "passed": true
+      }
+    ],
+    "mutations": [
+      {
+        "counterexample": "ui_opened_while_realtime_active",
+        "executed": true,
+        "fence": "defer S1 ui.open"
+      },
+      {
+        "counterexample": "premature_s1_timeout",
+        "executed": true,
+        "fence": "90 second S1 deadline"
+      },
+      {
+        "counterexample": "close_reason_not_transmitted",
+        "executed": true,
+        "fence": "transmit close reason"
+      },
+      {
+        "counterexample": "retained_buffer_owner_collision",
+        "executed": true,
+        "fence": "third retained PCM owner"
+      },
+      {
+        "counterexample": "audio_feed_starved_by_goertzel",
+        "executed": true,
+        "fence": "lightweight realtime level analyzer"
+      },
+      {
+        "counterexample": "dedicated_low_fps_renderer_reintroduced",
+        "executed": true,
+        "fence": "reuse smooth main Pulse renderer"
+      }
+    ],
+    "pairwise": {
+      "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+      "complete": true,
+      "coverage_percent": 100,
+      "rows": 2790
+    },
+    "raw_cartesian_space": 7803371520,
+    "raw_equivalence_artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+    "raw_equivalent_covered": 7803371520,
+    "reduced_exploration": {
+      "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+      "complete": true,
+      "states": 16,
+      "transitions": 208
+    }
+  },
+  "model": {
+    "actors": [
+      {
+        "name": "Cardputer loop",
+        "ownership": "Realtime session and deferred UI"
+      },
+      {
+        "name": "M5 speaker task",
+        "ownership": "two queued PCM pointers"
+      },
+      {
+        "name": "Bridge",
+        "ownership": "WebSocket/S1 lifecycle and close diagnostics"
+      }
+    ],
+    "dimensions": [
+      {
+        "cardinality": 6,
+        "name": "phase",
+        "role": "critical"
+      },
+      {
+        "cardinality": 9,
+        "name": "transport_event",
+        "role": "behavioral"
+      },
+      {
+        "cardinality": 4,
+        "name": "ui_action",
+        "role": "critical"
+      },
+      {
+        "cardinality": 7,
+        "name": "s1_latency_class",
+        "role": "critical"
+      },
+      {
+        "cardinality": 7,
+        "name": "audio_jitter_class",
+        "role": "behavioral"
+      },
+      {
+        "cardinality": 6,
+        "name": "render_stall_class",
+        "role": "behavioral"
+      },
+      {
+        "cardinality": 5,
+        "name": "ws_outcome",
+        "role": "critical"
+      },
+      {
+        "cardinality": 4,
+        "name": "user_key",
+        "role": "behavioral"
+      },
+      {
+        "cardinality": 8,
+        "name": "screen_target",
+        "role": "behavioral"
+      },
+      {
+        "cardinality": 4,
+        "name": "pcm_backlog_class",
+        "role": "behavioral"
+      },
+      {
+        "cardinality": 4,
+        "name": "sequence_state",
+        "role": "behavioral"
+      },
+      {
+        "cardinality": 6,
+        "name": "response_order",
+        "role": "behavioral"
+      },
+      {
+        "cardinality": 8,
+        "name": "close_cause",
+        "role": "critical"
+      }
+    ],
+    "faults": [
+      {
+        "injection": "45s/90s boundary classes",
+        "name": "long S1 pause"
+      },
+      {
+        "injection": "ui_open transition in every active phase",
+        "name": "UI request during Realtime"
+      },
+      {
+        "injection": "explicit close-cause dimension",
+        "name": "WebSocket close/error"
+      },
+      {
+        "injection": "render and jitter equivalence classes",
+        "name": "display/network jitter"
+      }
+    ],
+    "fences": [
+      {
+        "name": "defer S1 ui.open",
+        "purpose": "hybrid release safety fence"
+      },
+      {
+        "name": "90 second S1 deadline",
+        "purpose": "hybrid release safety fence"
+      },
+      {
+        "name": "transmit close reason",
+        "purpose": "hybrid release safety fence"
+      },
+      {
+        "name": "third retained PCM owner",
+        "purpose": "hybrid release safety fence"
+      },
+      {
+        "name": "lightweight realtime level analyzer",
+        "purpose": "hybrid release safety fence"
+      },
+      {
+        "name": "reuse smooth main Pulse renderer",
+        "purpose": "hybrid release safety fence"
+      }
+    ],
+    "initial_states": [
+      "idle"
+    ],
+    "invariants": [
+      {
+        "name": "UI remains deferred while Realtime is active",
+        "predicate": "not(active and opened_ui)"
+      },
+      {
+        "name": "every firmware close has a bounded reason",
+        "predicate": "closed_reason implies reason_sent"
+      },
+      {
+        "name": "S1 thinking belongs to an active awaiting session",
+        "predicate": "s1 implies active and awaiting"
+      },
+      {
+        "name": "retained PCM pointers have distinct owners",
+        "predicate": "owner_buffers > speaker_queue"
+      }
+    ],
+    "reductions": [
+      {
+        "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+        "kind": "symmetry",
+        "status": "applied"
+      },
+      {
+        "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+        "kind": "equivalence",
+        "status": "applied"
+      },
+      {
+        "artifact": "bots/CardputerADV/scripts/realtime_hybrid_gate.py",
+        "kind": "partial_order",
+        "status": "applied"
+      }
+    ],
+    "states": [
+      "idle",
+      "listening",
+      "awaiting",
+      "s1",
+      "speaking",
+      "closed"
+    ],
+    "transitions": [
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "start"
+      },
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "commit"
+      },
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "s1_start"
+      },
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "audio"
+      },
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "response_done"
+      },
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "ui_open"
+      },
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "exit"
+      },
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "ws_error"
+      },
+      {
+        "effect": "modeled in transition()",
+        "guard": "modeled in transition()",
+        "name": "timeout"
+      }
+    ]
+  },
+  "release": {
+    "applicability": {
+      "rationale": "Realtime crosses device UI ownership, S1 deadlines, WebSocket teardown, paced PCM ownership, and asynchronous I2S playback.",
+      "tier": "MEANINGFUL_RISK"
+    },
+    "evidence_cutoff": "2026-08-19T03:37:26.116648+00:00",
+    "gate_scope": "canary_entry",
+    "name": "Cardputer ADV Realtime hybrid 0.2.129-dev",
+    "production_like_stateful": true,
+    "ref": "0.2.129-dev/61e7e17"
+  },
+  "verdict": "READY"
+}
