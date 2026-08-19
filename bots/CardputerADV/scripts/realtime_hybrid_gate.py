@@ -38,7 +38,7 @@ DIMENSIONS = {
 }
 CRITICAL = ("phase", "ui_action", "s1_latency_class", "ws_outcome", "close_cause")
 EVENTS = (
-    "start", "commit", "s1_start", "audio", "response_done", "ui_open",
+    "start", "commit", "s1_start", "audio", "model_start", "response_done", "ui_open",
     "exit", "ws_error", "timeout",
 )
 
@@ -84,7 +84,11 @@ def transition(
     if event == "s1_start" and state.active and state.awaiting:
         return dataclasses.replace(state, phase="s1", s1_thinking=True)
     if event == "audio" and state.active and state.awaiting:
-        return dataclasses.replace(state, phase="speaking", s1_thinking=False)
+        # A function-call preamble can keep draining after S1 started. Audio is
+        # not an authoritative end-of-tool signal.
+        return dataclasses.replace(state, phase="speaking")
+    if event == "model_start" and state.active and state.awaiting:
+        return dataclasses.replace(state, phase="awaiting", s1_thinking=False)
     if event == "response_done" and state.active:
         return dataclasses.replace(state, phase="listening", awaiting=False, s1_thinking=False)
     if event == "ui_open":
@@ -192,12 +196,17 @@ def boundary_fixtures() -> list[dict[str, object]]:
     assert PREBUFFER_BYTES - 1 < PREBUFFER_BYTES
     assert PREBUFFER_BYTES == 16_384
     assert len(("x" * 81)[:80]) == 80
+    preamble = transition(s1, "audio")
+    assert preamble.s1_thinking and preamble.phase == "speaking"
+    final_model = transition(preamble, "model_start")
+    assert not final_model.s1_thinking and final_model.awaiting
     return [
         {"name": "normal timeout equality and +1", "passed": True, "artifact": "realtime_hybrid_gate.py:boundary_fixtures"},
         {"name": "S1 timeout equality and +1", "passed": True, "artifact": "realtime_hybrid_gate.py:boundary_fixtures"},
         {"name": "prebuffer 16383/16384", "passed": True, "artifact": "realtime_hybrid_gate.py:boundary_fixtures"},
         {"name": "deferred UI release on exit", "passed": True, "artifact": "realtime_hybrid_gate.py:boundary_fixtures"},
         {"name": "close reason truncation 80/81", "passed": True, "artifact": "realtime_hybrid_gate.py:boundary_fixtures"},
+        {"name": "S1 preamble audio preserves tool wait", "passed": True, "artifact": "realtime_hybrid_gate.py:boundary_fixtures"},
     ]
 
 
@@ -214,6 +223,8 @@ def mutation_results() -> list[dict[str, object]]:
         ("third retained PCM owner", ["retained_buffer_owner_collision"] if 2 <= SPEAKER_QUEUE else []),
         ("lightweight realtime level analyzer", ["audio_feed_starved_by_goertzel"]),
         ("reuse smooth main Pulse renderer", ["dedicated_low_fps_renderer_reintroduced"]),
+        ("interim audio preserves S1 phase", ["premature_s1_phase_clear"] if not dataclasses.replace(
+            transition(awaiting, "audio"), s1_thinking=False).s1_thinking else []),
     ]
     results = []
     for fence, counterexample in mutants:
@@ -236,7 +247,7 @@ def firmware_contract(repo: Path) -> None:
     service = (parts / "043_main.cpp.inc").read_text()
     ui = (parts / "059_main.cpp.inc").read_text()
     loop = (parts / "061_main.cpp.inc").read_text()
-    assert "0.2.129-dev" in constants
+    assert "0.2.130-dev" in constants
     assert "kRealtimePlaybackPrebufferBytes = 16 * 1024" in constants
     assert "kRealtimePlaybackChunkBytes = 8 * 1024" in constants
     assert "kPlaybackChunkSamples = 4096" in constants
@@ -245,8 +256,17 @@ def firmware_contract(repo: Path) -> None:
     assert "updateVoiceLevelFromSamples" in playback
     assert 'doc["reason"] = reason.substring(0, 80)' in playback
     assert "gRealtimeAwaitingStartedMs = millis()" in events
+    assert 'phase == "model"' in events
+    pcm_accept = events[events.index("bool acceptRealtimePcmBytes"):
+                        events.index("void handleRealtimeAudioDeltaPayload")]
+    assert "gRealtimeS1Thinking = false;" not in pcm_accept
+    audio_events = events[events.index('if (type == "audio.delta"'):
+                          events.index('if (type == "realtime.error"')]
+    assert "gRealtimeS1Thinking = false;" not in audio_events
     assert "kRealtimeS1ResponseTimeoutMs" in service
     assert "renderRealtimeExclusiveUi" not in ui + loop
+    assert "realtimeReactiveLevel" in ui
+    assert "baseY - h" in ui
 
 
 def build_evidence(repo: Path, seed: int, fuzz_transitions: int) -> dict[str, object]:
@@ -271,8 +291,8 @@ def build_evidence(repo: Path, seed: int, fuzz_transitions: int) -> dict[str, ob
     script = "bots/CardputerADV/scripts/realtime_hybrid_gate.py"
     evidence = {
         "release": {
-            "name": "Cardputer ADV Realtime hybrid 0.2.129-dev",
-            "ref": f"0.2.129-dev/{git_sha}",
+            "name": "Cardputer ADV Realtime correction 0.2.130-dev",
+            "ref": f"0.2.130-dev/{git_sha}",
             "evidence_cutoff": datetime.now(timezone.utc).isoformat(),
             "gate_scope": "canary_entry",
             "production_like_stateful": True,

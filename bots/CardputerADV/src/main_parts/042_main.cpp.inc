@@ -62,7 +62,6 @@ bool acceptRealtimePcmBytes(const uint8_t* pcm, size_t pcmBytes) {
   if (!pcm || pcmBytes == 0 || (pcmBytes & 1U) != 0) {
     return false;
   }
-  gRealtimeS1Thinking = false;
   const uint32_t now = millis();
   const bool firstAudio = gRealtimeFirstAudioDeltaMs == 0;
   if (firstAudio) {
@@ -304,9 +303,14 @@ void handleRealtimeJson(const JsonDocument& doc) {
   if (type == "realtime.thinking") {
     gRealtimeAwaiting = true;
     const String phase = doc["phase"] | "";
-    gRealtimeS1Thinking = phase == "s1";
-    if (gRealtimeS1Thinking) {
+    if (phase == "s1") {
+      gRealtimeS1Thinking = true;
       gRealtimeAwaitingStartedMs = millis();
+    } else if (phase == "model") {
+      // An explicit Bridge phase transition ends the long-running S1 wait.
+      // Do not infer this from interim audio: a tool-call preamble may still
+      // be draining after S1 has already started.
+      gRealtimeS1Thinking = false;
     }
     setFaceMode(FaceMode::Thinking);
     setStatus(gRealtimeS1Thinking ? "S1 working..." : "Realtime thinking...");
@@ -380,11 +384,9 @@ void handleRealtimeJson(const JsonDocument& doc) {
     return;
   }
   if (type == "audio.delta" || type == "response.output_audio.delta") {
-    gRealtimeS1Thinking = false;
     return;
   }
   if (type == "audio.done" || type == "response.output_audio.done") {
-    gRealtimeS1Thinking = false;
     gRealtimeAudioComplete = true;
     gRealtimeAudioDoneMs = millis();
     if (gRealtimeReplyBytes > 0) {

@@ -81,6 +81,9 @@ class RealtimeState:
         self.s1_thinking = True
         self.awaiting_started_ms = now
 
+    def thinking_model(self) -> None:
+        self.s1_thinking = False
+
     def request_ui(self, mode: str) -> None:
         if self.active or self.connected or self.awaiting:
             self.deferred_ui = mode
@@ -237,6 +240,21 @@ def test_s1_wait_uses_long_timeout_and_suppresses_audio_watchdogs() -> None:
     assert state.closed_reason == "response timeout"
 
 
+def test_s1_preamble_audio_does_not_end_tool_wait() -> None:
+    state = RealtimeState(awaiting_started_ms=100)
+    state.thinking_s1(1000)
+    state.delta(PREBUFFER, 1100)
+    state.audio_terminal(1200)
+    state.speaker_idle(1500)
+    state.tick(1500 + TERMINAL_GRACE_MS + 1)
+    assert state.active and state.awaiting and state.s1_thinking
+    state.tick(1000 + RESPONSE_TIMEOUT_MS + 1)
+    assert state.active and state.s1_thinking
+    state.thinking_model()
+    state.response_terminal(43_000)
+    assert state.active and not state.awaiting and not state.s1_thinking
+
+
 def test_ui_open_is_deferred_until_realtime_exit() -> None:
     state = RealtimeState()
     state.request_ui("battery")
@@ -364,8 +382,20 @@ def test_firmware_wiring() -> None:
     assert 'doc["reason"] = reason.substring(0, 80);' in playback
     assert "kRealtimeS1ResponseTimeoutMs" in realtime
     assert "gRealtimeAwaitingStartedMs = millis();" in events
+    assert 'phase == "model"' in events
+    pcm_accept = events[events.index("bool acceptRealtimePcmBytes"):
+                        events.index("void handleRealtimeAudioDeltaPayload")]
+    assert "gRealtimeS1Thinking = false;" not in pcm_accept
+    audio_events = events[events.index('if (type == "audio.delta"'):
+                          events.index('if (type == "realtime.error"')]
+    assert "gRealtimeS1Thinking = false;" not in audio_events
     assert "renderRealtimeExclusiveUi" not in ui + loop
     assert "render();" in exclusive
+    assert "realtimeReactiveLevel" in ui
+    assert "baseY - h" in ui
+    realtime_colors = ui[ui.index("} else if (realtime) {"):
+                         ui.index("  d.fillScreen(bg);")]
+    assert realtime_colors.index("gPlaybackActive") < realtime_colors.index("gRealtimeAwaiting")
 
 
 def main() -> None:

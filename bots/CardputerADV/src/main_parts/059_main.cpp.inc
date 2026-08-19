@@ -13,8 +13,8 @@
   const char* label = "LISTEN";
   const bool realtime = state == AssistantPulseState::Realtime;
   const char* rtPhase = gRealtimeRecording ? "MIC"
-                        : gRealtimeAwaiting ? "WAIT"
                         : gPlaybackActive ? "TALK"
+                        : gRealtimeAwaiting ? "WAIT"
                         : gRealtimeConnected ? "READY"
                         : "LINK";
 
@@ -43,18 +43,18 @@
       c3 = rgb565_local(88, 32, 42);
       fg = rgb565_local(255, 241, 239);
       label = "LISTEN";
-    } else if (gRealtimeAwaiting) {
-      c1 = amber;
-      c2 = cyan;
-      c3 = rgb565_local(64, 52, 26);
-      fg = rgb565_local(255, 248, 232);
-      label = "THINK";
     } else if (gPlaybackActive) {
       c1 = green;
       c2 = cyan;
       c3 = rgb565_local(22, 73, 46);
       fg = rgb565_local(241, 255, 246);
       label = "SPEAK";
+    } else if (gRealtimeAwaiting) {
+      c1 = amber;
+      c2 = cyan;
+      c3 = rgb565_local(64, 52, 26);
+      fg = rgb565_local(255, 248, 232);
+      label = "THINK";
     } else if (gRealtimeConnected) {
       c1 = cyan;
       c2 = violet;
@@ -88,7 +88,8 @@
   } else if (state == AssistantPulseState::Recording) {
     spin = t * 1.25f;
   } else if (realtime) {
-    spin = t * (gRealtimeRecording ? 1.45f : gRealtimeAwaiting ? 1.95f : 0.82f);
+    spin = t * (gRealtimeRecording ? 1.45f : gPlaybackActive ? 1.10f
+                                   : gRealtimeAwaiting ? 1.95f : 0.82f);
   }
   float level = max<uint8_t>(18, gVoiceLevel8) / 255.0f;
   if (!gRecording && !gRealtimeRecording && gVoiceLevel8 > 28) {
@@ -109,6 +110,9 @@
     int16_t pulseR = 18 + static_cast<int16_t>(level * 14.0f + sinf(t * 12.0f));
     d.fillCircle(cx, cy, pulseR, c1);
     d.fillCircle(cx, cy, 9, fg);
+  } else if (state == AssistantPulseState::Playback || (realtime && gPlaybackActive)) {
+    d.fillCircle(cx, cy, 16, fg);
+    d.fillTriangle(cx - 4, cy - 8, cx - 4, cy + 8, cx + 9, cy, bg);
   } else if (state == AssistantPulseState::Thinking || (realtime && gRealtimeAwaiting)) {
     for (int i = 0; i < 4; ++i) {
       float a = spin * 1.9f + i * 1.55f;
@@ -118,9 +122,6 @@
                  cy + static_cast<int16_t>(sinf(spin * 2.4f) * 21.0f), 4, c1);
     d.fillCircle(cx + static_cast<int16_t>(cosf(spin * 2.0f + 2.1f) * 26.0f),
                  cy + static_cast<int16_t>(sinf(spin * 2.0f + 2.1f) * 23.0f), 3, c2);
-  } else if (state == AssistantPulseState::Playback || (realtime && gPlaybackActive)) {
-    d.fillCircle(cx, cy, 16, fg);
-    d.fillTriangle(cx - 4, cy - 8, cx - 4, cy + 8, cx + 9, cy, bg);
   } else if (realtime) {
     int16_t coreR = 11 + static_cast<int16_t>(sinf(t * 4.4f) * 2.0f);
     d.fillCircle(cx, cy, 21, rgb565_local(83, 42, 13));
@@ -175,14 +176,37 @@
   int16_t waveX = state == AssistantPulseState::Ready ? 121 : 117;
   int16_t waveY = state == AssistantPulseState::Ready ? 88 : 86;
   int bars = state == AssistantPulseState::Ready ? 15 : 16;
+  // Realtime uses the cheap PCM level follower on both microphone input and
+  // speaker output. Expand its useful range so ordinary speech visibly owns
+  // the full meter instead of moving only a few pixels around the noise floor.
+  const uint8_t realtimeReactiveLevel = gVoiceLevel8 <= 14
+      ? 0
+      : static_cast<uint8_t>(min<uint16_t>(
+          255, (static_cast<uint16_t>(gVoiceLevel8) - 14U) * 255U / 96U));
   for (int i = 0; i < bars; ++i) {
     int16_t bx = waveX + i * 7;
+    if (realtime && (gRealtimeRecording || gPlaybackActive)) {
+      // Preserve the current Pulse styling, but use the proven direct level
+      // follower from the former Realtime screen. Bars grow upward so the
+      // visual clearly confirms that the microphone/speaker is live.
+      const float shape = 0.58f + 0.42f * fabsf(sinf(t * 4.6f + i * 0.61f));
+      int16_t h = static_cast<int16_t>(
+          3.0f + (static_cast<float>(realtimeReactiveLevel) * 39.0f / 255.0f) * shape);
+      h = clampValue<int16_t>(h, 3, 42);
+      const int16_t baseY = waveY + 21;
+      const uint16_t barColor = (i % 3 == 0) ? c2 : c1;
+      d.fillRoundRect(bx - 2, baseY - h, 4, h, 2, barColor);
+      if (realtimeReactiveLevel > 24) {
+        d.drawFastHLine(bx - 2, baseY - h - 2, 4, fg);
+      }
+      continue;
+    }
     if (state == AssistantPulseState::Thinking || (realtime && gRealtimeAwaiting)) {
       int16_t dotY = waveY + static_cast<int16_t>(sinf(t * 5.0f + i * 0.7f) * 6.0f);
       d.fillCircle(bx, dotY, (i % 3 == 0) ? 3 : 2, (i % 2) ? c1 : c2);
       continue;
     }
-    if (state == AssistantPulseState::Playback || (realtime && gPlaybackActive)) {
+    if (state == AssistantPulseState::Playback) {
       uint8_t band = static_cast<uint8_t>(clampValue<int>(
           (i * kPlaybackSpectrumBands) / max<int>(1, bars), 0, kPlaybackSpectrumBands - 1));
       int16_t h = static_cast<int16_t>(4 + gVoiceEqBars[band] * 2);
