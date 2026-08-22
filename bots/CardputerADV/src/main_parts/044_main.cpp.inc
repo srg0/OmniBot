@@ -11,6 +11,197 @@
   return false;
 }
 
+IPAddress smartLampBroadcastAddress() {
+  IPAddress ip = WiFi.localIP();
+  IPAddress mask = WiFi.subnetMask();
+  IPAddress broadcast;
+  for (uint8_t i = 0; i < 4; ++i) {
+    broadcast[i] = static_cast<uint8_t>((ip[i] & mask[i]) | static_cast<uint8_t>(~mask[i]));
+  }
+  return broadcast;
+}
+
+bool ensureSmartLampUdp() {
+  if (WiFi.status() != WL_CONNECTED) {
+    if (gSmartLamp.udpReady) {
+      gSmartLampUdp.stop();
+      gSmartLamp.udpReady = false;
+    }
+    gSmartLamp.online = false;
+    gSmartLamp.status = "NO WIFI";
+    return false;
+  }
+  if (gSmartLamp.udpReady) {
+    return true;
+  }
+  gSmartLamp.udpReady = gSmartLampUdp.begin(kSmartLampControllerPort) == 1;
+  if (!gSmartLamp.udpReady) {
+    gSmartLamp.status = "UDP ERROR";
+    logf("[LAMP] udp bind failed port=%u", static_cast<unsigned>(kSmartLampControllerPort));
+    return false;
+  }
+  logf("[LAMP] udp ready port=%u", static_cast<unsigned>(kSmartLampControllerPort));
+  return true;
+}
+
+bool smartLampSendPacket(const String& packet, bool forceBroadcast) {
+  if (!ensureSmartLampUdp()) {
+    setStatus("smartLamp: Wi-Fi unavailable", 1000);
+    return false;
+  }
+  IPAddress target = (!forceBroadcast && gSmartLamp.found) ? gSmartLamp.ip : smartLampBroadcastAddress();
+  if (!gSmartLampUdp.beginPacket(target, kSmartLampUdpPort)) {
+    gSmartLamp.status = "SEND ERROR";
+    return false;
+  }
+  gSmartLampUdp.write(reinterpret_cast<const uint8_t*>(packet.c_str()), packet.length());
+  bool sent = gSmartLampUdp.endPacket() == 1;
+  if (!sent) {
+    gSmartLamp.status = "SEND ERROR";
+  }
+  return sent;
+}
+
+void smartLampRequestState(bool forceBroadcast = false) {
+  if (smartLampSendPacket("GET", forceBroadcast)) {
+    gSmartLamp.lastDiscoveryMs = millis();
+    if (!gSmartLamp.online) {
+      gSmartLamp.status = "SEARCHING";
+    }
+  }
+}
+
+void smartLampStartScan() {
+  gSmartLamp.found = false;
+  gSmartLamp.online = false;
+  gSmartLamp.ip = IPAddress();
+  gSmartLamp.status = "SEARCHING";
+  gSmartLamp.lastDiscoveryMs = 0;
+  gSmartLamp.refreshDueMs = 0;
+  smartLampRequestState(true);
+  setStatus("smartLamp scan", 900);
+}
+
+void smartLampProcessPacket(const String& packet, const IPAddress& remoteIp) {
+  if (!packet.startsWith("CURR")) {
+    return;
+  }
+  int effect = 0;
+  int brightness = 0;
+  int speed = 0;
+  int scale = 0;
+  int power = 0;
+  if (sscanf(packet.c_str(), "CURR %d %d %d %d %d", &effect, &brightness, &speed, &scale, &power) != 5) {
+    return;
+  }
+  bool wasOnline = gSmartLamp.online;
+  gSmartLamp.ip = remoteIp;
+  gSmartLamp.found = true;
+  gSmartLamp.online = true;
+  gSmartLamp.effect = static_cast<uint8_t>(clampValue<int>(effect, 0, kSmartLampEffectCount - 1));
+  gSmartLamp.brightness = static_cast<uint8_t>(clampValue<int>(brightness, 0, 255));
+  gSmartLamp.speed = static_cast<uint8_t>(clampValue<int>(speed, 0, 255));
+  gSmartLamp.scale = static_cast<uint8_t>(clampValue<int>(scale, 0, 100));
+  gSmartLamp.power = power != 0;
+  gSmartLamp.lastSeenMs = millis();
+  gSmartLamp.refreshDueMs = 0;
+  gSmartLamp.status = "ONLINE";
+  if (!wasOnline) {
+    logf("[LAMP] found ip=%s effect=%u", remoteIp.toString().c_str(), static_cast<unsigned>(gSmartLamp.effect));
+    setStatus("smartLamp online", 900);
+  }
+}
+
+void smartLampSendControl(const String& command, const String& label) {
+  if (!smartLampSendPacket(command, !gSmartLamp.found)) {
+    setStatus("smartLamp send failed", 900);
+    return;
+  }
+  gSmartLamp.status = "SENT";
+  gSmartLamp.refreshDueMs = millis() + kSmartLampRefreshDelayMs;
+  setStatus(label, 650);
+}
+
+void smartLampSelectControl(int delta) {
+  int selected = static_cast<int>(gSmartLamp.selected) + delta;
+  selected = (selected + kSmartLampControlCount) % kSmartLampControlCount;
+  gSmartLamp.selected = static_cast<uint8_t>(selected);
+}
+
+void smartLampAdjustSelected(int delta) {
+  switch (gSmartLamp.selected) {
+    case 0: {
+      int effect = (static_cast<int>(gSmartLamp.effect) + delta + kSmartLampEffectCount) % kSmartLampEffectCount;
+      gSmartLamp.effect = static_cast<uint8_t>(effect);
+      smartLampSendControl("EFF" + String(effect), "Effect " + String(effect));
+      break;
+    }
+    case 1: {
+      int brightness = clampValue<int>(static_cast<int>(gSmartLamp.brightness) + delta * 5, 0, 255);
+      gSmartLamp.brightness = static_cast<uint8_t>(brightness);
+      smartLampSendControl("BRI" + String(brightness), "Brightness " + String(brightness));
+      break;
+    }
+    case 2: {
+      int speed = clampValue<int>(static_cast<int>(gSmartLamp.speed) + delta * 5, 0, 255);
+      gSmartLamp.speed = static_cast<uint8_t>(speed);
+      smartLampSendControl("SPD" + String(speed), "Speed " + String(speed));
+      break;
+    }
+    case 3:
+    default: {
+      int scale = clampValue<int>(static_cast<int>(gSmartLamp.scale) + delta * 2, 0, 100);
+      gSmartLamp.scale = static_cast<uint8_t>(scale);
+      smartLampSendControl("SCA" + String(scale), "Scale " + String(scale));
+      break;
+    }
+  }
+}
+
+void smartLampTogglePower() {
+  gSmartLamp.power = !gSmartLamp.power;
+  smartLampSendControl(gSmartLamp.power ? "P_ON" : "P_OFF", gSmartLamp.power ? "Lamp on" : "Lamp off");
+}
+
+void serviceSmartLamp() {
+  if (WiFi.status() != WL_CONNECTED) {
+    ensureSmartLampUdp();
+    return;
+  }
+  if (!ensureSmartLampUdp()) {
+    return;
+  }
+
+  for (uint8_t handled = 0; handled < 4; ++handled) {
+    int packetSize = gSmartLampUdp.parsePacket();
+    if (packetSize <= 0) {
+      break;
+    }
+    char packet[96] = {};
+    int read = gSmartLampUdp.read(reinterpret_cast<uint8_t*>(packet), sizeof(packet) - 1);
+    if (read <= 0) {
+      continue;
+    }
+    packet[read] = '\0';
+    String response(packet);
+    response.trim();
+    smartLampProcessPacket(response, gSmartLampUdp.remoteIP());
+  }
+
+  uint32_t now = millis();
+  if (gSmartLamp.online && now - gSmartLamp.lastSeenMs > kSmartLampOnlineTimeoutMs) {
+    gSmartLamp.online = false;
+    gSmartLamp.status = "NO REPLY";
+  }
+  if (gSmartLamp.refreshDueMs != 0 && static_cast<int32_t>(now - gSmartLamp.refreshDueMs) >= 0) {
+    gSmartLamp.refreshDueMs = 0;
+    smartLampRequestState(false);
+  }
+  if (gUiMode == UiMode::SmartLamp && now - gSmartLamp.lastDiscoveryMs >= kSmartLampDiscoveryIntervalMs) {
+    smartLampRequestState(!gSmartLamp.found || !gSmartLamp.online);
+  }
+}
+
 void submitInput() {
   String text = gInputBuffer;
   text.trim();
@@ -210,4 +401,3 @@ bool handleFocusKey(char key, const Keyboard_Class::KeysState& keys) {
   }
   return false;
 }
-

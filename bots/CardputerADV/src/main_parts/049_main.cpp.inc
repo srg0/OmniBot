@@ -37,6 +37,14 @@
     moveLauncherSelection(-1);
   } else if (gLauncherVisible && downDown) {
     moveLauncherSelection(1);
+  } else if (gUiMode == UiMode::SmartLamp && upDown) {
+    handleTypingKey('w', keys);
+  } else if (gUiMode == UiMode::SmartLamp && downDown) {
+    handleTypingKey('s', keys);
+  } else if (gUiMode == UiMode::SmartLamp && leftDown) {
+    handleTypingKey('a', keys);
+  } else if (gUiMode == UiMode::SmartLamp && rightDown) {
+    handleTypingKey('d', keys);
   } else if (!gLauncherVisible && gPlaybackActive && upDown) {
     adjustSpeakerVolume(24);
     setKeyDiag("vol:up");

@@ -172,6 +172,7 @@ enum class UiMode : uint8_t {
   Alarm,
   Stopwatch,
   Calendar,
+  SmartLamp,
   RfidLab,
   IrRemote,
   Tetris,

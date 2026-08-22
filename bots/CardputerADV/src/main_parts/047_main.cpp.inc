@@ -1832,6 +1832,36 @@ bool handleIrRemoteKey(char key, const Keyboard_Class::KeysState& keys) {
                               : handleTclAcRemoteKey(key, lowerKey, keys);
 }
 
+bool handleSmartLampKey(char key, const Keyboard_Class::KeysState& keys) {
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey == 'w' || key == ',' || key == '<') {
+    smartLampSelectControl(-1);
+    return true;
+  }
+  if (lowerKey == 's' || key == '.' || key == '>') {
+    smartLampSelectControl(1);
+    return true;
+  }
+  if (lowerKey == 'a' || key == '-' || key == '_') {
+    smartLampAdjustSelected(-1);
+    return true;
+  }
+  if (lowerKey == 'd' || key == '+' || key == '=') {
+    smartLampAdjustSelected(1);
+    return true;
+  }
+  if (keys.enter || keys.space || key == ' ' || key == '\r' || key == '\n' || lowerKey == 'p') {
+    smartLampTogglePower();
+    return true;
+  }
+  if (lowerKey == 'r') {
+    smartLampStartScan();
+    return true;
+  }
+  setStatus("smartLamp: arrows, Enter, R", 1100);
+  return true;
+}
+
 bool handleGlobalEscape() {
   bool changed = false;
 

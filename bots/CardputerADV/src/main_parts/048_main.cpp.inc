@@ -130,6 +130,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   if (gUiMode == UiMode::Calendar && handleCalendarKey(key, keys)) {
     return;
   }
+  if (gUiMode == UiMode::SmartLamp && handleSmartLampKey(key, keys)) {
+    return;
+  }
   if (gUiMode == UiMode::RfidLab && handleRfidLabKey(key, keys)) {
     return;
   }

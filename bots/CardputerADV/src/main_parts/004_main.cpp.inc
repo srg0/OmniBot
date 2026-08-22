@@ -95,6 +95,23 @@ struct EmojiCacheEntry {
   int16_t height = 0;
 };
 
+struct SmartLampRuntime {
+  IPAddress ip;
+  bool udpReady = false;
+  bool found = false;
+  bool online = false;
+  bool power = false;
+  uint8_t effect = 0;
+  uint8_t brightness = 50;
+  uint8_t speed = 30;
+  uint8_t scale = 40;
+  uint8_t selected = 0;
+  uint32_t lastSeenMs = 0;
+  uint32_t lastDiscoveryMs = 0;
+  uint32_t refreshDueMs = 0;
+  String status = "SEARCHING";
+};
+
 constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
     {"Assistant", "AI", "Voice, face, pet", rgb565_local(47, 227, 255), 4,
      {{"Pulse", UiMode::Home}, {"Big Eyes", UiMode::Face}, {"OpenClaw Pet", UiMode::Hero}, {"Chat Eyes", UiMode::ChatFace}}},
@@ -108,8 +125,8 @@ constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
      {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}, {"Cimatrix", UiMode::CMatrix}}},
     {"Device", "DEV", "Power and settings", rgb565_local(203, 216, 226), 3,
      {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Display", UiMode::ScreenSettings}}},
-    {"Utilities", "UTIL", "Tools and games", rgb565_local(255, 150, 80), 5,
-     {{"Calculator", UiMode::Calculator}, {"RFID Lab", UiMode::RfidLab}, {"IR Remote", UiMode::IrRemote}, {"Tetris", UiMode::Tetris}, {"Calendar", UiMode::Calendar}}},
+    {"Utilities", "UTIL", "Tools and smart controls", rgb565_local(255, 150, 80), 6,
+     {{"Calculator", UiMode::Calculator}, {"RFID Lab", UiMode::RfidLab}, {"IR Remote", UiMode::IrRemote}, {"Tetris", UiMode::Tetris}, {"Calendar", UiMode::Calendar}, {"smartLamp", UiMode::SmartLamp}}},
     {"Visuals", "C", "Ambient screen savers", rgb565_local(88, 240, 141), 2,
      {{"C-Matrix", UiMode::CMatrix}, {"Saver Setup", UiMode::ScreenSettings}}},
 };
@@ -119,6 +136,7 @@ WebSocketsClient gWs;
 WebSocketsClient gRealtimeWs;
 DNSServer gSetupDns;
 WebServer gSetupServer(80);
+WiFiUDP gSmartLampUdp;
 M5Canvas gCanvas(&M5Cardputer.Display);
 SPIClass gSdSpi(FSPI);
 MFRC522 gRfidReader(kRfidCsPin, kRfidResetPin);
@@ -166,6 +184,7 @@ std::deque<ContextPreviewLine> gContextPreview;
 std::deque<String> gRuntimeLogs;
 IrRemoteSlot gIrRemoteSlots[kIrRemoteSlotCount];
 RfidClassicDump gRfidDump;
+SmartLampRuntime gSmartLamp;
 
 bool gWifiReady = false;
 bool gWsReady = false;

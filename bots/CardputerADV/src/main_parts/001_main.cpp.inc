@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <M5Cardputer.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
@@ -42,6 +43,7 @@ extern "C" {
 #include <cctype>
 #include <algorithm>
 #include <cstdlib>
+#include <cstdio>
 #include <cstdarg>
 #include <cstring>
 #include <deque>
@@ -55,7 +57,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.133-dev"
+#define APP_VERSION "0.2.134-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -176,7 +178,14 @@ constexpr uint32_t kVoiceSocketSettleMs = 300;
 constexpr uint32_t kCtrlDoubleTapWindowMs = 420;
 constexpr uint32_t kLauncherToggleDebounceMs = 140;
 constexpr uint8_t kLauncherGroupCount = 8;
-constexpr uint8_t kLauncherMaxSubItems = 5;
+constexpr uint8_t kLauncherMaxSubItems = 6;
+constexpr uint16_t kSmartLampUdpPort = 8888;
+constexpr uint16_t kSmartLampControllerPort = 42188;
+constexpr uint8_t kSmartLampEffectCount = 18;
+constexpr uint8_t kSmartLampControlCount = 4;
+constexpr uint32_t kSmartLampDiscoveryIntervalMs = 4000;
+constexpr uint32_t kSmartLampOnlineTimeoutMs = 9000;
+constexpr uint32_t kSmartLampRefreshDelayMs = 180;
 constexpr uint8_t kDeviceSettingsItemCount = 7;
 constexpr uint8_t kFocusSettingsItemCount = 7;
 constexpr uint8_t kScreenSettingsItemCount = 8;

@@ -1106,6 +1106,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/smartlamp" || cmd == "/lamp") {
+    setUiMode(UiMode::SmartLamp);
+    return true;
+  }
+
   if (cmd == "/rfid" || cmd == "/rc522" || cmd == "/mfrc522" || cmd == "/nfc") {
     setUiMode(UiMode::RfidLab);
     return true;

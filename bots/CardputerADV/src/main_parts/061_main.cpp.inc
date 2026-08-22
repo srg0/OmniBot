@@ -55,6 +55,9 @@
       case UiMode::Calendar:
         renderCalendarUi();
         break;
+      case UiMode::SmartLamp:
+        renderSmartLampUi();
+        break;
       case UiMode::RfidLab:
         renderRfidLabUi();
         break;
@@ -319,6 +322,7 @@ void loop() {
   serviceFocusMetronome();
   serviceAlarm();
   serviceTetris();
+  serviceSmartLamp();
   if (gUiMode == UiMode::IrRemote || gIrRemoteLearning) {
     serviceIrRemote();
   }

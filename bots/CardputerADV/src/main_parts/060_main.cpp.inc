@@ -169,6 +169,85 @@ void renderChatUi() {
   renderDebugOverlay();
 }
 
+void renderSmartLampUi() {
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(7, 18, 25);
+  const uint16_t row = rgb565_local(9, 24, 32);
+  const uint16_t selected = rgb565_local(12, 37, 45);
+  const uint16_t line = rgb565_local(48, 60, 69);
+  const uint16_t muted = rgb565_local(130, 145, 155);
+  const uint16_t amber = rgb565_local(255, 150, 80);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t red = rgb565_local(255, 93, 88);
+  const bool online = gSmartLamp.online;
+  const uint16_t statusColor = online ? green : (WiFi.status() == WL_CONNECTED ? amber : red);
+
+  d.fillScreen(bg);
+  d.fillRoundRect(5, 5, 230, 125, 7, panel);
+  d.drawRoundRect(5, 5, 230, 125, 7, line);
+  d.setFont(&fonts::Font2);
+  d.setTextColor(TFT_WHITE, panel);
+  d.setCursor(12, 9);
+  d.print("smartLamp");
+  d.fillCircle(151, 17, 3, statusColor);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(statusColor, panel);
+  d.setCursor(158, 13);
+  d.print(gSmartLamp.status);
+  if (gSmartLamp.found && (gSmartLamp.online || gSmartLamp.status == "SENT")) {
+    d.setTextColor(muted, panel);
+    d.setTextDatum(middle_right);
+    d.drawString("..." + String(gSmartLamp.ip[3]), 228, 17);
+    d.setTextDatum(top_left);
+  }
+  d.drawFastHLine(11, 27, 218, rgb565_local(30, 48, 57));
+
+  d.drawCircle(44, 65, 29, rgb565_local(86, 48, 31));
+  d.drawArc(44, 65, 29, 25, 220, 140, gSmartLamp.power ? amber : muted);
+  d.fillRoundRect(42, 36, 4, 18, 2, gSmartLamp.power ? TFT_WHITE : muted);
+  d.setTextDatum(middle_center);
+  d.setFont(&fonts::Font2);
+  d.setTextColor(gSmartLamp.power ? TFT_WHITE : muted, panel);
+  d.drawString(gSmartLamp.power ? "ON" : "OFF", 44, 66);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(amber, panel);
+  d.drawString("EFFECT " + String(gSmartLamp.effect), 44, 99);
+  d.setTextDatum(top_left);
+
+  const char* labels[kSmartLampControlCount] = {"EFFECT", "BRIGHT", "SPEED", "SCALE"};
+  const int values[kSmartLampControlCount] = {
+      gSmartLamp.effect, gSmartLamp.brightness, gSmartLamp.speed, gSmartLamp.scale};
+  const int maximum[kSmartLampControlCount] = {kSmartLampEffectCount - 1, 255, 255, 100};
+  for (uint8_t i = 0; i < kSmartLampControlCount; ++i) {
+    int y = 31 + i * 20;
+    bool active = i == gSmartLamp.selected;
+    uint16_t fill = active ? selected : row;
+    d.fillRoundRect(81, y, 146, 17, 5, fill);
+    d.drawRoundRect(81, y, 146, 17, 5, active ? cyan : rgb565_local(36, 51, 59));
+    d.setFont(&fonts::Font0);
+    d.setTextColor(active ? TFT_WHITE : muted, fill);
+    d.setCursor(88, y + 4);
+    d.print(labels[i]);
+    d.setTextDatum(middle_right);
+    d.setTextColor(active ? cyan : TFT_WHITE, fill);
+    d.drawString(String(values[i]), 218, y + 7);
+    d.setTextDatum(top_left);
+    if (i > 0) {
+      int progress = clampValue<int>((values[i] * 130) / max<int>(1, maximum[i]), 0, 130);
+      d.fillRoundRect(88, y + 12, 130, 3, 2, rgb565_local(23, 36, 43));
+      if (progress > 0) {
+        d.fillRoundRect(88, y + 12, progress, 3, 2, active ? cyan : amber);
+      }
+    }
+  }
+
+  drawTinyFooter(panel, muted, "^v select   <> change   Enter power", 19, 118, 202);
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 void renderStatusBar() {
   auto& d = gCanvas;
   d.fillRect(0, 126, 240, 9, 0x18C3);
