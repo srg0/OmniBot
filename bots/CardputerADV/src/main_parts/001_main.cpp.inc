@@ -34,6 +34,7 @@
 #include <IRremote.hpp>
 
 #include "daikin280_encoder.h"
+#include "smartlamp_gl2_protocol.h"
 #include "tcl112ac_encoder.h"
 
 extern "C" {
@@ -57,7 +58,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.135-dev"
+#define APP_VERSION "0.2.134-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -179,13 +180,12 @@ constexpr uint32_t kCtrlDoubleTapWindowMs = 420;
 constexpr uint32_t kLauncherToggleDebounceMs = 140;
 constexpr uint8_t kLauncherGroupCount = 8;
 constexpr uint8_t kLauncherMaxSubItems = 6;
-constexpr uint16_t kSmartLampUdpPort = 8888;
-constexpr uint16_t kSmartLampControllerPort = 42188;
-constexpr uint8_t kSmartLampEffectCount = 18;
+constexpr uint16_t kSmartLampUdpPort = 61197;
 constexpr uint8_t kSmartLampControlCount = 4;
-constexpr uint32_t kSmartLampDiscoveryIntervalMs = 4000;
-constexpr uint32_t kSmartLampOnlineTimeoutMs = 9000;
-constexpr uint32_t kSmartLampRefreshDelayMs = 180;
+constexpr uint32_t kSmartLampOnlineTimeoutMs = 3500;
+constexpr uint32_t kSmartLampPresetSendDelayMs = 250;
+constexpr uint32_t kSmartLampMinCommandGapMs = 520;
+constexpr const char* kSmartLampPrefsNs = "smartlamp";
 constexpr uint8_t kDeviceSettingsItemCount = 7;
 constexpr uint8_t kFocusSettingsItemCount = 7;
 constexpr uint8_t kScreenSettingsItemCount = 8;

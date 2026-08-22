@@ -21,7 +21,52 @@ IPAddress smartLampBroadcastAddress() {
   return broadcast;
 }
 
+void smartLampUpdateFromPreset() {
+  if (!gSmartLamp.presetsLearned || gSmartLamp.presets.count == 0) {
+    return;
+  }
+  uint8_t selected = min<uint8_t>(gSmartLamp.presets.selected, gSmartLamp.presets.count - 1);
+  gSmartLamp.effect = selected;
+  gSmartLamp.speed = gSmartLamp.presets.values[selected][cardputer_smartlamp::kPresetSpeedIndex];
+  gSmartLamp.scale = gSmartLamp.presets.values[selected][cardputer_smartlamp::kPresetScaleIndex];
+  if (gSmartLamp.presets.values[selected][1] != 0) {
+    gSmartLamp.brightness = gSmartLamp.presets.values[selected][2];
+  }
+}
+
+void smartLampLoadPresetsOnce() {
+  if (gSmartLamp.presetsLoaded) {
+    return;
+  }
+  gSmartLamp.presetsLoaded = true;
+  cardputer_smartlamp::PresetBank saved;
+  gPrefs.begin(kSmartLampPrefsNs, true);
+  size_t stored = gPrefs.getBytesLength("presets_v1");
+  if (stored == sizeof(saved)) {
+    gPrefs.getBytes("presets_v1", &saved, sizeof(saved));
+  }
+  gPrefs.end();
+  if (stored != sizeof(saved) || saved.count == 0 ||
+      saved.count > cardputer_smartlamp::kMaxPresets || saved.selected >= saved.count) {
+    return;
+  }
+  gSmartLamp.presets = saved;
+  gSmartLamp.presetsLearned = true;
+  smartLampUpdateFromPreset();
+  logf("[LAMP] restored %u GyverLamp2 presets", static_cast<unsigned>(saved.count));
+}
+
+void smartLampSavePresets() {
+  if (!gSmartLamp.presetsLearned || gSmartLamp.presets.count == 0) {
+    return;
+  }
+  gPrefs.begin(kSmartLampPrefsNs, false);
+  gPrefs.putBytes("presets_v1", &gSmartLamp.presets, sizeof(gSmartLamp.presets));
+  gPrefs.end();
+}
+
 bool ensureSmartLampUdp() {
+  smartLampLoadPresetsOnce();
   if (WiFi.status() != WL_CONNECTED) {
     if (gSmartLamp.udpReady) {
       gSmartLampUdp.stop();
@@ -34,23 +79,22 @@ bool ensureSmartLampUdp() {
   if (gSmartLamp.udpReady) {
     return true;
   }
-  gSmartLamp.udpReady = gSmartLampUdp.begin(kSmartLampControllerPort) == 1;
+  gSmartLamp.udpReady = gSmartLampUdp.begin(kSmartLampUdpPort) == 1;
   if (!gSmartLamp.udpReady) {
     gSmartLamp.status = "UDP ERROR";
-    logf("[LAMP] udp bind failed port=%u", static_cast<unsigned>(kSmartLampControllerPort));
+    logf("[LAMP] GyverLamp2 bind failed port=%u", static_cast<unsigned>(kSmartLampUdpPort));
     return false;
   }
-  logf("[LAMP] udp ready port=%u", static_cast<unsigned>(kSmartLampControllerPort));
+  logf("[LAMP] GyverLamp2 listening port=%u", static_cast<unsigned>(kSmartLampUdpPort));
   return true;
 }
 
-bool smartLampSendPacket(const String& packet, bool forceBroadcast) {
+bool smartLampSendPacket(const String& packet) {
   if (!ensureSmartLampUdp()) {
     setStatus("smartLamp: Wi-Fi unavailable", 1000);
     return false;
   }
-  IPAddress target = (!forceBroadcast && gSmartLamp.found) ? gSmartLamp.ip : smartLampBroadcastAddress();
-  if (!gSmartLampUdp.beginPacket(target, kSmartLampUdpPort)) {
+  if (!gSmartLampUdp.beginPacket(smartLampBroadcastAddress(), kSmartLampUdpPort)) {
     gSmartLamp.status = "SEND ERROR";
     return false;
   }
@@ -62,12 +106,38 @@ bool smartLampSendPacket(const String& packet, bool forceBroadcast) {
   return sent;
 }
 
+void smartLampClockFields(uint8_t& weekday, uint8_t& hour, uint8_t& minute, uint8_t& second) {
+  weekday = 0;
+  hour = 0;
+  minute = 0;
+  second = 0;
+  time_t now = time(nullptr);
+  if (now < 1700000000) {
+    return;
+  }
+  struct tm localNow = {};
+  localtime_r(&now, &localNow);
+  weekday = static_cast<uint8_t>(localNow.tm_wday);
+  hour = static_cast<uint8_t>(localNow.tm_hour);
+  minute = static_cast<uint8_t>(localNow.tm_min);
+  second = static_cast<uint8_t>(localNow.tm_sec);
+}
+
+String smartLampControlPacket(uint8_t command) {
+  uint8_t weekday = 0;
+  uint8_t hour = 0;
+  uint8_t minute = 0;
+  uint8_t second = 0;
+  smartLampClockFields(weekday, hour, minute, second);
+  return "GL,0," + String(command) + "," + String(weekday) + "," +
+         String(hour) + "," + String(minute) + "," + String(second);
+}
+
 void smartLampRequestState(bool forceBroadcast = false) {
-  if (smartLampSendPacket("GET", forceBroadcast)) {
-    gSmartLamp.lastDiscoveryMs = millis();
-    if (!gSmartLamp.online) {
-      gSmartLamp.status = "SEARCHING";
-    }
+  (void)forceBroadcast;
+  ensureSmartLampUdp();
+  if (!gSmartLamp.online && WiFi.status() == WL_CONNECTED) {
+    gSmartLamp.status = "SEARCHING";
   }
 }
 
@@ -76,50 +146,95 @@ void smartLampStartScan() {
   gSmartLamp.online = false;
   gSmartLamp.ip = IPAddress();
   gSmartLamp.status = "SEARCHING";
-  gSmartLamp.lastDiscoveryMs = 0;
-  gSmartLamp.refreshDueMs = 0;
-  smartLampRequestState(true);
-  setStatus("smartLamp scan", 900);
+  gSmartLamp.lastSeenMs = 0;
+  if (gSmartLamp.udpReady) {
+    gSmartLampUdp.stop();
+    gSmartLamp.udpReady = false;
+  }
+  ensureSmartLampUdp();
+  setStatus("smartLamp: listening GL2", 900);
+}
+
+bool smartLampLearnPresetPacket(const String& packet) {
+  cardputer_smartlamp::PresetBank parsed;
+  if (!cardputer_smartlamp::parsePresetPacket(packet.c_str(), parsed)) {
+    return false;
+  }
+  bool changed = !gSmartLamp.presetsLearned ||
+                 memcmp(&parsed, &gSmartLamp.presets, sizeof(parsed)) != 0;
+  gSmartLamp.presets = parsed;
+  gSmartLamp.presetsLearned = true;
+  smartLampUpdateFromPreset();
+  if (changed) {
+    smartLampSavePresets();
+    logf("[LAMP] learned %u presets current=%u", static_cast<unsigned>(parsed.count),
+         static_cast<unsigned>(parsed.selected));
+    setStatus("smartLamp presets synced", 1100);
+  }
+  return true;
 }
 
 void smartLampProcessPacket(const String& packet, const IPAddress& remoteIp) {
-  if (!packet.startsWith("CURR")) {
+  if (packet.startsWith("GL,2,")) {
+    smartLampLearnPresetPacket(packet);
     return;
   }
-  int effect = 0;
-  int brightness = 0;
-  int speed = 0;
-  int scale = 0;
-  int power = 0;
-  if (sscanf(packet.c_str(), "CURR %d %d %d %d %d", &effect, &brightness, &speed, &scale, &power) != 5) {
+  if (!packet.startsWith("GL_ONL")) {
+    return;
+  }
+  int preset = packet.substring(7).toInt();
+  if (preset < 0 || preset >= static_cast<int>(cardputer_smartlamp::kMaxPresets)) {
     return;
   }
   bool wasOnline = gSmartLamp.online;
   gSmartLamp.ip = remoteIp;
   gSmartLamp.found = true;
   gSmartLamp.online = true;
-  gSmartLamp.effect = static_cast<uint8_t>(clampValue<int>(effect, 0, kSmartLampEffectCount - 1));
-  gSmartLamp.brightness = static_cast<uint8_t>(clampValue<int>(brightness, 0, 255));
-  gSmartLamp.speed = static_cast<uint8_t>(clampValue<int>(speed, 0, 255));
-  gSmartLamp.scale = static_cast<uint8_t>(clampValue<int>(scale, 0, 100));
-  gSmartLamp.power = power != 0;
+  gSmartLamp.effect = static_cast<uint8_t>(preset);
+  if (gSmartLamp.presetsLearned && gSmartLamp.effect < gSmartLamp.presets.count) {
+    gSmartLamp.presets.selected = gSmartLamp.effect;
+    smartLampUpdateFromPreset();
+  }
   gSmartLamp.lastSeenMs = millis();
-  gSmartLamp.refreshDueMs = 0;
   gSmartLamp.status = "ONLINE";
   if (!wasOnline) {
-    logf("[LAMP] found ip=%s effect=%u", remoteIp.toString().c_str(), static_cast<unsigned>(gSmartLamp.effect));
+    logf("[LAMP] GyverLamp2 ip=%s port=%u preset=%u", remoteIp.toString().c_str(),
+         static_cast<unsigned>(kSmartLampUdpPort), static_cast<unsigned>(gSmartLamp.effect));
     setStatus("smartLamp online", 900);
   }
 }
 
 void smartLampSendControl(const String& command, const String& label) {
-  if (!smartLampSendPacket(command, !gSmartLamp.found)) {
+  if (!smartLampSendPacket(command)) {
     setStatus("smartLamp send failed", 900);
     return;
   }
   gSmartLamp.status = "SENT";
-  gSmartLamp.refreshDueMs = millis() + kSmartLampRefreshDelayMs;
+  gSmartLamp.lastCommandMs = millis();
   setStatus(label, 650);
+}
+
+bool smartLampSendPresetBank() {
+  if (!gSmartLamp.presetsLearned || gSmartLamp.presets.count == 0 ||
+      gSmartLamp.effect >= gSmartLamp.presets.count) {
+    return false;
+  }
+  gSmartLamp.presets.selected = gSmartLamp.effect;
+  uint8_t weekday = 0;
+  uint8_t hour = 0;
+  uint8_t minute = 0;
+  uint8_t second = 0;
+  smartLampClockFields(weekday, hour, minute, second);
+  static char packet[cardputer_smartlamp::kMaxPacketBytes] = {};
+  size_t length = cardputer_smartlamp::buildPresetPacket(
+      gSmartLamp.presets, weekday, hour, minute, second, packet, sizeof(packet));
+  if (length == 0 || !smartLampSendPacket(String(packet, length))) {
+    gSmartLamp.status = "SEND ERROR";
+    return false;
+  }
+  gSmartLamp.lastCommandMs = millis();
+  gSmartLamp.status = "SENT";
+  return true;
 }
 
 void smartLampSelectControl(int delta) {
@@ -131,28 +246,43 @@ void smartLampSelectControl(int delta) {
 void smartLampAdjustSelected(int delta) {
   switch (gSmartLamp.selected) {
     case 0: {
-      int effect = (static_cast<int>(gSmartLamp.effect) + delta + kSmartLampEffectCount) % kSmartLampEffectCount;
-      gSmartLamp.effect = static_cast<uint8_t>(effect);
-      smartLampSendControl("EFF" + String(effect), "Effect " + String(effect));
+      uint8_t command = delta < 0 ? 4 : 5;
+      smartLampSendControl(smartLampControlPacket(command), delta < 0 ? "Previous preset" : "Next preset");
       break;
     }
     case 1: {
       int brightness = clampValue<int>(static_cast<int>(gSmartLamp.brightness) + delta * 5, 0, 255);
       gSmartLamp.brightness = static_cast<uint8_t>(brightness);
-      smartLampSendControl("BRI" + String(brightness), "Brightness " + String(brightness));
+      smartLampSendControl("GL,4,2," + String(brightness), "Brightness " + String(brightness));
       break;
     }
     case 2: {
+      if (!gSmartLamp.presetsLearned || gSmartLamp.effect >= gSmartLamp.presets.count) {
+        gSmartLamp.status = "SYNC";
+        setStatus("Move a phone lamp slider once", 1400);
+        return;
+      }
       int speed = clampValue<int>(static_cast<int>(gSmartLamp.speed) + delta * 5, 0, 255);
       gSmartLamp.speed = static_cast<uint8_t>(speed);
-      smartLampSendControl("SPD" + String(speed), "Speed " + String(speed));
+      gSmartLamp.presets.selected = gSmartLamp.effect;
+      gSmartLamp.presets.values[gSmartLamp.effect][cardputer_smartlamp::kPresetSpeedIndex] = gSmartLamp.speed;
+      gSmartLamp.presetSendDueMs = millis() + kSmartLampPresetSendDelayMs;
+      setStatus("Speed " + String(speed), 650);
       break;
     }
     case 3:
     default: {
-      int scale = clampValue<int>(static_cast<int>(gSmartLamp.scale) + delta * 2, 0, 100);
+      if (!gSmartLamp.presetsLearned || gSmartLamp.effect >= gSmartLamp.presets.count) {
+        gSmartLamp.status = "SYNC";
+        setStatus("Move a phone lamp slider once", 1400);
+        return;
+      }
+      int scale = clampValue<int>(static_cast<int>(gSmartLamp.scale) + delta * 2, 0, 255);
       gSmartLamp.scale = static_cast<uint8_t>(scale);
-      smartLampSendControl("SCA" + String(scale), "Scale " + String(scale));
+      gSmartLamp.presets.selected = gSmartLamp.effect;
+      gSmartLamp.presets.values[gSmartLamp.effect][cardputer_smartlamp::kPresetScaleIndex] = gSmartLamp.scale;
+      gSmartLamp.presetSendDueMs = millis() + kSmartLampPresetSendDelayMs;
+      setStatus("Scale " + String(scale), 650);
       break;
     }
   }
@@ -160,7 +290,8 @@ void smartLampAdjustSelected(int delta) {
 
 void smartLampTogglePower() {
   gSmartLamp.power = !gSmartLamp.power;
-  smartLampSendControl(gSmartLamp.power ? "P_ON" : "P_OFF", gSmartLamp.power ? "Lamp on" : "Lamp off");
+  smartLampSendControl(smartLampControlPacket(gSmartLamp.power ? 1 : 0),
+                       gSmartLamp.power ? "Lamp on" : "Lamp off");
 }
 
 void serviceSmartLamp() {
@@ -177,7 +308,7 @@ void serviceSmartLamp() {
     if (packetSize <= 0) {
       break;
     }
-    char packet[96] = {};
+    static char packet[cardputer_smartlamp::kMaxPacketBytes] = {};
     int read = gSmartLampUdp.read(reinterpret_cast<uint8_t*>(packet), sizeof(packet) - 1);
     if (read <= 0) {
       continue;
@@ -193,12 +324,13 @@ void serviceSmartLamp() {
     gSmartLamp.online = false;
     gSmartLamp.status = "NO REPLY";
   }
-  if (gSmartLamp.refreshDueMs != 0 && static_cast<int32_t>(now - gSmartLamp.refreshDueMs) >= 0) {
-    gSmartLamp.refreshDueMs = 0;
-    smartLampRequestState(false);
-  }
-  if (gUiMode == UiMode::SmartLamp && now - gSmartLamp.lastDiscoveryMs >= kSmartLampDiscoveryIntervalMs) {
-    smartLampRequestState(!gSmartLamp.found || !gSmartLamp.online);
+  if (gSmartLamp.presetSendDueMs != 0 &&
+      static_cast<int32_t>(now - gSmartLamp.presetSendDueMs) >= 0 &&
+      now - gSmartLamp.lastCommandMs >= kSmartLampMinCommandGapMs) {
+    gSmartLamp.presetSendDueMs = 0;
+    if (smartLampSendPresetBank()) {
+      smartLampSavePresets();
+    }
   }
 }
 

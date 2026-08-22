@@ -213,13 +213,14 @@ void renderSmartLampUi() {
   d.drawString(gSmartLamp.power ? "ON" : "OFF", 44, 66);
   d.setFont(&fonts::Font0);
   d.setTextColor(amber, panel);
-  d.drawString("EFFECT " + String(gSmartLamp.effect), 44, 99);
+  d.drawString("PRESET " + String(gSmartLamp.effect), 44, 99);
   d.setTextDatum(top_left);
 
-  const char* labels[kSmartLampControlCount] = {"EFFECT", "BRIGHT", "SPEED", "SCALE"};
+  const char* labels[kSmartLampControlCount] = {"PRESET", "BRIGHT", "SPEED", "SCALE"};
   const int values[kSmartLampControlCount] = {
       gSmartLamp.effect, gSmartLamp.brightness, gSmartLamp.speed, gSmartLamp.scale};
-  const int maximum[kSmartLampControlCount] = {kSmartLampEffectCount - 1, 255, 255, 100};
+  const int maximum[kSmartLampControlCount] = {
+      gSmartLamp.presetsLearned ? max<int>(1, gSmartLamp.presets.count - 1) : 39, 255, 255, 255};
   for (uint8_t i = 0; i < kSmartLampControlCount; ++i) {
     int y = 31 + i * 20;
     bool active = i == gSmartLamp.selected;
@@ -232,9 +233,10 @@ void renderSmartLampUi() {
     d.print(labels[i]);
     d.setTextDatum(middle_right);
     d.setTextColor(active ? cyan : TFT_WHITE, fill);
-    d.drawString(String(values[i]), 218, y + 7);
+    bool needsSync = i >= 2 && !gSmartLamp.presetsLearned;
+    d.drawString(needsSync ? "--" : String(values[i]), 218, y + 7);
     d.setTextDatum(top_left);
-    if (i > 0) {
+    if (i > 0 && !needsSync) {
       int progress = clampValue<int>((values[i] * 130) / max<int>(1, maximum[i]), 0, 130);
       d.fillRoundRect(88, y + 12, 130, 3, 2, rgb565_local(23, 36, 43));
       if (progress > 0) {

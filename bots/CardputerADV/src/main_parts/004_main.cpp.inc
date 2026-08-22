@@ -100,15 +100,18 @@ struct SmartLampRuntime {
   bool udpReady = false;
   bool found = false;
   bool online = false;
-  bool power = false;
+  bool power = true;
+  bool presetsLoaded = false;
+  bool presetsLearned = false;
   uint8_t effect = 0;
-  uint8_t brightness = 50;
-  uint8_t speed = 30;
-  uint8_t scale = 40;
+  uint8_t brightness = 100;
+  uint8_t speed = 200;
+  uint8_t scale = 100;
   uint8_t selected = 0;
   uint32_t lastSeenMs = 0;
-  uint32_t lastDiscoveryMs = 0;
-  uint32_t refreshDueMs = 0;
+  uint32_t lastCommandMs = 0;
+  uint32_t presetSendDueMs = 0;
+  cardputer_smartlamp::PresetBank presets;
   String status = "SEARCHING";
 };
 
