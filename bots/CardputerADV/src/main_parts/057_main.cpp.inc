@@ -561,7 +561,7 @@ void renderIrRemoteButton(int16_t x, int16_t y, const char* keyLabel, const char
 
 void renderIrRemoteSlotTabs(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t amber, uint16_t muted) {
   auto& d = gCanvas;
-  const char* labels[] = {"1 WC-UA04", "2 A59"};
+  const char* labels[] = {"1 TCL112", "2 DAIKIN"};
   for (uint8_t i = 0; i < kIrRemotePresetCount; ++i) {
     int16_t x = 18 + i * 77;
     bool selected = gSelectedIrRemoteSlot == i;
@@ -579,13 +579,13 @@ void renderIrRemoteSlotTabs(uint16_t panel, uint16_t panel2, uint16_t cyan, uint
   d.print(",/. swap");
 }
 
-void renderCarrierRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t green, uint16_t amber,
-                           uint16_t muted, uint16_t red) {
+void renderTclRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t green, uint16_t amber,
+                       uint16_t muted, uint16_t red) {
   auto& d = gCanvas;
   d.setFont(&fonts::Font2);
   d.setTextColor(cyan, panel);
   d.setCursor(16, 13);
-  d.print("CARRIER WC-UA04");
+  d.print("TCL112AC UNIVERSAL");
   String io = String("IRG") + String(kIrSendPin) + " TX";
   d.setTextColor(green, panel);
   d.setCursor(224 - d.textWidth(io), 16);
@@ -593,23 +593,24 @@ void renderCarrierRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint1
 
   renderIrRemoteSlotTabs(panel, panel2, cyan, amber, muted);
 
-  String state = carrierStateSummary();
+  String state = tclStateSummary();
   d.fillRoundRect(17, 46, 206, 12, 5, rgb565_local(6, 10, 18));
   d.setFont(&fonts::Font0);
-  d.setTextColor(gCarrierPower ? green : red, rgb565_local(6, 10, 18));
+  d.setTextColor(gTclPower ? green : red, rgb565_local(6, 10, 18));
   d.setCursor(23, 49);
   d.print(fitCurrentFontToWidth(state, 194));
 
-  const char* keys[] = {"Q", "W", "E", "R", "T", "Y", "A", "S", "D", "F", "G", "H"};
-  const char* labels[] = {"Power", "Cool", "Fan", "Dry", "Heat", "Auto", "Temp-", "Temp+", "FanSp", "Swing", "Eco", "Resend"};
+  const char* keys[] = {"Q", "W", "E", "R", "T", "Y", "A", "S", "D", "F", "O", "P"};
+  const char* labels[] = {"Power", "Cool", "Fan", "Dry", "Heat", "Auto", "Temp-", "Temp+", "FanSp", "Swing", "On", "Off"};
   for (uint8_t i = 0; i < 12; ++i) {
     const int col = i % 4;
     const int row = i / 4;
     uint16_t line = muted;
-    if ((i == 0 && gCarrierPower) || (i == 1 && gCarrierMode == kCarrierToshibaCool) ||
-        (i == 2 && gCarrierMode == kCarrierToshibaFan) || (i == 3 && gCarrierMode == kCarrierToshibaDry) ||
-        (i == 4 && gCarrierMode == kCarrierToshibaHeat) || (i == 5 && gCarrierMode == kCarrierToshibaAuto) ||
-        (i == 9 && gCarrierSwingV) || (i == 10 && gCarrierEco)) {
+    if ((i == 0 && gTclPower) || (i == 1 && gTclMode == cardputer_ir::kTcl112AcCool) ||
+        (i == 2 && gTclMode == cardputer_ir::kTcl112AcFan) ||
+        (i == 3 && gTclMode == cardputer_ir::kTcl112AcDry) ||
+        (i == 4 && gTclMode == cardputer_ir::kTcl112AcHeat) ||
+        (i == 5 && gTclMode == cardputer_ir::kTcl112AcAuto) || (i == 9 && gTclSwingV)) {
       line = amber;
     }
     renderIrRemoteButton(18 + col * 53, 62 + row * 18, keys[i], labels[i], panel2, line, cyan, TFT_LIGHTGREY);
@@ -619,16 +620,16 @@ void renderCarrierRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint1
   d.setFont(&fonts::Font0);
   d.setTextColor(TFT_LIGHTGREY, rgb565_local(6, 10, 18));
   d.setCursor(22, 118);
-  d.print(fitCurrentFontToWidth(String(gCarrierLastCommand) + " | 1/2 slots", 196));
+  d.print(fitCurrentFontToWidth(String(gTclLastCommand) + " | Enter resend", 196));
 }
 
-void renderSamsungRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t green, uint16_t amber,
-                           uint16_t muted) {
+void renderDaikinRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint16_t green, uint16_t amber,
+                          uint16_t muted, uint16_t red) {
   auto& d = gCanvas;
   d.setFont(&fonts::Font2);
   d.setTextColor(cyan, panel);
   d.setCursor(16, 13);
-  d.print("SAMSUNG A59");
+  d.print("DAIKIN 280 GENERIC");
   String io = String("IRG") + String(kIrSendPin) + " TX";
   d.setTextColor(green, panel);
   d.setCursor(224 - d.textWidth(io), 16);
@@ -636,18 +637,27 @@ void renderSamsungRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint1
 
   renderIrRemoteSlotTabs(panel, panel2, cyan, amber, muted);
 
+  String state = daikinStateSummary();
   d.fillRoundRect(17, 46, 206, 12, 5, rgb565_local(6, 10, 18));
   d.setFont(&fonts::Font0);
-  d.setTextColor(green, rgb565_local(6, 10, 18));
+  d.setTextColor(gDaikinPower ? green : red, rgb565_local(6, 10, 18));
   d.setCursor(23, 49);
-  d.print(fitCurrentFontToWidth(String("Last ") + gSamsungLastCommandLabel + " | Enter OK", 194));
+  d.print(fitCurrentFontToWidth(state, 194));
 
-  const char* keys[] = {"Q", "W", "E", "R", "T", "Y", "A", "S", "D", "F", "Z", "X"};
-  const char* labels[] = {"Power", "Up", "Source", "Back", "Home", "Menu", "Left", "Down", "Right", "Mute", "Vol-", "Vol+"};
+  const char* keys[] = {"Q", "W", "E", "R", "T", "Y", "A", "S", "D", "F", "G", "H"};
+  const char* labels[] = {"Power", "Cool", "Fan", "Dry", "Heat", "Auto", "Temp-", "Temp+", "FanSp", "Swing", "Quiet", "Turbo"};
   for (uint8_t i = 0; i < 12; ++i) {
     const int col = i % 4;
     const int row = i / 4;
-    uint16_t line = (i == 0 || i == 1 || i == 6 || i == 7 || i == 8 || i == 10 || i == 11) ? amber : muted;
+    uint16_t line = muted;
+    if ((i == 0 && gDaikinPower) || (i == 1 && gDaikinMode == cardputer_ir::kDaikin280Cool) ||
+        (i == 2 && gDaikinMode == cardputer_ir::kDaikin280FanOnly) ||
+        (i == 3 && gDaikinMode == cardputer_ir::kDaikin280Dry) ||
+        (i == 4 && gDaikinMode == cardputer_ir::kDaikin280Heat) ||
+        (i == 5 && gDaikinMode == cardputer_ir::kDaikin280Auto) || (i == 9 && gDaikinSwingV) ||
+        (i == 10 && gDaikinQuiet) || (i == 11 && gDaikinPowerful)) {
+      line = amber;
+    }
     renderIrRemoteButton(18 + col * 53, 62 + row * 18, keys[i], labels[i], panel2, line, cyan, TFT_LIGHTGREY);
   }
 
@@ -655,7 +665,7 @@ void renderSamsungRemoteUi(uint16_t panel, uint16_t panel2, uint16_t cyan, uint1
   d.setFont(&fonts::Font0);
   d.setTextColor(TFT_LIGHTGREY, rgb565_local(6, 10, 18));
   d.setCursor(22, 118);
-  d.print(fitCurrentFontToWidth("G/H Ch  V/B/N Guide/Info/Tools", 196));
+  d.print(fitCurrentFontToWidth(String(gDaikinLastCommand) + " | Enter resend", 196));
 }
 
 void renderIrRemoteUi() {
@@ -672,13 +682,13 @@ void renderIrRemoteUi() {
 
   d.fillScreen(bg);
   d.fillRoundRect(6, 5, 228, 124, 12, panel);
-  d.drawRoundRect(6, 5, 228, 124, 12, isSamsungRemoteSlot() ? green : cyan);
+  d.drawRoundRect(6, 5, 228, 124, 12, isDaikinRemoteSlot() ? green : cyan);
   d.drawRoundRect(10, 9, 220, 116, 9, rgb565_local(28, 34, 54));
 
-  if (isSamsungRemoteSlot()) {
-    renderSamsungRemoteUi(panel, panel2, cyan, green, amber, muted);
+  if (isDaikinRemoteSlot()) {
+    renderDaikinRemoteUi(panel, panel2, cyan, green, amber, muted, red);
   } else {
-    renderCarrierRemoteUi(panel, panel2, cyan, green, amber, muted, red);
+    renderTclRemoteUi(panel, panel2, cyan, green, amber, muted, red);
   }
 
   d.setFont(&fonts::Font2);
