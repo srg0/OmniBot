@@ -115,23 +115,45 @@ struct SmartLampRuntime {
   String status = "SEARCHING";
 };
 
+struct KeyRushRuntime {
+  bool running = false;
+  bool finished = false;
+  bool bestLoaded = false;
+  bool feedbackCorrect = true;
+  uint8_t targetIndex = 0;
+  uint8_t typedCount = 0;
+  uint16_t words = 0;
+  uint16_t streak = 0;
+  uint16_t bestStreak = 0;
+  uint32_t score = 0;
+  uint32_t bestScore = 0;
+  uint32_t correctKeys = 0;
+  uint32_t mistakeKeys = 0;
+  uint32_t startedMs = 0;
+  uint32_t endsAtMs = 0;
+  uint32_t feedbackUntilMs = 0;
+};
+
 constexpr LauncherGroup kLauncherGroups[kLauncherGroupCount] = {
-    {"Assistant", "AI", "Voice, face, pet", rgb565_local(47, 227, 255), 4,
-     {{"Pulse", UiMode::Home}, {"Big Eyes", UiMode::Face}, {"OpenClaw Pet", UiMode::Hero}, {"Chat Eyes", UiMode::ChatFace}}},
-    {"Chat", "CH", "Chat, topics, notes", rgb565_local(88, 210, 255), 3,
-     {{"Full Chat", UiMode::ChatFull}, {"Chat Eyes", UiMode::ChatFace}, {"Notes", UiMode::Notes}}},
-    {"Audio", "WAV", "Library, folders, voice", rgb565_local(88, 240, 141), 4,
-     {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice}, {"Assets", UiMode::Assets}}},
-    {"Focus", "25", "Timer and focus setup", rgb565_local(246, 194, 74), 4,
-     {{"Focus Space", UiMode::Focus}, {"Pomodoro", UiMode::FocusSettings}, {"Alarm", UiMode::Alarm}, {"Stopwatch", UiMode::Stopwatch}}},
-    {"System", "SYS", "Bridge and firmware", rgb565_local(180, 150, 255), 3,
-     {{"Logs", UiMode::Logs}, {"Firmware", UiMode::Ota}, {"Cimatrix", UiMode::CMatrix}}},
-    {"Device", "DEV", "Power and settings", rgb565_local(203, 216, 226), 3,
-     {{"Battery", UiMode::Battery}, {"Settings", UiMode::Settings}, {"Display", UiMode::ScreenSettings}}},
-    {"Utilities", "UTIL", "Tools and smart controls", rgb565_local(255, 150, 80), 6,
-     {{"Calculator", UiMode::Calculator}, {"RFID Lab", UiMode::RfidLab}, {"IR Remote", UiMode::IrRemote}, {"Tetris", UiMode::Tetris}, {"Calendar", UiMode::Calendar}, {"smartLamp", UiMode::SmartLamp}}},
-    {"Visuals", "C", "Ambient screen savers", rgb565_local(88, 240, 141), 2,
-     {{"C-Matrix", UiMode::CMatrix}, {"Saver Setup", UiMode::ScreenSettings}}},
+    {"OpenClaw", "AI", "Assistant and chat", rgb565_local(47, 227, 255), 6,
+     {{"Pulse", UiMode::Home}, {"Full Chat", UiMode::ChatFull}, {"Topics", UiMode::Contexts},
+      {"Chat Eyes", UiMode::ChatFace}, {"Big Eyes", UiMode::Face}, {"OpenClaw Pet", UiMode::Hero}}},
+    {"Media", "WAV", "Listen and capture", rgb565_local(88, 240, 141), 5,
+     {{"Library", UiMode::Library}, {"Folders", UiMode::AudioFolders}, {"Voice Notes", UiMode::Voice},
+      {"Notes", UiMode::Notes}, {"Assets", UiMode::Assets}}},
+    {"Focus", "25", "Time and attention", rgb565_local(246, 194, 74), 5,
+     {{"Focus Space", UiMode::Focus}, {"Pomodoro", UiMode::FocusSettings}, {"Alarm", UiMode::Alarm},
+      {"Stopwatch", UiMode::Stopwatch}, {"Calendar", UiMode::Calendar}}},
+    {"Tools", "UTIL", "Local hardware tools", rgb565_local(255, 150, 80), 4,
+     {{"Calculator", UiMode::Calculator}, {"RFID Lab", UiMode::RfidLab},
+      {"IR Remote", UiMode::IrRemote}, {"smartLamp", UiMode::SmartLamp}}},
+    {"Games", "PLAY", "Keyboard and arcade", rgb565_local(157, 102, 255), 2,
+     {{"KeyRush", UiMode::KeyRush}, {"Tetris", UiMode::Tetris}}},
+    {"Device", "DEV", "Power and display", rgb565_local(203, 216, 226), 4,
+     {{"Clock", UiMode::Clock}, {"Battery", UiMode::Battery}, {"Settings", UiMode::Settings},
+      {"Display", UiMode::ScreenSettings}}},
+    {"System", "SYS", "Firmware and diagnostics", rgb565_local(180, 150, 255), 3,
+     {{"Firmware", UiMode::Ota}, {"Logs", UiMode::Logs}, {"C-Matrix", UiMode::CMatrix}}},
 };
 
 Preferences gPrefs;
@@ -188,6 +210,7 @@ std::deque<String> gRuntimeLogs;
 IrRemoteSlot gIrRemoteSlots[kIrRemoteSlotCount];
 RfidClassicDump gRfidDump;
 SmartLampRuntime gSmartLamp;
+KeyRushRuntime gKeyRush;
 
 bool gWifiReady = false;
 bool gWsReady = false;

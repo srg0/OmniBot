@@ -175,6 +175,7 @@ enum class UiMode : uint8_t {
   SmartLamp,
   RfidLab,
   IrRemote,
+  KeyRush,
   Tetris,
   CMatrix,
   Logs,

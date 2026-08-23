@@ -271,6 +271,13 @@ bool uiModeInterruptsRealtime(UiMode mode) {
 
 void setUiMode(UiMode mode) {
   bool modeChanged = mode != gUiMode;
+  if (modeChanged && gUiMode == UiMode::KeyRush && mode != UiMode::KeyRush && gKeyRush.running) {
+    uint32_t bestScore = gKeyRush.bestScore;
+    bool bestLoaded = gKeyRush.bestLoaded;
+    gKeyRush = KeyRushRuntime{};
+    gKeyRush.bestScore = bestScore;
+    gKeyRush.bestLoaded = bestLoaded;
+  }
   if (modeChanged && uiModeInterruptsRealtime(mode) &&
       (gRealtimeActive || gRealtimeConnected || gRealtimeRecording || gRealtimeAwaiting)) {
     closeRealtimeSession("mode change");

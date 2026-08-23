@@ -1862,6 +1862,138 @@ bool handleSmartLampKey(char key, const Keyboard_Class::KeysState& keys) {
   return true;
 }
 
+const char* const kKeyRushWords[] = {
+    "claw", "spark", "pixel", "focus", "orbit", "swift", "neon", "byte",
+    "lamp", "voice", "quick", "space", "pulse", "smart", "tiger", "dream",
+    "sound", "timer", "cloud", "brave", "glow", "shift", "laser", "codec",
+    "robot", "flash", "tempo", "power", "radio", "board", "input", "level",
+};
+constexpr uint8_t kKeyRushWordCount = sizeof(kKeyRushWords) / sizeof(kKeyRushWords[0]);
+
+const char* keyRushTargetWord() {
+  return kKeyRushWords[min<uint8_t>(gKeyRush.targetIndex, kKeyRushWordCount - 1)];
+}
+
+void keyRushLoadBestOnce() {
+  if (gKeyRush.bestLoaded) {
+    return;
+  }
+  gPrefs.begin(kKeyRushPrefsNs, true);
+  gKeyRush.bestScore = gPrefs.getULong("best", 0);
+  gPrefs.end();
+  gKeyRush.bestLoaded = true;
+}
+
+void keyRushChooseNextWord() {
+  uint8_t previous = gKeyRush.targetIndex;
+  uint8_t next = static_cast<uint8_t>(random(kKeyRushWordCount));
+  if (next == previous) {
+    next = static_cast<uint8_t>((next + 1 + gKeyRush.words) % kKeyRushWordCount);
+  }
+  gKeyRush.targetIndex = next;
+  gKeyRush.typedCount = 0;
+}
+
+void keyRushStart() {
+  keyRushLoadBestOnce();
+  uint32_t best = gKeyRush.bestScore;
+  gKeyRush = KeyRushRuntime{};
+  gKeyRush.bestLoaded = true;
+  gKeyRush.bestScore = best;
+  gKeyRush.running = true;
+  gKeyRush.startedMs = millis();
+  gKeyRush.endsAtMs = gKeyRush.startedMs + kKeyRushDurationMs;
+  gKeyRush.targetIndex = static_cast<uint8_t>(random(kKeyRushWordCount));
+  gKeyRush.feedbackCorrect = true;
+  setStatus("KeyRush: go!", 700);
+}
+
+void keyRushFinish() {
+  if (!gKeyRush.running) {
+    return;
+  }
+  gKeyRush.running = false;
+  gKeyRush.finished = true;
+  if (gKeyRush.score > gKeyRush.bestScore) {
+    gKeyRush.bestScore = gKeyRush.score;
+    gPrefs.begin(kKeyRushPrefsNs, false);
+    gPrefs.putULong("best", gKeyRush.bestScore);
+    gPrefs.end();
+    setStatus("KeyRush: new best!", 1400);
+  } else {
+    setStatus("KeyRush score " + String(gKeyRush.score), 1200);
+  }
+}
+
+void serviceKeyRush() {
+  if (gKeyRush.running && static_cast<int32_t>(millis() - gKeyRush.endsAtMs) >= 0) {
+    keyRushFinish();
+  }
+}
+
+uint16_t keyRushWpm() {
+  if (gKeyRush.startedMs == 0) {
+    return 0;
+  }
+  uint32_t elapsed = gKeyRush.running
+                         ? min<uint32_t>(millis() - gKeyRush.startedMs, kKeyRushDurationMs)
+                         : kKeyRushDurationMs;
+  return static_cast<uint16_t>(min<uint32_t>(999, (gKeyRush.correctKeys * 12000UL) /
+                                                        max<uint32_t>(1000, elapsed)));
+}
+
+uint8_t keyRushAccuracy() {
+  uint32_t total = gKeyRush.correctKeys + gKeyRush.mistakeKeys;
+  return total == 0 ? 100 : static_cast<uint8_t>((gKeyRush.correctKeys * 100UL) / total);
+}
+
+bool handleKeyRushKey(char key, const Keyboard_Class::KeysState& keys) {
+  if (keys.enter || key == '\r' || key == '\n') {
+    keyRushStart();
+    return true;
+  }
+  if (!gKeyRush.running) {
+    setStatus("KeyRush: Enter starts", 800);
+    return true;
+  }
+  if (keys.del || key == '\b') {
+    gKeyRush.mistakeKeys++;
+    gKeyRush.streak = 0;
+    gKeyRush.score = gKeyRush.score >= 10 ? gKeyRush.score - 10 : 0;
+    gKeyRush.feedbackCorrect = false;
+    gKeyRush.feedbackUntilMs = millis() + 180;
+    keyRushChooseNextWord();
+    setStatus("Skipped -10", 500);
+    return true;
+  }
+  char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (lowerKey < 'a' || lowerKey > 'z') {
+    return true;
+  }
+  const char* target = keyRushTargetWord();
+  if (lowerKey != target[gKeyRush.typedCount]) {
+    gKeyRush.mistakeKeys++;
+    gKeyRush.streak = 0;
+    gKeyRush.feedbackCorrect = false;
+    gKeyRush.feedbackUntilMs = millis() + 160;
+    return true;
+  }
+  gKeyRush.correctKeys++;
+  gKeyRush.typedCount++;
+  gKeyRush.feedbackCorrect = true;
+  gKeyRush.feedbackUntilMs = millis() + 90;
+  if (target[gKeyRush.typedCount] == '\0') {
+    uint8_t length = static_cast<uint8_t>(strlen(target));
+    gKeyRush.words++;
+    gKeyRush.streak++;
+    gKeyRush.bestStreak = max<uint16_t>(gKeyRush.bestStreak, gKeyRush.streak);
+    gKeyRush.score += static_cast<uint32_t>(length) * 10UL +
+                      static_cast<uint32_t>(min<uint16_t>(20, gKeyRush.streak)) * 5UL;
+    keyRushChooseNextWord();
+  }
+  return true;
+}
+
 bool handleGlobalEscape() {
   bool changed = false;
 

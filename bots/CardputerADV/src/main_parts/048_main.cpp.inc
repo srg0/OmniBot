@@ -87,6 +87,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     handleLauncherKey(key, keys);
     return;
   }
+  if (gUiMode == UiMode::KeyRush && handleKeyRushKey(key, keys)) {
+    return;
+  }
   if (gUiMode == UiMode::Voice) {
     handleVoicePlayerKey(key, keys);
     return;

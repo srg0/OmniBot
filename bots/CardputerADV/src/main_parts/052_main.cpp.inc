@@ -73,29 +73,30 @@ void drawLauncherIcon(uint8_t group, int16_t x, int16_t y, int16_t s, uint16_t a
       d.fillCircle(cx + r / 2, cy - r / 2, 2, accent);
       break;
     case 1:
-      d.drawRoundRect(cx - r - 3, cy - r / 2, r, r, 4, accent);
-      d.drawRoundRect(cx + 3, cy - r / 2, r, r, 4, accent);
-      d.fillCircle(cx - r / 2 - 3, cy, 2, accent);
-      d.fillCircle(cx + r / 2 + 3, cy, 2, accent);
-      break;
-    case 2:
-      for (int i = 0; i < 6; ++i) {
-        int h = max<int>(5, (s / 5) + ((i * 7 + millis() / 90) % max<int>(6, s / 3)));
-        d.fillRoundRect(x + 7 + i * max<int>(3, s / 8), y + s - 7 - h, max<int>(2, s / 10), h, 2, accent);
+      for (int i = 0; i < 5; ++i) {
+        int h = 4 + ((i * 5 + millis() / 100) % max<int>(5, s / 3));
+        d.fillRoundRect(cx - 10 + i * 5, cy + 8 - h, 3, h, 1, accent);
       }
       break;
-    case 3:
+    case 2:
       d.setFont(&fonts::Font2);
       d.setTextColor(accent, bg);
       d.setCursor(cx - 10, cy - 6);
       d.print("25");
       d.drawArc(cx, cy, max<int16_t>(10, s / 2 - 4), max<int16_t>(7, s / 2 - 8), 35, 310, accent);
       break;
+    case 3:
+      d.drawLine(cx - 8, cy + 8, cx + 7, cy - 7, accent);
+      d.drawCircle(cx + 7, cy - 7, 4, accent);
+      d.fillCircle(cx - 8, cy + 8, 4, accent);
+      d.fillCircle(cx - 8, cy + 8, 2, bg);
+      break;
     case 4:
-      d.drawRoundRect(cx - r, cy - r, r * 2, r * 2, 4, accent);
-      d.drawLine(cx - r + 3, cy, cx - 1, cy + r - 3, accent);
-      d.drawLine(cx - 1, cy + r - 3, cx + r - 3, cy - r + 3, accent);
-      d.fillCircle(cx + r - 3, cy - r + 3, 2, accent);
+      d.drawRoundRect(cx - 11, cy - 7, 22, 14, 5, accent);
+      d.drawFastHLine(cx - 8, cy, 7, accent);
+      d.drawFastVLine(cx - 5, cy - 3, 7, accent);
+      d.fillCircle(cx + 5, cy - 2, 2, accent);
+      d.fillCircle(cx + 8, cy + 3, 2, accent);
       break;
     case 5:
       d.drawCircle(cx, cy, r + 2, accent);
@@ -147,11 +148,16 @@ void renderLauncherOverlay() {
   const int16_t railW = 82;
   const int16_t railH = 10;
   const int16_t railGap = 2;
+  constexpr int kVisibleGroupRows = 6;
+  int groupWindowStart = clampValue<int>(
+      gLauncherSelection - kVisibleGroupRows + 1, 0,
+      max<int>(0, kLauncherGroupCount - kVisibleGroupRows));
 
-  for (int idx = 0; idx < kLauncherGroupCount; ++idx) {
+  for (int row = 0; row < min<int>(kVisibleGroupRows, kLauncherGroupCount); ++row) {
+    int idx = groupWindowStart + row;
     const LauncherGroup& item = kLauncherGroups[idx];
     const bool isSelected = idx == gLauncherSelection;
-    const int16_t y = railY + idx * (railH + railGap);
+    const int16_t y = railY + row * (railH + railGap);
     const uint16_t fill = isSelected ? selectedBg : rowBg;
     d.fillRoundRect(railX, y, railW, railH, 4, fill);
     d.drawRoundRect(railX, y, railW, railH, 4, isSelected ? item.accent : line);
@@ -169,33 +175,54 @@ void renderLauncherOverlay() {
       d.fillCircle(railX + railW - 7, y + railH / 2, 3, item.accent);
     }
   }
+  if (groupWindowStart > 0) {
+    d.fillTriangle(87, 31, 90, 31, 89, 29, muted);
+  }
+  if (groupWindowStart + kVisibleGroupRows < kLauncherGroupCount) {
+    d.fillTriangle(87, 106, 90, 106, 89, 108, muted);
+  }
   d.setFont(&fonts::Font2);
 
   d.fillRoundRect(94, 33, 136, 78, 7, panel);
   d.drawRoundRect(94, 33, 136, 78, 7, group.accent);
 
-  drawLauncherIcon(gLauncherSelection, 102, 41, 32, group.accent, rgb565_local(4, 9, 14));
+  drawLauncherIcon(gLauncherSelection, 101, 38, 28, group.accent, rgb565_local(4, 9, 14));
   d.setFont(&fonts::Font2);
   d.setTextColor(group.accent, panel);
-  d.setCursor(142, 41);
-  d.print(fitCurrentFontToWidth(group.glyph, 76));
+  d.setCursor(136, 38);
+  d.print(fitCurrentFontToWidth(group.glyph, 86));
   d.setFont(&fonts::Font0);
   d.setTextColor(muted, panel);
-  d.setCursor(142, 56);
-  d.print(fitCurrentFontToWidth(group.hint, 78));
+  d.setCursor(136, 53);
+  d.print(fitCurrentFontToWidth(group.hint, 86));
 
-  for (int i = 0; i < group.count; ++i) {
-    const int16_t y = 76 + i * 8;
+  constexpr int kVisibleSubRows = 5;
+  int subWindowStart = clampValue<int>(
+      gLauncherSubSelection - kVisibleSubRows + 1, 0,
+      max<int>(0, group.count - kVisibleSubRows));
+  for (int row = 0; row < min<int>(kVisibleSubRows, group.count); ++row) {
+    int i = subWindowStart + row;
+    const int16_t y = 69 + row * 8;
     const bool selected = i == gLauncherSubSelection;
     const uint16_t fill = selected ? rgb565_local(18, 39, 48) : panel;
     if (selected) {
-      d.fillRoundRect(100, y - 1, 124, 8, 3, fill);
+      d.fillRoundRect(100, y - 1, 121, 8, 3, fill);
     }
     d.setFont(&fonts::Font0);
     d.setTextColor(selected ? TFT_WHITE : TFT_LIGHTGREY, fill);
     d.setCursor(104, y);
     d.print(selected ? "> " : "  ");
-    d.print(fitCurrentFontToWidth(group.items[i].label, 106));
+    d.print(fitCurrentFontToWidth(group.items[i].label, 101));
+  }
+  if (group.count > kVisibleSubRows) {
+    const int16_t scrollX = 225;
+    const int16_t scrollY = 69;
+    const int16_t scrollH = 38;
+    const int16_t knobH = max<int16_t>(7, (scrollH * kVisibleSubRows) / group.count);
+    const int16_t knobY = scrollY +
+        ((scrollH - knobH) * subWindowStart) / max<int>(1, group.count - kVisibleSubRows);
+    d.drawFastVLine(scrollX, scrollY, scrollH, line);
+    d.drawFastVLine(scrollX, knobY, knobH, group.accent);
   }
   d.setFont(&fonts::Font2);
 

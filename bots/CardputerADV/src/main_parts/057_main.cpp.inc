@@ -545,6 +545,121 @@ void renderTetrisUi() {
   renderDebugOverlay();
 }
 
+void renderKeyRushUi() {
+  keyRushLoadBestOnce();
+  auto& d = gCanvas;
+  const uint16_t bg = rgb565_local(2, 7, 10);
+  const uint16_t panel = rgb565_local(7, 18, 26);
+  const uint16_t targetBg = rgb565_local(4, 12, 18);
+  const uint16_t line = rgb565_local(38, 57, 70);
+  const uint16_t cyan = rgb565_local(47, 227, 255);
+  const uint16_t green = rgb565_local(88, 240, 141);
+  const uint16_t amber = rgb565_local(246, 194, 74);
+  const uint16_t violet = rgb565_local(157, 102, 255);
+  const uint16_t red = rgb565_local(255, 82, 82);
+  const uint16_t muted = rgb565_local(128, 145, 155);
+  uint16_t frame = line;
+  if (millis() < gKeyRush.feedbackUntilMs) {
+    frame = gKeyRush.feedbackCorrect ? green : red;
+  }
+
+  d.fillScreen(bg);
+  d.fillRoundRect(6, 5, 228, 124, 11, panel);
+  d.drawRoundRect(6, 5, 228, 124, 11, frame);
+  d.setFont(&fonts::Font2);
+  d.setTextColor(cyan, panel);
+  d.setCursor(16, 13);
+  d.print("KEYRUSH");
+
+  String topRight;
+  uint16_t topColor = green;
+  if (gKeyRush.running) {
+    uint32_t remainingMs = static_cast<int32_t>(gKeyRush.endsAtMs - millis()) > 0
+                               ? gKeyRush.endsAtMs - millis()
+                               : 0;
+    topRight = String((remainingMs + 999) / 1000) + "s";
+  } else {
+    topRight = "BEST " + String(gKeyRush.bestScore);
+    topColor = gKeyRush.finished ? amber : muted;
+  }
+  d.setTextColor(topColor, panel);
+  d.setCursor(224 - d.textWidth(topRight), 13);
+  d.print(topRight);
+  d.drawFastHLine(15, 29, 210, line);
+
+  d.fillRoundRect(15, 36, 210, 51, 8, targetBg);
+  d.drawRoundRect(15, 36, 210, 51, 8, frame);
+  d.setFont(&fonts::Font0);
+  d.setTextColor(muted, targetBg);
+  d.setCursor(24, 42);
+  d.print(gKeyRush.running ? "TYPE" : (gKeyRush.finished ? "RESULT" : "30 SECOND SPRINT"));
+
+  if (gKeyRush.running) {
+    const char* target = keyRushTargetWord();
+    uint8_t length = static_cast<uint8_t>(strlen(target));
+    d.setFont(&fonts::Font4);
+    int totalWidth = 0;
+    for (uint8_t i = 0; i < length; ++i) {
+      String glyph = String(static_cast<char>(toupper(static_cast<unsigned char>(target[i]))));
+      totalWidth += d.textWidth(glyph);
+      if (i + 1 < length) {
+        totalWidth += 5;
+      }
+    }
+    int cursorX = (240 - totalWidth) / 2;
+    for (uint8_t i = 0; i < length; ++i) {
+      String glyph = String(static_cast<char>(toupper(static_cast<unsigned char>(target[i]))));
+      int glyphWidth = d.textWidth(glyph);
+      bool typed = i < gKeyRush.typedCount;
+      d.setTextColor(typed ? green : TFT_WHITE, targetBg);
+      d.setCursor(cursorX, 50);
+      d.print(glyph);
+      d.drawFastHLine(cursorX, 79, glyphWidth, typed ? green : line);
+      cursorX += glyphWidth + 5;
+    }
+  } else {
+    d.setFont(&fonts::Font4);
+    String prompt = gKeyRush.finished ? "TIME!" : "READY";
+    d.setTextColor(gKeyRush.finished ? amber : TFT_WHITE, targetBg);
+    d.setCursor((240 - d.textWidth(prompt)) / 2, 51);
+    d.print(prompt);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(muted, targetBg);
+    String action = gKeyRush.finished ? "Enter to race again" : "Enter to start";
+    d.setCursor((240 - d.textWidth(action)) / 2, 77);
+    d.print(action);
+  }
+
+  const char* stat1 = "SCORE";
+  const char* stat2 = gKeyRush.finished ? "WORDS" : "STREAK";
+  const char* stat3 = gKeyRush.finished ? "ACC" : "WPM";
+  String value1 = String(gKeyRush.score);
+  String value2 = gKeyRush.finished ? String(gKeyRush.words) : "x" + String(gKeyRush.streak);
+  String value3 = gKeyRush.finished ? String(keyRushAccuracy()) + "%" : String(keyRushWpm());
+  const int statX[] = {19, 93, 164};
+  const char* labels[] = {stat1, stat2, stat3};
+  const String values[] = {value1, value2, value3};
+  const uint16_t colors[] = {amber, violet, cyan};
+  d.setFont(&fonts::Font0);
+  for (uint8_t i = 0; i < 3; ++i) {
+    d.setTextColor(muted, panel);
+    d.setCursor(statX[i], 96);
+    d.print(labels[i]);
+    d.setFont(&fonts::Font2);
+    d.setTextColor(colors[i], panel);
+    d.setCursor(statX[i], 105);
+    d.print(values[i]);
+    d.setFont(&fonts::Font0);
+  }
+  drawTinyFooter(panel, muted,
+                 gKeyRush.running ? "Type letters   Del skip   Enter restart"
+                                  : "Enter start   Esc home   Tab menu",
+                 15, 121, 210);
+  d.setFont(&fonts::Font2);
+  renderLauncherOverlay();
+  renderDebugOverlay();
+}
+
 void renderIrRemoteButton(int16_t x, int16_t y, const char* keyLabel, const char* actionLabel, uint16_t fill,
                           uint16_t line, uint16_t keyColor, uint16_t textColor) {
   auto& d = gCanvas;

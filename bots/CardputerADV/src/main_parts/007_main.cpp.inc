@@ -9,7 +9,7 @@ const char* uiModeName(UiMode mode) {
     case UiMode::ChatFull:
       return "Chat";
     case UiMode::Clock:
-      return "Pulse";
+      return "Clock";
     case UiMode::Battery:
       return "Battery";
     case UiMode::Voice:
@@ -48,6 +48,8 @@ const char* uiModeName(UiMode mode) {
       return "RFID Lab";
     case UiMode::IrRemote:
       return "IR Remote";
+    case UiMode::KeyRush:
+      return "KeyRush";
     case UiMode::Tetris:
       return "Tetris";
     case UiMode::CMatrix:

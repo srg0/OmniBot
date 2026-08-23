@@ -64,6 +64,9 @@
       case UiMode::IrRemote:
         renderIrRemoteUi();
         break;
+      case UiMode::KeyRush:
+        renderKeyRushUi();
+        break;
       case UiMode::Tetris:
         renderTetrisUi();
         break;
@@ -321,6 +324,7 @@ void loop() {
   updateFocusTimer();
   serviceFocusMetronome();
   serviceAlarm();
+  serviceKeyRush();
   serviceTetris();
   serviceSmartLamp();
   if (gUiMode == UiMode::IrRemote || gIrRemoteLearning) {
