@@ -1,0 +1,375 @@
+{
+  "release": {
+    "name": "BrainFlow 0.2.139-dev",
+    "ref": "engine-sha256:f01cca413a21178e363b3b60fb5d3797795f84331ff322d36a3a5dd261125507",
+    "evidence_cutoff": "2026-08-27T20:17:32.527Z",
+    "gate_scope": "canary_entry",
+    "production_like_stateful": true,
+    "applicability": {
+      "tier": "MEANINGFUL_RISK",
+      "rationale": "Time-bound keyboard game with interruption, feedback and terminal states; model scope is the changed offline engine."
+    }
+  },
+  "model": {
+    "states": [
+      "Menu",
+      "Playing",
+      "Feedback",
+      "Paused",
+      "Finished"
+    ],
+    "initial_states": [
+      "Menu"
+    ],
+    "transitions": [
+      {
+        "name": "start",
+        "guard": "explicit new round",
+        "effect": "Playing with 60 seconds"
+      },
+      {
+        "name": "submit",
+        "guard": "Playing and valid input before deadline",
+        "effect": "score once then Feedback"
+      },
+      {
+        "name": "tick",
+        "guard": "Playing or Feedback",
+        "effect": "count down, advance feedback or finish"
+      },
+      {
+        "name": "pause/resume",
+        "guard": "active / Paused",
+        "effect": "preserve remaining time and feedback"
+      },
+      {
+        "name": "escape",
+        "guard": "any",
+        "effect": "Menu without network"
+      }
+    ],
+    "actors": [
+      {
+        "name": "device-loop",
+        "ownership": "single serialized owner; keyboard and clock are inputs"
+      }
+    ],
+    "faults": [
+      {
+        "name": "late/duplicate keys",
+        "injection": "action/time product and deterministic traces"
+      },
+      {
+        "name": "wrap/interruption",
+        "injection": "unsigned clock origins, hidden and paused states"
+      }
+    ],
+    "invariants": [
+      {
+        "name": "bounded_input",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      },
+      {
+        "name": "exactly_once_score",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      },
+      {
+        "name": "no_late_input",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      },
+      {
+        "name": "frozen_paused_time",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      },
+      {
+        "name": "unsigned_clock_wrap",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      },
+      {
+        "name": "saturating_score_and_counts",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      }
+    ],
+    "fences": [
+      {
+        "name": "input-capacity",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "submit-playing-only",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "inactive-clock-freeze",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "deadline-equality",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "resume-clock-reset",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "input-alphabet",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "valid-choice",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "score-saturation",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "attempt-saturation",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "correct-saturation",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "streak-saturation",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      },
+      {
+        "name": "feedback-equality",
+        "purpose": "Guard invalid local state transition or unsafe input/count boundary"
+      }
+    ],
+    "dimensions": [
+      {
+        "name": "phase",
+        "cardinality": 5,
+        "critical": true
+      },
+      {
+        "name": "game",
+        "cardinality": 4,
+        "critical": true
+      },
+      {
+        "name": "input_length",
+        "cardinality": 13,
+        "critical": true
+      },
+      {
+        "name": "action",
+        "cardinality": 8,
+        "critical": true
+      },
+      {
+        "name": "elapsed_boundary",
+        "cardinality": 6,
+        "critical": true
+      },
+      {
+        "name": "score_class",
+        "cardinality": 3,
+        "critical": true
+      },
+      {
+        "name": "feedback_boundary",
+        "cardinality": 3,
+        "critical": true
+      },
+      {
+        "name": "visible",
+        "cardinality": 2,
+        "critical": true
+      },
+      {
+        "name": "clock_origin",
+        "cardinality": 4294967296,
+        "critical": true
+      }
+    ],
+    "reductions": [
+      {
+        "kind": "symmetry",
+        "status": "applied",
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md"
+      },
+      {
+        "kind": "equivalence",
+        "status": "applied",
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md"
+      },
+      {
+        "kind": "partial_order",
+        "status": "not_applicable",
+        "reason": "Only one serialized loop actor; ordering is explicit in action sequences."
+      }
+    ]
+  },
+  "coverage": {
+    "raw_equivalent_covered": 964821453373440,
+    "raw_equivalence_artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
+    "execution_counting_method": "disjoint",
+    "actual_executed_claim": 1673941,
+    "executed_tests": {
+      "cartesian": 673920,
+      "fuzz": 1000000,
+      "fixtures": 9,
+      "mutation_programs": 12
+    },
+    "reduced_exploration": {
+      "complete": true,
+      "states": 1217,
+      "transitions": 3680,
+      "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+    },
+    "pairwise": {
+      "complete": true,
+      "coverage_percent": 100,
+      "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+    },
+    "critical_threewise": {
+      "complete": true,
+      "coverage_percent": 100,
+      "dimensions": [
+        "phase",
+        "game",
+        "input_length",
+        "action",
+        "elapsed_boundary",
+        "score_class",
+        "feedback_boundary",
+        "visible",
+        "clock_origin"
+      ],
+      "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+    },
+    "fuzz": {
+      "deterministic": true,
+      "seeds_retained": true,
+      "seed_artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json",
+      "executed": 1000000
+    },
+    "invariant_results": [
+      {
+        "name": "bounded_input",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      },
+      {
+        "name": "exactly_once_score",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      },
+      {
+        "name": "no_late_input",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      },
+      {
+        "name": "frozen_paused_time",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      },
+      {
+        "name": "unsigned_clock_wrap",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      },
+      {
+        "name": "saturating_score_and_counts",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      }
+    ],
+    "mutations": [
+      {
+        "fence": "input-capacity",
+        "executed": true,
+        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-ZmAPNv/input-capacity/tests/../src/brainflow.h:133:25: runtime error: index 13 out of bounds for type 'char[13]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-ZmAPNv/input-capacity/tests/../src/brainflow.h:133:25 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
+      },
+      {
+        "fence": "submit-playing-only",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.score==before.score), function main, file gate.cpp, line 48."
+      },
+      {
+        "fence": "inactive-clock-freeze",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.remaining==before.remaining), function main, file gate.cpp, line 44."
+      },
+      {
+        "fence": "deadline-equality",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.phase!=Phase::Playing || s.remaining>0), function invariant, file gate.cpp, line 18."
+      },
+      {
+        "fence": "resume-clock-reset",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.remaining==59998), function main, file gate.cpp, line 69."
+      },
+      {
+        "fence": "input-alphabet",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.length==0), function main, file gate.cpp, line 70."
+      },
+      {
+        "fence": "valid-choice",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.attempts==0), function main, file gate.cpp, line 71."
+      },
+      {
+        "fence": "score-saturation",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.score<=999999), function invariant, file gate.cpp, line 16."
+      },
+      {
+        "fence": "attempt-saturation",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.attempts<=60000), function invariant, file gate.cpp, line 16."
+      },
+      {
+        "fence": "correct-saturation",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.correct<=s.attempts), function invariant, file gate.cpp, line 16."
+      },
+      {
+        "fence": "streak-saturation",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.streak<=99), function invariant, file gate.cpp, line 16."
+      },
+      {
+        "fence": "feedback-equality",
+        "executed": true,
+        "counterexample": "Assertion failed: (s.phase==Phase::Playing), function main, file gate.cpp, line 74."
+      }
+    ],
+    "mutation_score": 100,
+    "boundary_fixtures": [
+      {
+        "name": "empty/full/invalid input, deadline and feedback equality, pause/resume, wrap, maximum counters",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      }
+    ]
+  },
+  "canaries": {
+    "synthetic": {
+      "name": "four-game physical transition smoke",
+      "owner": "personal device operator",
+      "criteria": "User-confirmed install; each game, right/wrong response, pause, launcher, voice; no reset or leaked input",
+      "observability": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
+      "rollback": "Restore saved previous OTA manifest; no forced device downgrade",
+      "executed": false,
+      "passed": null
+    },
+    "natural": {
+      "name": "four normal full rounds with interruption",
+      "owner": "personal device operator",
+      "criteria": "One completed round per game, responsive keys, preserved settings and healthy voice after play",
+      "observability": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
+      "rollback": "Stop candidate rollout and restore previous manifest on any invariant failure",
+      "executed": false,
+      "passed": null
+    }
+  }
+}

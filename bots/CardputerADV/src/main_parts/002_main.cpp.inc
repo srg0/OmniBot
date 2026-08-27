@@ -180,6 +180,7 @@ enum class UiMode : uint8_t {
   Tetris,
   CMatrix,
   Logs,
+  BrainFlow,
 };
 
 enum class FocusState : uint8_t {

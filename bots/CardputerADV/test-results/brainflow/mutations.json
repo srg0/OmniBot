@@ -1,0 +1,98 @@
+[
+  {
+    "name": "input-capacity",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-ZmAPNv/input-capacity/tests/../src/brainflow.h:133:25: runtime error: index 13 out of bounds for type 'char[13]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-ZmAPNv/input-capacity/tests/../src/brainflow.h:133:25 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
+  },
+  {
+    "name": "submit-playing-only",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.score==before.score), function main, file gate.cpp, line 48."
+  },
+  {
+    "name": "inactive-clock-freeze",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.remaining==before.remaining), function main, file gate.cpp, line 44."
+  },
+  {
+    "name": "deadline-equality",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.phase!=Phase::Playing || s.remaining>0), function invariant, file gate.cpp, line 18."
+  },
+  {
+    "name": "resume-clock-reset",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.remaining==59998), function main, file gate.cpp, line 69."
+  },
+  {
+    "name": "input-alphabet",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.length==0), function main, file gate.cpp, line 70."
+  },
+  {
+    "name": "valid-choice",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.attempts==0), function main, file gate.cpp, line 71."
+  },
+  {
+    "name": "score-saturation",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.score<=999999), function invariant, file gate.cpp, line 16."
+  },
+  {
+    "name": "attempt-saturation",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.attempts<=60000), function invariant, file gate.cpp, line 16."
+  },
+  {
+    "name": "correct-saturation",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.correct<=s.attempts), function invariant, file gate.cpp, line 16."
+  },
+  {
+    "name": "streak-saturation",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.streak<=99), function invariant, file gate.cpp, line 16."
+  },
+  {
+    "name": "feedback-equality",
+    "executed": true,
+    "killed": true,
+    "status": null,
+    "signal": "SIGABRT",
+    "counterexample": "Assertion failed: (s.phase==Phase::Playing), function main, file gate.cpp, line 74."
+  }
+]

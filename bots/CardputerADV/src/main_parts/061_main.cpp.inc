@@ -70,6 +70,9 @@
       case UiMode::KeyRush:
         renderKeyRushUi();
         break;
+      case UiMode::BrainFlow:
+        renderBrainFlowUi();
+        break;
       case UiMode::Tetris:
         renderTetrisUi();
         break;
@@ -328,6 +331,7 @@ void loop() {
   serviceFocusMetronome();
   serviceAlarm();
   serviceKeyRush();
+  serviceBrainFlow();
   serviceTetris();
   serviceSmartLamp();
   serviceSonar();

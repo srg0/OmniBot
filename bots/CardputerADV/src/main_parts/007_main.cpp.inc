@@ -52,6 +52,8 @@ const char* uiModeName(UiMode mode) {
       return "IR Remote";
     case UiMode::KeyRush:
       return "KeyRush";
+    case UiMode::BrainFlow:
+      return "BrainFlow";
     case UiMode::Tetris:
       return "Tetris";
     case UiMode::CMatrix:

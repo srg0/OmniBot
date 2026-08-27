@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8"><title>BrainFlow · Cardputer 240×135</title>
+<style>
+body{margin:28px;background:#02070a;color:#eef4f8;font:14px system-ui}h1{font-size:22px;font-weight:500}p{color:#82919b}.grid{display:grid;grid-template-columns:repeat(2,480px);gap:22px}canvas{width:480px;height:270px;image-rendering:pixelated}figure{margin:0}figcaption{margin-top:8px;color:#82919b}button{background:#10151a;color:#2fe3ff;border:1px solid #34404a;padding:8px;margin:4px}#native canvas{width:240px;height:135px}
+</style>
+<h1>BrainFlow / four keyboard trainers</h1><p>Original procedural UI · 240×135 logical pixels · cyan / violet / amber / teal. English word deck.</p>
+<div class="grid" id="grid"></div><p>Native size — judge readability here:</p><div id="native"></div>
+<script>
+const C={bg:'#02070a',panel:'#09141c',line:'#283744',text:'#eef4f8',muted:'#82919b',cyan:'#2fe3ff',violet:'#9d66ff',amber:'#f6c24a',teal:'#22d1bd',green:'#58f08d',red:'#ff6878'};
+const cases=[['hub','Choose a trainer'],['number','Number Flow / mental arithmetic'],['fraction','Fraction Pulse / compare proportions'],['word','Word Forge / rebuild the word'],['sense','Meaning Match / vocabulary'],['feedback','Learning feedback'],['paused','Pause preserves remaining time'],['result','A finished round']];
+function draw(cv,mode){const c=cv.getContext('2d'); const accent=mode==='fraction'?C.violet:mode==='word'?C.amber:mode==='sense'?C.teal:C.cyan;
+const box=(x,y,w,h,r,fill,stroke)=>{c.beginPath();c.roundRect(x,y,w,h,r);c.fillStyle=fill;c.fill();if(stroke){c.strokeStyle=stroke;c.lineWidth=1;c.stroke()}};
+const txt=(s,x,y,size=8,col=C.text,align='left')=>{c.fillStyle=col;c.font=`${size>=18?'bold ':''}${size}px monospace`;c.textAlign=align;c.textBaseline='top';c.fillText(s,x,y)};
+box(0,0,240,135,0,C.bg);box(5,5,230,125,10,C.panel,C.line);
+const title={hub:'BRAINFLOW',number:'NUMBER FLOW',fraction:'FRACTION PULSE',word:'WORD FORGE',sense:'MEANING MATCH',feedback:'NUMBER FLOW',paused:'WORD FORGE',result:'SESSION COMPLETE'}[mode];
+txt(title,14,13,12,accent);txt(mode==='hub'?'4 GAMES':mode==='result'?'60s':'42s',225,16,8,C.muted,'right');
+c.strokeStyle=C.line;c.beginPath();c.moveTo(14,30);c.lineTo(226,30);c.stroke();
+if(mode==='hub'){['1  Number Flow','2  Fraction Pulse','3  Word Forge','4  Meaning Match'].forEach((s,i)=>{const col=[C.cyan,C.violet,C.amber,C.teal][i];box(13,36+i*18,214,15,4,i===0?'#13323c':C.panel);txt(s,20,39+i*18,10,col)});txt('1-4 start   Esc home',120,118,8,C.muted,'center');return}
+if(mode==='result'){txt('720',120,40,28,C.cyan,'center');txt('SCORE',120,70,8,C.muted,'center');txt('12 RIGHT   86%   BEST 720',120,92,8,C.green,'center');txt('Enter replay   Esc games',120,118,8,C.muted,'center');return}
+if(mode==='paused'){txt('PAUSED',120,47,22,C.amber,'center');txt('Time is safe. Take a breath.',120,82,8,C.muted,'center');txt('Enter resume   Esc games',120,118,8,C.muted,'center');return}
+txt(mode==='word'?'UNSCRAMBLE / SKY':mode==='sense'?'SAME MEANING':mode==='fraction'?'A SMALLER / S EQUAL / D LARGER':'CALCULATE',120,37,8,C.muted,'center');
+if(mode==='fraction'){txt('3/4',65,53,25,C.violet,'center');txt('?',120,58,18,C.muted,'center');txt('5/8',177,53,25,C.violet,'center');box(30,83,76,4,2,'#21303a');box(30,83,57,4,2,C.violet);box(138,83,76,4,2,'#21303a');box(138,83,47,4,2,C.violet)}
+else if(mode==='sense'){txt('BRAVE',120,51,22,C.teal,'center');txt('A timid   S bold   D tired',120,86,8,C.text,'center')}
+else{txt(mode==='word'?'D O C L U':'84 / 7',120,51,24,accent,'center');box(75,82,90,22,5,'#122531',mode==='feedback'?C.green:accent);txt(mode==='feedback'?'12  NICE!':mode==='word'?'CLO_':'12_',120,86,12,mode==='feedback'?C.green:C.text,'center')}
+if(mode==='feedback')txt('Next in a moment',120,108,7,C.green,'center');else{txt('SCORE 180',15,107,8,C.muted);txt('STREAK 3',225,107,8,accent,'right')}
+box(14,115,212,2,1,C.line);box(14,115,149,2,1,accent);txt(mode==='fraction'||mode==='sense'?'A/S/D choose   Space pause':'Enter check   Del edit   Space pause',120,121,6,C.muted,'center');
+}
+for(const [mode,label]of cases){const f=document.createElement('figure'),cv=document.createElement('canvas');cv.width=240;cv.height=135;cv.dataset.mode=mode;f.append(cv);const cap=document.createElement('figcaption');cap.textContent=label;f.append(cap);grid.append(f);draw(cv,mode)}
+const cv=document.createElement('canvas');cv.width=240;cv.height=135;native.append(cv);draw(cv,'fraction');
+window.previewChecks={canvases:9,logicalWidth:240,logicalHeight:135,states:cases.map(x=>x[0])};
+</script>

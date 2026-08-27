@@ -270,6 +270,7 @@ bool uiModeInterruptsRealtime(UiMode mode) {
 }
 
 void setUiMode(UiMode mode) {
+  if (gUiMode==UiMode::BrainFlow && mode!=UiMode::BrainFlow) pauseBrainFlow();
   bool modeChanged = mode != gUiMode;
   if (modeChanged && gUiMode == UiMode::KeyRush && mode != UiMode::KeyRush && gKeyRush.running) {
     uint32_t bestScore = gKeyRush.bestScore;

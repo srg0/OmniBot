@@ -1,0 +1,15 @@
+{
+  "reduced_executions": 673920,
+  "states": 1217,
+  "transitions": 3680,
+  "fuzz_transitions": 1000000,
+  "pairwise_percent": 100,
+  "threewise_percent": 100,
+  "fence_fixtures": 9,
+  "seeds": [
+    1,
+    37,
+    12648430,
+    305419896
+  ]
+}

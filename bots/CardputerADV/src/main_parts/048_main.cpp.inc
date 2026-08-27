@@ -1,7 +1,13 @@
 void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  if (gUiMode==UiMode::BrainFlow &&
+      (keys.tab || (keys.ctrl && (lowerKey=='l'||lowerKey=='r'||lowerKey=='v')))) pauseBrainFlow();
   setKeyDiag(String("key=") + String(static_cast<int>(key)));
   if (key == '`' || key == '~' || key == 27 || hasHidKey(keys, kHidKeyEscape)) {
+    if (gUiMode == UiMode::BrainFlow && !gLauncherVisible && !gRecording && !gPlaybackActive && !gRealtimeActive) {
+      brainFlowEscape();
+      return;
+    }
     handleGlobalEscape();
     return;
   }
@@ -88,6 +94,9 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
     return;
   }
   if (gUiMode == UiMode::KeyRush && handleKeyRushKey(key, keys)) {
+    return;
+  }
+  if (gUiMode == UiMode::BrainFlow && handleBrainFlowKey(key, keys)) {
     return;
   }
   if (gUiMode == UiMode::Voice) {
