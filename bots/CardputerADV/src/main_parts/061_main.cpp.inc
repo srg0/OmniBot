@@ -58,6 +58,9 @@
       case UiMode::SmartLamp:
         renderSmartLampUi();
         break;
+      case UiMode::Sonar:
+        renderSonarUi();
+        break;
       case UiMode::RfidLab:
         renderRfidLabUi();
         break;
@@ -327,6 +330,7 @@ void loop() {
   serviceKeyRush();
   serviceTetris();
   serviceSmartLamp();
+  serviceSonar();
   if (gUiMode == UiMode::IrRemote || gIrRemoteLearning) {
     serviceIrRemote();
   }

@@ -249,6 +249,9 @@ bool mapActionUiMode(String mode, UiMode& out) {
     out = UiMode::Stopwatch;
   } else if (mode == "calendar" || mode == "cal" || mode == "month") {
     out = UiMode::Calendar;
+  } else if (mode == "sonar" || mode == "proximity" || mode == "ultrasonic" ||
+             mode == "hc_sr04" || mode == "hcsr04") {
+    out = UiMode::Sonar;
   } else if (mode == "rfid" || mode == "rfid_lab" || mode == "rc522" || mode == "mfrc522" ||
              mode == "nfc") {
     out = UiMode::RfidLab;

@@ -1111,6 +1111,11 @@ bool handleLocalCommand(const String& input) {
     return true;
   }
 
+  if (cmd == "/sonar" || cmd == "/proximity" || cmd == "/ultrasonic" || cmd == "/hcsr04") {
+    setUiMode(UiMode::Sonar);
+    return true;
+  }
+
   if (cmd == "/rfid" || cmd == "/rc522" || cmd == "/mfrc522" || cmd == "/nfc") {
     setUiMode(UiMode::RfidLab);
     return true;

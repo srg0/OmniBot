@@ -44,6 +44,8 @@ const char* uiModeName(UiMode mode) {
       return "Calendar";
     case UiMode::SmartLamp:
       return "smartLamp";
+    case UiMode::Sonar:
+      return "Sonar";
     case UiMode::RfidLab:
       return "RFID Lab";
     case UiMode::IrRemote:

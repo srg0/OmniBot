@@ -173,6 +173,7 @@ enum class UiMode : uint8_t {
   Stopwatch,
   Calendar,
   SmartLamp,
+  Sonar,
   RfidLab,
   IrRemote,
   KeyRush,

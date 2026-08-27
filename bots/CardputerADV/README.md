@@ -73,8 +73,26 @@ Type these on the Cardputer and press `Enter`:
 - `/btsetup`
 - `/clearwifi`
 - `/rfid` — open RFID Lab for a connected M5Stack Unit RFID/RFID2 / MFRC522 I2C reader
+- `/sonar` — open the HC-SR04 Sonar / Proximity screen
 
 `Tab` is a shortcut for `/help`.
+
+## HC-SR04 Sonar wiring
+
+Sonar uses the Cardputer ADV EXT 2.54 mm header and samples at about 10 Hz:
+
+- `VCC` → `5VOUT` (third contact on the lower row)
+- `GND` → `GND` (second contact on the lower row)
+- `TRIG` → `G4` (second contact on the upper row)
+- `ECHO` → voltage divider → `G6` (third contact on the upper row)
+
+The HC-SR04 ECHO signal is 5 V and must not go directly into the ESP32-S3.
+Use `ECHO → 1 kOhm → G6`, with `2 kOhm` from the G6 node to GND.
+`4.7 kOhm / 10 kOhm` is also suitable.
+
+On the Sonar screen, press `M` to switch between the large Proximity view and
+the animated Radar view. Radar plots the measured range on the fixed forward
+bearing; a single stationary HC-SR04 cannot determine left/right angle.
 
 ## RFID Lab wiring
 
