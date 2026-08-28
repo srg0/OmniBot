@@ -10,7 +10,7 @@ struct Spec {
   uint16_t durationMs;
 };
 
-constexpr Spec spec(Cue cue) {
+inline Spec spec(Cue cue) {
   switch (cue) {
     case Cue::Start: return {1047, 75};
     case Cue::Select: return {740, 35};
