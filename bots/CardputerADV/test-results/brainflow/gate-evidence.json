@@ -1,8 +1,8 @@
 {
   "release": {
     "name": "BrainFlow 0.2.140-dev",
-    "ref": "engine-sha256:7ab9a3bfe6a7e10f6d8f2e9ec1336f194e78543455014f8d5662d837314dce5b",
-    "evidence_cutoff": "2026-08-28T14:42:28.013Z",
+    "ref": "engine-sha256:3fca132d5d1fccb0dfd2e94140f84318eb5a0ec07e0b4f0fdc7f10342c109b15",
+    "evidence_cutoff": "2026-08-28T19:31:06.677Z",
     "gate_scope": "canary_entry",
     "production_like_stateful": true,
     "applicability": {
@@ -88,6 +88,18 @@
       {
         "name": "saturating_score_and_counts",
         "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      },
+      {
+        "name": "two_level_escape",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      },
+      {
+        "name": "help_presentation_only",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      },
+      {
+        "name": "launcher_digit_precedence",
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
       }
     ],
     "fences": [
@@ -148,12 +160,12 @@
       },
       {
         "name": "game",
-        "cardinality": 4,
+        "cardinality": 8,
         "critical": true
       },
       {
         "name": "input_length",
-        "cardinality": 13,
+        "cardinality": 17,
         "critical": true
       },
       {
@@ -206,16 +218,18 @@
     ]
   },
   "coverage": {
-    "raw_equivalent_covered": 964821453373440,
+    "raw_equivalent_covered": 2523379185745920,
     "raw_equivalence_artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
     "execution_counting_method": "disjoint",
-    "actual_executed_claim": 1674006,
+    "actual_executed_claim": 2762694,
     "executed_tests": {
-      "cartesian": 673920,
+      "cartesian": 1762560,
       "fuzz": 1000000,
       "fixtures": 9,
       "mutation_programs": 12,
-      "navigation": 65
+      "navigation": 65,
+      "launcher": 30,
+      "audio": 18
     },
     "navigation": {
       "game_slots": 8,
@@ -223,10 +237,28 @@
       "stack": "game -> BrainFlow menu -> launcher/Games",
       "artifact": "tests/brainflow_navigation_test.cpp"
     },
+    "launcher": {
+      "checks": 30,
+      "plain_digits": "1-7 select group",
+      "ctrl_digits": "Ctrl+1-6 opens submenu before plain digit",
+      "artifact": "tests/launcher_shortcuts_test.cpp"
+    },
+    "audio": {
+      "checks": 18,
+      "cues": [
+        "start",
+        "select",
+        "correct",
+        "wrong",
+        "finish"
+      ],
+      "guard": "suppressed during recording/playback/realtime/submitting/thinking",
+      "artifact": "tests/brainflow_audio_test.cpp"
+    },
     "reduced_exploration": {
       "complete": true,
-      "states": 1217,
-      "transitions": 3680,
+      "states": 3160,
+      "transitions": 9478,
       "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
     },
     "pairwise": {
@@ -286,13 +318,28 @@
         "name": "saturating_score_and_counts",
         "passed": true,
         "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      },
+      {
+        "name": "two_level_escape",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      },
+      {
+        "name": "help_presentation_only",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      },
+      {
+        "name": "launcher_digit_precedence",
+        "passed": true,
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
       }
     ],
     "mutations": [
       {
         "fence": "input-capacity",
         "executed": true,
-        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-uN01Bh/input-capacity/tests/../src/brainflow.h:139:25: runtime error: index 13 out of bounds for type 'char[13]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-uN01Bh/input-capacity/tests/../src/brainflow.h:139:25 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
+        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-tHauRz/input-capacity/tests/../src/brainflow.h:356:5: runtime error: index 17 out of bounds for type 'char[17]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-tHauRz/input-capacity/tests/../src/brainflow.h:356:5 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
       },
       {
         "fence": "submit-playing-only",
@@ -361,16 +408,16 @@
   },
   "canaries": {
     "synthetic": {
-      "name": "four-game physical transition smoke",
+      "name": "eight-game physical transition smoke",
       "owner": "personal device operator",
-      "criteria": "User-confirmed install; each game, right/wrong response, pause, launcher, voice; no reset or leaked input",
+      "criteria": "User-confirmed install; each game, right/wrong response, pause, help, launcher, sounds and voice; no reset or leaked input",
       "observability": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
       "rollback": "Restore saved previous OTA manifest; no forced device downgrade",
       "executed": false,
       "passed": null
     },
     "natural": {
-      "name": "four normal full rounds with interruption",
+      "name": "eight normal full rounds with interruption",
       "owner": "personal device operator",
       "criteria": "One completed round per game, responsive keys, preserved settings and healthy voice after play",
       "observability": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",

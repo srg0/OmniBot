@@ -34,6 +34,7 @@
 #include <IRremote.hpp>
 
 #include "daikin280_encoder.h"
+#include "launcher_shortcuts.h"
 #include "smartlamp_gl2_protocol.h"
 #include "tcl112ac_encoder.h"
 

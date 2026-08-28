@@ -1,7 +1,7 @@
 {
-  "reduced_executions": 673920,
-  "states": 1217,
-  "transitions": 3680,
+  "reduced_executions": 1762560,
+  "states": 3160,
+  "transitions": 9478,
   "fuzz_transitions": 1000000,
   "pairwise_percent": 100,
   "threewise_percent": 100,

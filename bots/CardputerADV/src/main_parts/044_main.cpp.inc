@@ -355,12 +355,21 @@ void submitInput() {
 
 void handleLauncherKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
-  if (key >= '1' && key <= '9') {
-    int target = key - '1';
-    if (target >= kLauncherGroupCount) {
-      return;
-    }
-    gLauncherSelection = target;
+  const uint8_t submenuCount = kLauncherGroups[gLauncherSelection].count;
+  const auto shortcut = launcher_shortcuts::resolve(
+      key, keys.ctrl, kLauncherGroupCount, submenuCount);
+  if (shortcut.kind == launcher_shortcuts::Kind::Submenu) {
+    gLauncherSubSelection = shortcut.index;
+    gLauncherLastSub[gLauncherSelection] = shortcut.index;
+    applyLauncherSelection();
+    return;
+  }
+  if (shortcut.kind == launcher_shortcuts::Kind::InvalidSubmenu) {
+    setStatus("No item " + String(shortcut.index + 1), 700);
+    return;
+  }
+  if (shortcut.kind == launcher_shortcuts::Kind::Group) {
+    gLauncherSelection = shortcut.index;
     uint8_t count = kLauncherGroups[gLauncherSelection].count;
     if (gLauncherSubSelection >= count) {
       gLauncherSubSelection = count - 1;

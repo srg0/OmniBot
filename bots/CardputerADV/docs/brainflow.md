@@ -1,23 +1,38 @@
 # BrainFlow — 0.2.140-dev
 
-Four original, offline keyboard trainers. Open **Tab → Games → BrainFlow**.
+Eight original, fully offline keyboard trainers. Open **Tab → Games → BrainFlow**.
 
 | Key | Trainer | Interaction |
 | --- | --- | --- |
-| 1 | Number Flow | Type an integer, Enter. Addition, subtraction, multiplication, exact division; difficulty increases. |
+| 1 | Arithmetic | Type an integer, Enter. Addition, subtraction, multiplication, exact division; difficulty increases. |
 | 2 | Fraction Pulse | Compare two proper fractions: A smaller, S equal, D larger. Bars show proportions. |
-| 3 | Word Forge | Rebuild a shuffled English word using its category clue, then Enter. 32-word deck. |
-| 4 | Meaning Match | Choose the synonym using A/S/D. 32 English vocabulary prompts. |
+| 3 | Word Scramble | Rebuild a shuffled English word using its category clue, then Enter. 32-word deck. |
+| 4 | Vocabulary | Read a short definition and choose its word using A/S/D. |
+| 5 | Synonyms | Choose the word with the same meaning using A/S/D. |
+| 6 | Estimate | Approximate an addition result to the nearest ten using A/S/D. |
+| 7 | Logic Sequence | Continue a constant or alternating-step number sequence using A/S/D. |
+| 8 | Odd One Out | Find the item outside the stated category using A/S/D. |
 
 Rounds last 60 seconds. Space pauses; Enter resumes. Tab/launcher, voice actions,
 and leaving the screen also pause the round. Escape returns to the game menu;
 Escape again opens the launcher on Games with BrainFlow selected. Delete edits
-typed answers. Each submission is graded
+typed answers. `L` hides or restores the full key legend; hidden mode enlarges the
+answer area and leaves only `L help`. Each submission is graded
 once; a 900 ms feedback screen reveals the answer. High scores are stored once
 per completed record-breaking round, in a new `brainflow` NVS namespace. Existing
 settings, saved games, Wi-Fi, tokens, storage and partition layout are unchanged.
-All four games are usable offline; no LLM request, account, assets or downloads
+All eight games are usable offline; no LLM request, account, assets or downloads
 are required during play. Word decks are English, not a complete language course.
+
+Short synthesized cues distinguish menu selection, round start, correct answer,
+wrong answer and round finish. They use the existing notification speaker lifecycle
+and are suppressed during recording, playback, realtime voice, submit or thinking.
+No third-party audio or Elevate assets are included.
+
+Launcher digit rules are deterministic: plain `1..7` selects the left group;
+`Ctrl+1..6` is resolved first and immediately opens that 1-based item in the
+current group's right submenu. Invalid Ctrl+digits are consumed without changing
+the left group. Arrows, Enter and Tab keep their previous behavior.
 
 ## Research and design boundaries
 
@@ -43,6 +58,10 @@ c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fstack-protector-all 
 /tmp/brainflow-unit
 c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fstack-protector-all bots/CardputerADV/tests/brainflow_navigation_test.cpp -o /tmp/brainflow-navigation
 /tmp/brainflow-navigation
+c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fstack-protector-all bots/CardputerADV/tests/launcher_shortcuts_test.cpp -o /tmp/launcher-shortcuts
+/tmp/launcher-shortcuts
+c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fstack-protector-all bots/CardputerADV/tests/brainflow_audio_test.cpp -o /tmp/brainflow-audio
+/tmp/brainflow-audio
 node bots/CardputerADV/tests/run_brainflow_gate.mjs
 ```
 
@@ -63,17 +82,18 @@ from Menu → launcher/Games. Finished has no scoring
 transition until an explicit new round. Power loss abandons the in-memory round;
 only completed high scores persist, without overwriting any existing namespace.
 
-Invariants: bounded/NUL-terminated input, no late or duplicate score, no input
+Invariants: exactly eight valid local games, bounded/NUL-terminated input, no late or duplicate score, no input
 outside the allowed alphabet, no invalid choice, frozen paused time, unsigned
-clock-wrap safety, score/counter saturation, and feedback/deadline equality.
+clock-wrap safety, score/counter saturation, feedback/deadline equality, presentation-only
+`L`, two-level Escape, and Ctrl+digit precedence over plain group digits.
 
-The executable gate enumerates the full product of 5 phases × 4 games × 13 input
+The executable gate enumerates the full product of 5 phases × 8 games × 17 input
 lengths × 8 actions × 6 elapsed boundary representatives × 3 score classes × 3
 feedback boundaries × 2 visibility states × 3 clock-origin representatives.
 The raw clock-origin domain contains all 2^32 values. Unsigned time subtraction
 is translation-invariant, so three origins (zero, just before wrap, signed
 boundary) represent that domain. This is the only raw-equivalent expansion:
-**964,821,453,373,440 represented combinations, not executions**. Elapsed and
+**2,523,379,185,745,920 represented combinations, not executions**. Elapsed and
 score classes are the explicitly bounded test domain, not a claim that all
 possible question content or arbitrary hardware failures have been enumerated.
 
@@ -100,12 +120,13 @@ checks, successful build, image below 3,145,728 bytes, and an authenticated
 manifest/download SHA match. Candidate publishing keeps installation confirmation
 enabled; no forced install or downgrade and no gateway restart.
 
-Synthetic device canary: after a user-confirmed install, open each game, answer
-one correct and one wrong question, pause/resume, open the launcher and return,
-finish one round, then verify a normal voice turn. Pass: responsive keyboard,
-legible unclipped screens, correct scoring, preserved pause time, healthy boot.
+Synthetic device canary: after a user-confirmed install, open all eight games,
+answer one correct and one wrong question, pause/resume, toggle `L`, exercise both
+Escape levels, verify plain/Ctrl launcher digits and hear each cue, then verify a
+normal voice turn. Pass: responsive keyboard, legible unclipped screens, correct
+scoring, preserved pause time, healthy boot and no interference with audio.
 
-Natural canary: play one full round of each trainer during normal device use,
+Natural canary: play one full round of all eight trainers during normal device use,
 with a voice interruption; observe serial/bridge boot diagnostics and ensure no
 reset, watchdog, lost settings or background network request caused by a game.
 

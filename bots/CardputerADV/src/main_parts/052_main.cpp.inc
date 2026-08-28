@@ -227,7 +227,7 @@ void renderLauncherOverlay() {
   d.setFont(&fonts::Font2);
 
   d.fillRoundRect(10, 116, 220, 10, 4, panel);
-  drawTinyFooter(panel, muted, "Up/Down group  Left/Right item  Enter", 15, 118, 210);
+  drawTinyFooter(panel, muted, "1-7 group  C+1-6 open  arrows", 15, 118, 210);
 }
 
 String batteryEtaText() {
