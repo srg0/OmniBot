@@ -4,8 +4,7 @@ void handleTypingKey(char key, const Keyboard_Class::KeysState& keys) {
       (keys.tab || (keys.ctrl && (lowerKey=='l'||lowerKey=='r'||lowerKey=='v')))) pauseBrainFlow();
   setKeyDiag(String("key=") + String(static_cast<int>(key)));
   if (key == '`' || key == '~' || key == 27 || hasHidKey(keys, kHidKeyEscape)) {
-    if (gUiMode == UiMode::BrainFlow && !gLauncherVisible && !gRecording && !gPlaybackActive && !gRealtimeActive) {
-      brainFlowEscape();
+    if (routeBrainFlowEscape()) {
       return;
     }
     handleGlobalEscape();

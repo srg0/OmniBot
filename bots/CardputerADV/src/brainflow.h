@@ -8,6 +8,12 @@
 namespace brainflow {
 enum class Game : uint8_t { Number, Fraction, Word, Meaning };
 enum class Phase : uint8_t { Menu, Playing, Feedback, Paused, Finished };
+enum class BackTarget : uint8_t { BrainFlowMenu, LauncherGames };
+
+constexpr BackTarget escapeTarget(Phase phase) {
+  return phase == Phase::Menu ? BackTarget::LauncherGames : BackTarget::BrainFlowMenu;
+}
+
 constexpr uint32_t kRoundMs = 60000;
 constexpr uint32_t kFeedbackMs = 900;
 constexpr uint8_t kInputMax = 12;

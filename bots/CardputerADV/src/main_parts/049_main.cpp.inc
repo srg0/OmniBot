@@ -1,5 +1,7 @@
   if (escDown) {
-    handleGlobalEscape();
+    if (!routeBrainFlowEscape()) {
+      handleGlobalEscape();
+    }
   } else if (topicPrevCombo) {
     bool ok = switchTopicRelative(-1, true);
     if (ok && gUiMode != UiMode::Contexts) {

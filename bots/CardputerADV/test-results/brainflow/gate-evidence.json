@@ -1,8 +1,8 @@
 {
   "release": {
-    "name": "BrainFlow 0.2.139-dev",
-    "ref": "engine-sha256:f01cca413a21178e363b3b60fb5d3797795f84331ff322d36a3a5dd261125507",
-    "evidence_cutoff": "2026-08-27T20:17:32.527Z",
+    "name": "BrainFlow 0.2.140-dev",
+    "ref": "engine-sha256:7ab9a3bfe6a7e10f6d8f2e9ec1336f194e78543455014f8d5662d837314dce5b",
+    "evidence_cutoff": "2026-08-28T14:42:28.013Z",
     "gate_scope": "canary_entry",
     "production_like_stateful": true,
     "applicability": {
@@ -44,8 +44,8 @@
       },
       {
         "name": "escape",
-        "guard": "any",
-        "effect": "Menu without network"
+        "guard": "round state / Menu",
+        "effect": "BrainFlow Menu / launcher Games without network"
       }
     ],
     "actors": [
@@ -209,12 +209,19 @@
     "raw_equivalent_covered": 964821453373440,
     "raw_equivalence_artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
     "execution_counting_method": "disjoint",
-    "actual_executed_claim": 1673941,
+    "actual_executed_claim": 1674006,
     "executed_tests": {
       "cartesian": 673920,
       "fuzz": 1000000,
       "fixtures": 9,
-      "mutation_programs": 12
+      "mutation_programs": 12,
+      "navigation": 65
+    },
+    "navigation": {
+      "game_slots": 8,
+      "checks": 65,
+      "stack": "game -> BrainFlow menu -> launcher/Games",
+      "artifact": "tests/brainflow_navigation_test.cpp"
     },
     "reduced_exploration": {
       "complete": true,
@@ -285,7 +292,7 @@
       {
         "fence": "input-capacity",
         "executed": true,
-        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-ZmAPNv/input-capacity/tests/../src/brainflow.h:133:25: runtime error: index 13 out of bounds for type 'char[13]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-ZmAPNv/input-capacity/tests/../src/brainflow.h:133:25 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
+        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-uN01Bh/input-capacity/tests/../src/brainflow.h:139:25: runtime error: index 13 out of bounds for type 'char[13]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-uN01Bh/input-capacity/tests/../src/brainflow.h:139:25 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
       },
       {
         "fence": "submit-playing-only",

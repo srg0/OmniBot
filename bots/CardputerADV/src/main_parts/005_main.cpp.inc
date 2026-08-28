@@ -304,6 +304,7 @@ void serviceBrainFlow();
 void pauseBrainFlow();
 bool handleBrainFlowKey(char key, const Keyboard_Class::KeysState& keys);
 void brainFlowEscape();
+bool routeBrainFlowEscape();
 void renderBrainFlowUi();
 void updateBatterySnapshot(bool force = false);
 bool batteryExternalPowerPresent();

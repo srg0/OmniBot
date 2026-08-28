@@ -1,4 +1,4 @@
-# BrainFlow — 0.2.139-dev
+# BrainFlow — 0.2.140-dev
 
 Four original, offline keyboard trainers. Open **Tab → Games → BrainFlow**.
 
@@ -11,7 +11,8 @@ Four original, offline keyboard trainers. Open **Tab → Games → BrainFlow**.
 
 Rounds last 60 seconds. Space pauses; Enter resumes. Tab/launcher, voice actions,
 and leaving the screen also pause the round. Escape returns to the game menu;
-Escape again returns home. Delete edits typed answers. Each submission is graded
+Escape again opens the launcher on Games with BrainFlow selected. Delete edits
+typed answers. Each submission is graded
 once; a 900 ms feedback screen reveals the answer. High scores are stored once
 per completed record-breaking round, in a new `brainflow` NVS namespace. Existing
 settings, saved games, Wi-Fi, tokens, storage and partition layout are unchanged.
@@ -40,6 +41,8 @@ From the repository root:
 ```sh
 c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fstack-protector-all bots/CardputerADV/tests/brainflow_test.cpp -o /tmp/brainflow-unit
 /tmp/brainflow-unit
+c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fstack-protector-all bots/CardputerADV/tests/brainflow_navigation_test.cpp -o /tmp/brainflow-navigation
+/tmp/brainflow-navigation
 node bots/CardputerADV/tests/run_brainflow_gate.mjs
 ```
 
@@ -55,7 +58,8 @@ Scope: **canary_entry**, meaningful temporal/state risk, isolated to BrainFlow.
 Actor: one device loop owns game state; keyboard and elapsed-time inputs are
 serialized. No network, lease, queue or concurrency contract was changed.
 States: Menu → Playing → Feedback → Playing; Playing/Feedback → Paused → previous
-phase; elapsed deadline → Finished; Escape → Menu. Finished has no scoring
+phase; elapsed deadline → Finished; Escape from any round state → Menu; Escape
+from Menu → launcher/Games. Finished has no scoring
 transition until an explicit new round. Power loss abandons the in-memory round;
 only completed high scores persist, without overwriting any existing namespace.
 

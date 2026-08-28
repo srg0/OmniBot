@@ -42,8 +42,21 @@ void serviceBrainFlow() {
 void pauseBrainFlow() { gBrainFlow.pause(millis());brainSaveResult(); }
 
 void brainFlowEscape() {
-  if (gBrainFlow.phase==brainflow::Phase::Menu) {setUiMode(UiMode::Home);return;}
-  gBrainFlow.menu(millis());gBrainResultSaved=false;
+  if (brainflow::escapeTarget(gBrainFlow.phase)==brainflow::BackTarget::BrainFlowMenu) {
+    gBrainFlow.menu(millis());gBrainResultSaved=false;
+    setStatus("BrainFlow games",700);setKeyDiag("brainflow:menu");
+    return;
+  }
+  syncLauncherToMode(UiMode::BrainFlow);
+  gLauncherVisible=true;
+  setStatus("Games",700);setKeyDiag("brainflow:launcher");
+}
+
+bool routeBrainFlowEscape() {
+  if (gUiMode!=UiMode::BrainFlow || gLauncherVisible || gRecording || gPlaybackActive ||
+      gRealtimeActive || gRealtimeRecording) return false;
+  brainFlowEscape();
+  return true;
 }
 
 bool handleBrainFlowKey(char key, const Keyboard_Class::KeysState& keys) {
@@ -109,7 +122,7 @@ void renderBrainFlowUi() {
       d.setTextColor(color,panel);d.setCursor(19,y+2);
       d.print(String(i+1)+"  "+brainflow::name(static_cast<brainflow::Game>(i)));
     }
-    brainCentered("1-4 start   Esc home",118,muted);
+    brainCentered("1-4 start   Esc launcher",118,muted);
   } else if(game.phase==brainflow::Phase::Paused) {
     d.setFont(&fonts::Font4);brainCentered("PAUSED",46,brainAccent(2));
     d.setFont(&fonts::Font0);brainCentered("Time is safe. Take a breath.",84,muted);
