@@ -184,6 +184,7 @@ void loadDeviceSettings() {
   gDeviceSettings.displayBrightnessPct = static_cast<uint8_t>(gPrefs.getUChar("lcd_pct", kDefaultDisplayBrightnessPct));
   gDeviceSettings.screensaverEnabled = gPrefs.getBool("scr_on", true);
   gDeviceSettings.screensaverStyle = static_cast<uint8_t>(gPrefs.getUChar("scr_style", kDefaultScreensaverStyle));
+  gDeviceSettings.eyeSkin = static_cast<uint8_t>(gPrefs.getUChar("eye_skin", kDefaultEyeSkin));
   gDeviceSettings.screensaverTimeoutMin = static_cast<uint8_t>(gPrefs.getUChar("scr_min", kDefaultScreensaverTimeoutMin));
   gDeviceSettings.screensaverDimAfterMin = static_cast<uint8_t>(gPrefs.getUChar("scr_dim_m", kDefaultScreensaverDimAfterMin));
   gDeviceSettings.screensaverDimBrightnessPct = static_cast<uint8_t>(gPrefs.getUChar("scr_dim_p", kDefaultScreensaverDimBrightnessPct));
@@ -198,6 +199,7 @@ void loadDeviceSettings() {
   gDeviceSettings.clockFace %= kClockFaceCount;
   gDeviceSettings.displayBrightnessPct = clampValue<uint8_t>(gDeviceSettings.displayBrightnessPct, 0, 100);
   gDeviceSettings.screensaverStyle %= kScreensaverStyleCount;
+  gDeviceSettings.eyeSkin %= kEyeSkinCount;
   gDeviceSettings.screensaverTimeoutMin = clampValue<uint8_t>(gDeviceSettings.screensaverTimeoutMin, 1, 60);
   gDeviceSettings.screensaverDimAfterMin = clampValue<uint8_t>(gDeviceSettings.screensaverDimAfterMin, 1, 120);
   gDeviceSettings.screensaverDimBrightnessPct = clampValue<uint8_t>(gDeviceSettings.screensaverDimBrightnessPct, 0, 100);
@@ -221,6 +223,7 @@ void saveDeviceSettings() {
   gPrefs.putUChar("lcd_pct", gDeviceSettings.displayBrightnessPct);
   gPrefs.putBool("scr_on", gDeviceSettings.screensaverEnabled);
   gPrefs.putUChar("scr_style", gDeviceSettings.screensaverStyle % kScreensaverStyleCount);
+  gPrefs.putUChar("eye_skin", gDeviceSettings.eyeSkin % kEyeSkinCount);
   gPrefs.putUChar("scr_min", gDeviceSettings.screensaverTimeoutMin);
   gPrefs.putUChar("scr_dim_m", gDeviceSettings.screensaverDimAfterMin);
   gPrefs.putUChar("scr_dim_p", gDeviceSettings.screensaverDimBrightnessPct);

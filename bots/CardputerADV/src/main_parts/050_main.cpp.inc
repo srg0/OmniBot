@@ -1,25 +1,11 @@
-#include "uncanny_default_eye.h"
-
-// Full-screen eye renderer adapted from Adafruit Uncanny Eyes (Phil Burgess)
-// and Bodmer's ESP32/TFT_eSPI port. The asset tables live in PROGMEM. Rendering
-// uses one fixed strip and alternates eyes so the main loop remains responsive.
-constexpr int16_t kUncannyEyeSize = 128;
-constexpr int16_t kUncannyVisibleEyeWidth = 120;
-constexpr int16_t kUncannyEyeTop = 3;
-constexpr int16_t kUncannyStripRows = 8;
-constexpr uint16_t kUncannyBackground = 0x0000;
+// Smooth procedural eye renderer. The previous photographic hazel lookup tables
+// looked mottled at this display size and consumed 158 KB of flash plus a fixed
+// strip buffer. These primitives preserve blink, emotion and IMU gaze without
+// assets, heap allocation or per-pixel sampling.
 constexpr uint32_t kUncannyBlinkDurationMs = 120;
-uint16_t gUncannyStrip[kUncannyVisibleEyeWidth * kUncannyStripRows] = {};
-bool gUncannyInitialized = false;
-uint8_t gUncannyNextEye = 0;
-uint8_t gUncannyUpperThreshold = 128;
-uint32_t gUncannyLastRenderMs = 0;
 
 void resetUncannyEyesRenderer() {
-  gUncannyInitialized = false;
-  gUncannyNextEye = 0;
-  gUncannyUpperThreshold = 128;
-  gUncannyLastRenderMs = 0;
+  // Procedural rendering redraws the complete 240x135 canvas every frame.
 }
 
 uint8_t uncannyBlinkAmount(uint32_t now) {
@@ -33,134 +19,171 @@ uint8_t uncannyBlinkAmount(uint32_t now) {
   return static_cast<uint8_t>(min<uint32_t>(255, (ramp * 255U) / max<uint32_t>(1, half)));
 }
 
-uint16_t uncannyIrisScale() {
-  switch (gFaceMode) {
-    case FaceMode::Listening:
-      return 96;
-    case FaceMode::Speaking:
-      return 104;
-    case FaceMode::Thinking:
-      return 122;
-    case FaceMode::Error:
-      return 128;
-    case FaceMode::Idle:
+struct EyeSkinPalette {
+  uint16_t background;
+  uint16_t face;
+  uint16_t accent;
+  uint16_t marking;
+};
+
+EyeSkinPalette eyeSkinPalette(uint8_t skin) {
+  switch (skin % kEyeSkinCount) {
+    case 1:
+      return {rgb565_local(21, 25, 27), rgb565_local(53, 59, 61),
+              rgb565_local(185, 197, 194), rgb565_local(117, 103, 104)};
+    case 2:
+      return {rgb565_local(53, 27, 8), rgb565_local(198, 109, 32),
+              rgb565_local(255, 182, 79), rgb565_local(24, 16, 10)};
+    case 3:
+      return {rgb565_local(54, 39, 17), rgb565_local(184, 139, 63),
+              rgb565_local(230, 200, 117), rgb565_local(41, 27, 16)};
+    case 4:
+      return {rgb565_local(40, 22, 8), rgb565_local(167, 94, 39),
+              rgb565_local(224, 162, 84), rgb565_local(90, 45, 19)};
+    case 5:
+      return {rgb565_local(41, 40, 45), rgb565_local(170, 167, 173),
+              rgb565_local(224, 220, 227), rgb565_local(199, 134, 152)};
+    case 0:
     default:
-      break;
-  }
-  switch (currentEyeEmotion()) {
-    case EyeEmotion::Surprised:
-    case EyeEmotion::Excited:
-      return 94;
-    case EyeEmotion::Sleepy:
-    case EyeEmotion::Thinking:
-      return 122;
-    default:
-      return 110;
+      return {rgb565_local(2, 4, 5), rgb565_local(3, 6, 7),
+              rgb565_local(12, 32, 36), rgb565_local(8, 13, 15)};
   }
 }
 
-void uncannyEyePlacement(uint8_t eyeIndex, int16_t& scleraX, int16_t& scleraY) {
-  constexpr int16_t maxOffsetX = UNCANNY_SCLERA_WIDTH - kUncannyEyeSize;
-  constexpr int16_t maxOffsetY = UNCANNY_SCLERA_HEIGHT - kUncannyEyeSize;
-  float normalizedX = clampValue<float>(gEyeLookX / 18.0f, -1.0f, 1.0f);
-  float normalizedY = clampValue<float>(gEyeLookY / 14.0f, -1.0f, 1.0f);
-  scleraX = static_cast<int16_t>(maxOffsetX / 2 + normalizedX * (maxOffsetX / 2));
-  scleraY = static_cast<int16_t>(maxOffsetY / 2 + normalizedY * (maxOffsetY / 2));
-  scleraX += eyeIndex == 0 ? -4 : 4;
-  scleraX = clampValue<int16_t>(scleraX, 0, maxOffsetX);
-  scleraY = clampValue<int16_t>(scleraY, 0, maxOffsetY);
+void drawEyeSkinLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2,
+                     uint16_t color, uint8_t width) {
+  for (int8_t offset = -static_cast<int8_t>(width / 2); offset <= static_cast<int8_t>(width / 2); ++offset) {
+    gCanvas.drawLine(x1 + offset, y1, x2 + offset, y2, color);
+  }
 }
 
-void uncannyLidThresholds(int16_t scleraX, int16_t scleraY, uint32_t now,
-                          uint8_t& upperThreshold, uint8_t& lowerThreshold) {
-  int16_t sampleX = UNCANNY_SCLERA_WIDTH / 2 - scleraX / 2;
-  int16_t sampleY = UNCANNY_SCLERA_HEIGHT / 2 - (scleraY + UNCANNY_IRIS_HEIGHT / 4);
-  sampleX = clampValue<int16_t>(sampleX, 0, UNCANNY_SCREEN_WIDTH - 1);
-  sampleY = clampValue<int16_t>(sampleY, 0, UNCANNY_SCREEN_HEIGHT - 1);
-  uint8_t sampleA = pgm_read_byte(kUncannyUpper + sampleY * UNCANNY_SCREEN_WIDTH + sampleX);
-  uint8_t sampleB = pgm_read_byte(kUncannyUpper + sampleY * UNCANNY_SCREEN_WIDTH +
-                                  (UNCANNY_SCREEN_WIDTH - 1 - sampleX));
-  uint8_t tracked = static_cast<uint8_t>((static_cast<uint16_t>(sampleA) + sampleB) / 2U);
-  gUncannyUpperThreshold = static_cast<uint8_t>((gUncannyUpperThreshold * 3U + tracked) / 4U);
-  uint8_t openUpper = gUncannyUpperThreshold;
-  uint8_t openLower = static_cast<uint8_t>(254U - openUpper);
-  if (gFaceMode == FaceMode::Thinking || currentEyeEmotion() == EyeEmotion::Sleepy) {
-    openUpper = max<uint8_t>(openUpper, 150);
-    openLower = max<uint8_t>(openLower, 104);
-  }
-  uint8_t blink = uncannyBlinkAmount(now);
-  upperThreshold = static_cast<uint8_t>(openUpper + ((254U - openUpper) * blink) / 255U);
-  lowerThreshold = static_cast<uint8_t>(openLower + ((254U - openLower) * blink) / 255U);
-}
-
-uint16_t uncannyEyePixel(uint8_t eyeIndex, int16_t screenX, int16_t screenY,
-                         int16_t scleraX, int16_t scleraY, uint16_t irisScale,
-                         uint8_t upperThreshold, uint8_t lowerThreshold) {
-  int16_t lidX = eyeIndex == 0 ? (UNCANNY_SCREEN_WIDTH - 1 - screenX) : screenX;
-  size_t lidOffset = static_cast<size_t>(screenY) * UNCANNY_SCREEN_WIDTH + lidX;
-  if (pgm_read_byte(kUncannyLower + lidOffset) <= lowerThreshold ||
-      pgm_read_byte(kUncannyUpper + lidOffset) <= upperThreshold) {
-    return TFT_BLACK;
-  }
-
-  int16_t sourceX = scleraX + screenX;
-  int16_t sourceY = scleraY + screenY;
-  int16_t irisX = sourceX - (UNCANNY_SCLERA_WIDTH - UNCANNY_IRIS_WIDTH) / 2;
-  int16_t irisY = sourceY - (UNCANNY_SCLERA_HEIGHT - UNCANNY_IRIS_HEIGHT) / 2;
-  if (irisX >= 0 && irisX < UNCANNY_IRIS_WIDTH && irisY >= 0 && irisY < UNCANNY_IRIS_HEIGHT) {
-    uint16_t polar = pgm_read_word(kUncannyPolar + irisY * UNCANNY_IRIS_WIDTH + irisX);
-    uint16_t distance = static_cast<uint16_t>((irisScale * (polar & 0x7FU)) / 128U);
-    if (distance < UNCANNY_IRIS_MAP_HEIGHT) {
-      uint16_t angle = static_cast<uint16_t>((UNCANNY_IRIS_MAP_WIDTH * (polar >> 7)) / 512U);
-      angle = min<uint16_t>(angle, UNCANNY_IRIS_MAP_WIDTH - 1);
-      return pgm_read_word(kUncannyIris + distance * UNCANNY_IRIS_MAP_WIDTH + angle);
-    }
-  }
-  return pgm_read_word(kUncannySclera + sourceY * UNCANNY_SCLERA_WIDTH + sourceX);
-}
-
-void renderOneUncannyEye(uint8_t eyeIndex, uint32_t now) {
+void drawEyeSkinBackdrop(uint8_t skin, const EyeSkinPalette& palette) {
   auto& d = gCanvas;
-  const int16_t destX = eyeIndex == 0 ? 0 : kUncannyVisibleEyeWidth;
-  const int16_t sourceStartX = eyeIndex == 0 ? kUncannyEyeSize - kUncannyVisibleEyeWidth : 0;
-  d.fillRect(destX, 0, kUncannyVisibleEyeWidth, 135, kUncannyBackground);
+  skin %= kEyeSkinCount;
+  d.fillScreen(palette.background);
+  if (skin == 0) {
+    d.fillEllipse(120, 71, 119, 72, palette.face);
+    d.drawLine(16, 120, 224, 120, palette.accent);
+    return;
+  }
 
-  int16_t scleraX = 0;
-  int16_t scleraY = 0;
-  uncannyEyePlacement(eyeIndex, scleraX, scleraY);
-  uint8_t upperThreshold = 0;
-  uint8_t lowerThreshold = 0;
-  uncannyLidThresholds(scleraX, scleraY, now, upperThreshold, lowerThreshold);
-  uint16_t irisScale = uncannyIrisScale();
-
-  for (int16_t stripY = 0; stripY < kUncannyEyeSize; stripY += kUncannyStripRows) {
-    int16_t rows = min<int16_t>(kUncannyStripRows, kUncannyEyeSize - stripY);
-    for (int16_t row = 0; row < rows; ++row) {
-      for (int16_t x = 0; x < kUncannyVisibleEyeWidth; ++x) {
-        gUncannyStrip[row * kUncannyVisibleEyeWidth + x] =
-            uncannyEyePixel(eyeIndex, sourceStartX + x, stripY + row, scleraX, scleraY,
-                            irisScale, upperThreshold, lowerThreshold);
-      }
+  if (skin == 4) {
+    static const int16_t kManeCenters[][2] = {
+        {10, 23}, {35, 8}, {68, 4}, {103, 2}, {137, 2}, {172, 4}, {205, 8}, {230, 23},
+        {235, 55}, {236, 91}, {222, 126}, {190, 132}, {153, 134}, {87, 134}, {50, 132},
+        {18, 126}, {4, 91}, {5, 55}};
+    for (const auto& center : kManeCenters) {
+      d.fillCircle(center[0], center[1], 22, palette.marking);
     }
-    d.pushImage(destX, kUncannyEyeTop + stripY, kUncannyVisibleEyeWidth, rows, gUncannyStrip);
+  }
+
+  d.fillEllipse(120, 73, skin == 4 ? 102 : 118, skin == 4 ? 72 : 78, palette.face);
+  if (skin == 1 || skin == 2 || skin == 3) {
+    d.fillTriangle(9, 43, 35, 1, 60, 43, palette.face);
+    d.fillTriangle(180, 43, 205, 1, 231, 43, palette.face);
+    d.fillTriangle(20, 34, 35, 10, 49, 35, palette.marking);
+    d.fillTriangle(191, 35, 205, 10, 220, 34, palette.marking);
+  } else if (skin == 5) {
+    d.fillEllipse(54, 17, 20, 49, palette.face);
+    d.fillEllipse(186, 17, 20, 49, palette.face);
+    d.fillEllipse(54, 16, 9, 37, palette.marking);
+    d.fillEllipse(186, 16, 9, 37, palette.marking);
+    d.fillEllipse(120, 74, 118, 75, palette.face);
+  }
+
+  if (skin == 2) {
+    drawEyeSkinLine(120, 0, 120, 28, palette.marking, 5);
+    drawEyeSkinLine(94, 0, 105, 27, palette.marking, 5);
+    drawEyeSkinLine(146, 0, 135, 27, palette.marking, 5);
+    drawEyeSkinLine(18, 45, 49, 55, palette.marking, 5);
+    drawEyeSkinLine(222, 45, 191, 55, palette.marking, 5);
+    drawEyeSkinLine(6, 76, 43, 79, palette.marking, 5);
+    drawEyeSkinLine(234, 76, 197, 79, palette.marking, 5);
+  } else if (skin == 3) {
+    static const int16_t kSpots[][3] = {
+        {19, 56, 7}, {39, 25, 6}, {74, 17, 5}, {166, 17, 5}, {201, 25, 6},
+        {221, 56, 7}, {27, 100, 6}, {213, 100, 6}, {89, 118, 5}, {151, 118, 5}};
+    for (const auto& spot : kSpots) {
+      d.fillCircle(spot[0], spot[1], spot[2], palette.marking);
+      d.fillCircle(spot[0], spot[1], max<int16_t>(2, spot[2] - 3), palette.face);
+    }
+  }
+
+  if (skin >= 1 && skin <= 4) {
+    uint16_t muzzle = skin == 4 ? rgb565_local(213, 154, 88) : palette.accent;
+    d.fillEllipse(120, 111, 42, 24, muzzle);
+    d.fillTriangle(113, 105, 127, 105, 120, 113, palette.marking);
+    d.drawLine(110, 112, 65, 106, palette.accent);
+    d.drawLine(110, 116, 62, 118, palette.accent);
+    d.drawLine(130, 112, 175, 106, palette.accent);
+    d.drawLine(130, 116, 178, 118, palette.accent);
+  } else if (skin == 5) {
+    d.fillEllipse(120, 111, 35, 23, rgb565_local(214, 209, 214));
+    d.fillTriangle(113, 105, 127, 105, 120, 113, palette.marking);
+  }
+}
+
+void drawSmoothUncannyEye(int16_t cx, int16_t cy, uint32_t now, uint8_t blink) {
+  auto& d = gCanvas;
+  EyeEmotion emotion = currentEyeEmotion();
+  int16_t baseHalfH = 37;
+  if (gFaceMode == FaceMode::Thinking || emotion == EyeEmotion::Thinking) {
+    baseHalfH = 31;
+  } else if (emotion == EyeEmotion::Sleepy || emotion == EyeEmotion::Happy) {
+    baseHalfH = 23;
+  } else if (emotion == EyeEmotion::Surprised || emotion == EyeEmotion::Excited) {
+    baseHalfH = 40;
+  }
+  int16_t halfH = max<int16_t>(2, (baseHalfH * (255 - blink)) / 255);
+  uint16_t outline = rgb565_local(17, 25, 27);
+  uint16_t iris = rgb565_local(11, 37, 43);
+  uint16_t glint = rgb565_local(74, 182, 196);
+  if (gFaceMode == FaceMode::Listening) {
+    iris = rgb565_local(10, 49, 56);
+    glint = rgb565_local(82, 220, 236);
+  } else if (gFaceMode == FaceMode::Speaking) {
+    iris = rgb565_local(10, 47, 36);
+    glint = rgb565_local(90, 255, 185);
+  } else if (gFaceMode == FaceMode::Thinking) {
+    iris = rgb565_local(48, 37, 14);
+    glint = rgb565_local(246, 194, 74);
+  } else if (gFaceMode == FaceMode::Error) {
+    outline = rgb565_local(255, 72, 52);
+    iris = rgb565_local(62, 16, 12);
+    glint = rgb565_local(255, 110, 80);
+  }
+
+  if (halfH <= 3) {
+    d.drawLine(cx - 42, cy, cx + 42, cy, outline);
+    return;
+  }
+  int16_t lookX = clampValue<int16_t>(static_cast<int16_t>(gEyeLookX * 0.45f), -8, 8);
+  int16_t lookY = clampValue<int16_t>(static_cast<int16_t>(gEyeLookY * 0.36f), -5, 5);
+  if (gFaceMode == FaceMode::Speaking) {
+    lookX += static_cast<int16_t>((now / 120U) % 5U) - 2;
+  }
+  int16_t irisHalfH = min<int16_t>(29, halfH - 2);
+  int16_t pupilHalfH = min<int16_t>(22, max<int16_t>(3, irisHalfH - 6));
+  d.fillEllipse(cx, cy, 50, halfH + 3, outline);
+  d.fillEllipse(cx, cy, 47, halfH, rgb565_local(1, 3, 3));
+  d.fillEllipse(cx + lookX, cy + lookY, 24, irisHalfH, iris);
+  d.fillEllipse(cx + lookX, cy + lookY, 15, pupilHalfH, TFT_BLACK);
+  if (halfH > 10) {
+    d.fillCircle(cx + lookX - 8, cy + lookY - min<int16_t>(10, halfH / 3), 7, rgb565_local(238, 252, 255));
+    d.fillCircle(cx + lookX - 5, cy + lookY - min<int16_t>(7, halfH / 4), 3, TFT_WHITE);
+    d.fillCircle(cx + lookX + 10, cy + lookY + min<int16_t>(13, halfH / 3), 3, glint);
   }
 }
 
 void renderUncannyEyesUi() {
   uint32_t now = millis();
-  bool fullRefresh = !gUncannyInitialized || now - gUncannyLastRenderMs > 300U;
-  if (fullRefresh) {
-    gCanvas.fillScreen(kUncannyBackground);
-    renderOneUncannyEye(0, now);
-    renderOneUncannyEye(1, now);
-    gUncannyInitialized = true;
-    gUncannyNextEye = 0;
-  } else {
-    renderOneUncannyEye(gUncannyNextEye, now);
-    gUncannyNextEye ^= 1U;
-  }
-  gUncannyLastRenderMs = now;
-
+  EyeSkinPalette palette = eyeSkinPalette(gDeviceSettings.eyeSkin);
+  drawEyeSkinBackdrop(gDeviceSettings.eyeSkin, palette);
+  uint8_t blink = uncannyBlinkAmount(now);
+  drawSmoothUncannyEye(62, 67, now, blink);
+  drawSmoothUncannyEye(178, 67, now, blink);
+  gCanvas.drawLine(18, 24, 106, 24, palette.accent);
+  gCanvas.drawLine(134, 24, 222, 24, palette.accent);
   if (gFaceMode == FaceMode::Error) {
     gCanvas.drawRect(0, 0, 240, 135, rgb565_local(255, 72, 52));
   }

@@ -60,7 +60,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.142-dev"
+#define APP_VERSION "0.2.143-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -195,11 +195,13 @@ constexpr uint32_t kSmartLampMinCommandGapMs = 520;
 constexpr const char* kSmartLampPrefsNs = "smartlamp";
 constexpr uint8_t kDeviceSettingsItemCount = 7;
 constexpr uint8_t kFocusSettingsItemCount = 7;
-constexpr uint8_t kScreenSettingsItemCount = 9;
+constexpr uint8_t kScreenSettingsItemCount = 10;
 constexpr uint8_t kSettingsItemCount = kScreenSettingsItemCount;
 constexpr uint8_t kDefaultDisplayBrightnessPct = 70;
 constexpr uint8_t kScreensaverStyleCount = 2;
 constexpr uint8_t kDefaultScreensaverStyle = 0;
+constexpr uint8_t kEyeSkinCount = 6;
+constexpr uint8_t kDefaultEyeSkin = 0;
 constexpr uint8_t kDefaultScreensaverTimeoutMin = 5;
 constexpr uint8_t kDefaultScreensaverDimAfterMin = 30;
 constexpr uint8_t kDefaultScreensaverDimBrightnessPct = 15;

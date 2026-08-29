@@ -283,16 +283,18 @@ String settingLabel(uint8_t index) {
       case 2:
         return "Saver style";
       case 3:
-        return "Start after";
+        return "Eye skin";
       case 4:
-        return "Dim after";
+        return "Start after";
       case 5:
-        return "Dim level";
+        return "Dim after";
       case 6:
-        return "Auto screen off";
+        return "Dim level";
       case 7:
-        return "Off after";
+        return "Auto screen off";
       case 8:
+        return "Off after";
+      case 9:
         return "Clock on wake";
       default:
         return "-";

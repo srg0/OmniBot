@@ -18,7 +18,8 @@ def require(condition: bool, message: str) -> None:
 
 def main() -> None:
     eye = read("src/main_parts/050_main.cpp.inc")
-    asset = read("src/main_parts/uncanny_default_eye.h")
+    constants = read("src/main_parts/001_main.cpp.inc")
+    types = read("src/main_parts/003_main.cpp.inc")
     settings = read("src/main_parts/026_main.cpp.inc")
     saver = read("src/main_parts/009_main.cpp.inc")
     mode = read("src/main_parts/024_main.cpp.inc")
@@ -26,13 +27,23 @@ def main() -> None:
     labels = read("src/main_parts/056_main.cpp.inc") + read("src/main_parts/057_main.cpp.inc")
     inbox = read("src/main_parts/020_main.cpp.inc")
 
-    require("PROGMEM" in asset, "eye lookup tables must stay in flash")
-    require("gUncannyStrip[kUncannyVisibleEyeWidth * kUncannyStripRows]" in eye,
-            "renderer must use one fixed strip buffer")
-    require("renderOneUncannyEye(gUncannyNextEye" in eye and "gUncannyNextEye ^= 1U" in eye,
-            "steady-state renderer must alternate eyes")
+    require(not (ROOT / "src/main_parts/uncanny_default_eye.h").exists(),
+            "photographic eye tables should not remain in the firmware")
+    require("drawEyeSkinBackdrop" in eye and "drawSmoothUncannyEye" in eye,
+            "procedural skin and eye layers are not wired")
+    require("drawSmoothUncannyEye(62, 67" in eye and "drawSmoothUncannyEye(178, 67" in eye,
+            "both eyes must be rendered in the same frame")
+    require("fillEllipse" in eye and "pushImage" not in eye,
+            "Big Eyes must use smooth primitives rather than sampled bitmap strips")
     require("malloc(" not in eye and "calloc(" not in eye and "new " not in eye,
             "eye renderer must not allocate from the heap")
+
+    require("kEyeSkinCount = 6" in constants and "uint8_t eyeSkin" in types,
+            "the six eye skins are not represented in settings")
+    for skin in ("Black", "Cat", "Tiger", "Leopard", "Lion", "Rabbit"):
+        require(f'return "{skin}"' in types, f"missing eye skin label: {skin}")
+    require('getUChar("eye_skin"' in settings and 'putUChar("eye_skin"' in settings,
+            "eye skin must round-trip through Preferences")
 
     require('getUChar("scr_style"' in settings and 'putUChar("scr_style"' in settings,
             "screensaver style must round-trip through Preferences")
@@ -40,7 +51,7 @@ def main() -> None:
             "screensaver entry must select Big Eyes or C-Matrix")
     require("enteringScreensaverUi" in mode and "mode == UiMode::Face" in mode,
             "Face screensaver must preserve the active screensaver lifecycle")
-    require("Saver style" in labels and "Big Eyes" in labels and "C-Matrix" in labels,
+    require("Saver style" in labels and "Eye skin" in labels and "Big Eyes" in labels and "C-Matrix" in labels,
             "screensaver picker labels are incomplete")
 
     shortcut_header = read("src/launcher_shortcuts.h")
@@ -59,14 +70,12 @@ def main() -> None:
     require("[INBOX] auto blocked" in inbox,
             "hidden auto-poll busy gates must be observable on serial")
 
-    compiled_asset_bytes = 200 * 200 * 2 + 256 * 64 * 2 + 128 * 128 * 2 + 80 * 80 * 2
-    require(compiled_asset_bytes == 158_336, "unexpected compiled eye asset footprint")
-    strip_bytes = 120 * 8 * 2
-    require(strip_bytes == 1_920, "unexpected fixed eye strip footprint")
+    removed_asset_bytes = 200 * 200 * 2 + 256 * 64 * 2 + 128 * 128 * 2 + 80 * 80 * 2
+    require(removed_asset_bytes == 158_336, "unexpected removed eye asset footprint")
 
     print("ui_feature_smoke: PASS")
-    print(f"compiled eye assets: {compiled_asset_bytes} bytes flash")
-    print(f"fixed render strip: {strip_bytes} bytes RAM")
+    print(f"removed eye assets: {removed_asset_bytes} bytes flash")
+    print("fixed eye render buffer: 0 bytes RAM")
 
 
 if __name__ == "__main__":

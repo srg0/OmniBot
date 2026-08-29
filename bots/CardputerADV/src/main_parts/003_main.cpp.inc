@@ -281,6 +281,7 @@ struct DeviceSettings {
   uint8_t displayBrightnessPct = kDefaultDisplayBrightnessPct;
   bool screensaverEnabled = true;
   uint8_t screensaverStyle = kDefaultScreensaverStyle;
+  uint8_t eyeSkin = kDefaultEyeSkin;
   uint8_t screensaverTimeoutMin = kDefaultScreensaverTimeoutMin;
   uint8_t screensaverDimAfterMin = kDefaultScreensaverDimAfterMin;
   uint8_t screensaverDimBrightnessPct = kDefaultScreensaverDimBrightnessPct;
@@ -291,6 +292,25 @@ struct DeviceSettings {
   String updateChannel = "dev";
   String audioLanguage = "ru";
 };
+
+const char* eyeSkinName(uint8_t skin) {
+  switch (skin % kEyeSkinCount) {
+    case 0:
+      return "Black";
+    case 1:
+      return "Cat";
+    case 2:
+      return "Tiger";
+    case 3:
+      return "Leopard";
+    case 4:
+      return "Lion";
+    case 5:
+      return "Rabbit";
+    default:
+      return "Black";
+  }
+}
 
 struct AlarmSettings {
   uint8_t hour = 7;

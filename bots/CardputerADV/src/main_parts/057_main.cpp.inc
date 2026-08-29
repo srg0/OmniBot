@@ -28,16 +28,18 @@ String settingValue(uint8_t index) {
       case 2:
         return gDeviceSettings.screensaverStyle == 1 ? "Big Eyes" : "C-Matrix";
       case 3:
-        return String(gDeviceSettings.screensaverTimeoutMin) + "m";
+        return eyeSkinName(gDeviceSettings.eyeSkin);
       case 4:
-        return String(gDeviceSettings.screensaverDimAfterMin) + "m";
+        return String(gDeviceSettings.screensaverTimeoutMin) + "m";
       case 5:
-        return String(gDeviceSettings.screensaverDimBrightnessPct) + "%";
+        return String(gDeviceSettings.screensaverDimAfterMin) + "m";
       case 6:
-        return gDeviceSettings.screenAutoOffEnabled ? "on" : "off";
+        return String(gDeviceSettings.screensaverDimBrightnessPct) + "%";
       case 7:
-        return String(gDeviceSettings.screenOffAfterMin) + "m";
+        return gDeviceSettings.screenAutoOffEnabled ? "on" : "off";
       case 8:
+        return String(gDeviceSettings.screenOffAfterMin) + "m";
+      case 9:
         return gDeviceSettings.screensaverClockOnWake ? "on" : "off";
       default:
         return "-";
