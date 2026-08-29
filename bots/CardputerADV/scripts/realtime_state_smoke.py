@@ -259,6 +259,11 @@ def test_firmware_wiring() -> None:
     assert "case WStype_BIN:" in events
     assert "kRealtimeBinaryModelPcmType" in events
     assert "gRealtimeWs.sendBIN(gRealtimeBinaryMicFrame, payloadBytes, true)" in audio
+    connect_frame = events[events.index("bool sendRealtimeConnectFrame"):
+                           events.index("void handleRealtimeJson")]
+    assert 'doc["firmware_version"] = kAppVersion;' in connect_frame
+    assert 'doc["firmware_git"] = kBuildGitSha;' in connect_frame
+    assert "firmware=%s git=%.12s" in connect_frame
     binary_send = audio[audio.index("bool sendRealtimeBinaryMicFrame"):
                         audio.index("bool sendRealtimeAudioChunk")]
     for forbidden in ("String", "base64", "malloc", "new "):

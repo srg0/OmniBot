@@ -226,13 +226,20 @@ bool sendRealtimeConnectFrame() {
   doc["topic_key"] = currentConversationKey();
   doc["sample_rate"] = kRealtimeModelSampleRate;
   doc["binary_audio"] = true;
+  // Bridge output pacing is gated by firmware capability. Without these
+  // fields a current device is classified as "unknown" and receives bursty
+  // model PCM instead of the 20 ms / 30 ms ahead-of-clock stream.
+  doc["firmware_version"] = kAppVersion;
+  doc["firmware_git"] = kBuildGitSha;
   String out;
   serializeJson(doc, out);
   const bool sent = sendRealtimeTextFrame(out);
-  logf("[RT] auth sent=%d deferred=1 bytes=%u topic_len=%u",
+  logf("[RT] auth sent=%d deferred=1 bytes=%u topic_len=%u firmware=%s git=%.12s",
        static_cast<int>(sent),
        static_cast<unsigned>(out.length()),
-       static_cast<unsigned>(currentConversationKey().length()));
+       static_cast<unsigned>(currentConversationKey().length()),
+       kAppVersion,
+       kBuildGitSha);
   setStatus(sent ? "Realtime auth..." : "Realtime auth failed", sent ? 700 : 1400);
   return sent;
 }
