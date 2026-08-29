@@ -7,6 +7,13 @@ using launcher_shortcuts::Kind;
 
 int main() {
   unsigned checks = 0;
+  for (uint8_t hid = 0x1e; hid <= 0x26; ++hid) {
+    assert(launcher_shortcuts::digitFromHid(hid) == static_cast<char>('1' + hid - 0x1e));
+    checks += 1;
+  }
+  assert(launcher_shortcuts::digitFromHid(0x27) == '0');
+  assert(launcher_shortcuts::digitFromHid(0x04) == '\0');
+  checks += 2;
   for (char key = '1'; key <= '7'; ++key) {
     const auto action = launcher_shortcuts::resolve(key, false, 7, 6);
     assert(action.kind == Kind::Group);

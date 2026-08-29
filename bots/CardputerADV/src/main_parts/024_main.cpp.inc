@@ -284,7 +284,9 @@ void setUiMode(UiMode mode) {
     closeRealtimeSession("mode change");
   }
   gUiMode = mode;
-  if (mode != UiMode::CMatrix && (gScreensaverActive || gScreensaverDimmed || gScreenOffActive)) {
+  bool enteringScreensaverUi = gScreensaverActive && (mode == UiMode::CMatrix || mode == UiMode::Face);
+  if (!enteringScreensaverUi && mode != UiMode::CMatrix &&
+      (gScreensaverActive || gScreensaverDimmed || gScreenOffActive)) {
     gScreensaverActive = false;
     gScreensaverDimmed = false;
     gScreenOffActive = false;
@@ -296,6 +298,9 @@ void setUiMode(UiMode mode) {
   }
   if (mode == UiMode::CMatrix && modeChanged) {
     gCMatrixInitialized = false;
+  }
+  if (mode == UiMode::Face && modeChanged) {
+    resetUncannyEyesRenderer();
   }
   if (modeChanged && (mode == UiMode::Settings || mode == UiMode::FocusSettings || mode == UiMode::ScreenSettings)) {
     gSelectedSetting = 0;

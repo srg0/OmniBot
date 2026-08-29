@@ -2,7 +2,7 @@
   "release": {
     "name": "BrainFlow 0.2.140-dev",
     "ref": "engine-sha256:3fca132d5d1fccb0dfd2e94140f84318eb5a0ec07e0b4f0fdc7f10342c109b15",
-    "evidence_cutoff": "2026-08-28T19:31:06.677Z",
+    "evidence_cutoff": "2026-08-29T12:02:40.203Z",
     "gate_scope": "canary_entry",
     "production_like_stateful": true,
     "applicability": {
@@ -67,39 +67,39 @@
     "invariants": [
       {
         "name": "bounded_input",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       },
       {
         "name": "exactly_once_score",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       },
       {
         "name": "no_late_input",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       },
       {
         "name": "frozen_paused_time",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       },
       {
         "name": "unsigned_clock_wrap",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       },
       {
         "name": "saturating_score_and_counts",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       },
       {
         "name": "two_level_escape",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       },
       {
         "name": "help_presentation_only",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       },
       {
         "name": "launcher_digit_precedence",
-        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "predicate": "assertions in /Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       }
     ],
     "fences": [
@@ -203,12 +203,12 @@
       {
         "kind": "symmetry",
         "status": "applied",
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/docs/brainflow.md"
       },
       {
         "kind": "equivalence",
         "status": "applied",
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/docs/brainflow.md"
       },
       {
         "kind": "partial_order",
@@ -219,16 +219,16 @@
   },
   "coverage": {
     "raw_equivalent_covered": 2523379185745920,
-    "raw_equivalence_artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
+    "raw_equivalence_artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/docs/brainflow.md",
     "execution_counting_method": "disjoint",
-    "actual_executed_claim": 2762694,
+    "actual_executed_claim": 2762705,
     "executed_tests": {
       "cartesian": 1762560,
       "fuzz": 1000000,
       "fixtures": 9,
       "mutation_programs": 12,
       "navigation": 65,
-      "launcher": 30,
+      "launcher": 41,
       "audio": 18
     },
     "navigation": {
@@ -238,7 +238,7 @@
       "artifact": "tests/brainflow_navigation_test.cpp"
     },
     "launcher": {
-      "checks": 30,
+      "checks": 41,
       "plain_digits": "1-7 select group",
       "ctrl_digits": "Ctrl+1-6 opens submenu before plain digit",
       "artifact": "tests/launcher_shortcuts_test.cpp"
@@ -259,12 +259,12 @@
       "complete": true,
       "states": 3160,
       "transitions": 9478,
-      "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+      "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
     },
     "pairwise": {
       "complete": true,
       "coverage_percent": 100,
-      "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
     },
     "critical_threewise": {
       "complete": true,
@@ -280,66 +280,66 @@
         "visible",
         "clock_origin"
       ],
-      "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+      "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
     },
     "fuzz": {
       "deterministic": true,
       "seeds_retained": true,
-      "seed_artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json",
+      "seed_artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json",
       "executed": 1000000
     },
     "invariant_results": [
       {
         "name": "bounded_input",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       },
       {
         "name": "exactly_once_score",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       },
       {
         "name": "no_late_input",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       },
       {
         "name": "frozen_paused_time",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       },
       {
         "name": "unsigned_clock_wrap",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       },
       {
         "name": "saturating_score_and_counts",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       },
       {
         "name": "two_level_escape",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       },
       {
         "name": "help_presentation_only",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       },
       {
         "name": "launcher_digit_precedence",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/test-results/brainflow/exploration.json"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/test-results/brainflow/exploration.json"
       }
     ],
     "mutations": [
       {
         "fence": "input-capacity",
         "executed": true,
-        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-tHauRz/input-capacity/tests/../src/brainflow.h:356:5: runtime error: index 17 out of bounds for type 'char[17]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-tHauRz/input-capacity/tests/../src/brainflow.h:356:5 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
+        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-Dc51Uw/input-capacity/tests/../src/brainflow.h:356:5: runtime error: index 17 out of bounds for type 'char[17]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-Dc51Uw/input-capacity/tests/../src/brainflow.h:356:5 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
       },
       {
         "fence": "submit-playing-only",
@@ -402,7 +402,7 @@
       {
         "name": "empty/full/invalid input, deadline and feedback equality, pause/resume, wrap, maximum counters",
         "passed": true,
-        "artifact": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/tests/brainflow_gate.cpp"
+        "artifact": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/tests/brainflow_gate.cpp"
       }
     ]
   },
@@ -411,7 +411,7 @@
       "name": "eight-game physical transition smoke",
       "owner": "personal device operator",
       "criteria": "User-confirmed install; each game, right/wrong response, pause, help, launcher, sounds and voice; no reset or leaked input",
-      "observability": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
+      "observability": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/docs/brainflow.md",
       "rollback": "Restore saved previous OTA manifest; no forced device downgrade",
       "executed": false,
       "passed": null
@@ -420,7 +420,7 @@
       "name": "eight normal full rounds with interruption",
       "owner": "personal device operator",
       "criteria": "One completed round per game, responsive keys, preserved settings and healthy voice after play",
-      "observability": "/Users/s1z0v/kd-projects/Openclaw-worktrees/cardputer-brainflow-0.2.139/bots/CardputerADV/docs/brainflow.md",
+      "observability": "/Users/s1z0v/kd-projects/Openclaw/cardputer-firmware/bots/CardputerADV/docs/brainflow.md",
       "rollback": "Stop candidate rollout and restore previous manifest on any invariant failure",
       "executed": false,
       "passed": null

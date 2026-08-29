@@ -82,16 +82,21 @@ void adjustCurrentSetting(int delta) {
         applyDisplayBrightness();
         break;
       case 2:
-        gDeviceSettings.screensaverTimeoutMin = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screensaverTimeoutMin + delta, 1, 60));
+        gDeviceSettings.screensaverStyle = static_cast<uint8_t>(
+            (gDeviceSettings.screensaverStyle + kScreensaverStyleCount + (delta >= 0 ? 1 : -1)) %
+            kScreensaverStyleCount);
         break;
       case 3:
-        gDeviceSettings.screensaverDimAfterMin = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screensaverDimAfterMin + delta * 5, 1, 120));
+        gDeviceSettings.screensaverTimeoutMin = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screensaverTimeoutMin + delta, 1, 60));
         break;
       case 4:
+        gDeviceSettings.screensaverDimAfterMin = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screensaverDimAfterMin + delta * 5, 1, 120));
+        break;
+      case 5:
         gDeviceSettings.screensaverDimBrightnessPct = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screensaverDimBrightnessPct + delta * 5, 0, 100));
         applyDisplayBrightness();
         break;
-      case 6:
+      case 7:
         gDeviceSettings.screenOffAfterMin = static_cast<uint8_t>(clampValue<int>(gDeviceSettings.screenOffAfterMin + delta * 5, 5, 240));
         break;
       default:
@@ -142,14 +147,18 @@ void toggleCurrentSetting() {
       case 1:
         gDeviceSettings.screensaverEnabled = !gDeviceSettings.screensaverEnabled;
         break;
-      case 5:
+      case 2:
+        gDeviceSettings.screensaverStyle = static_cast<uint8_t>(
+            (gDeviceSettings.screensaverStyle + 1U) % kScreensaverStyleCount);
+        break;
+      case 6:
         gDeviceSettings.screenAutoOffEnabled = !gDeviceSettings.screenAutoOffEnabled;
         if (!gDeviceSettings.screenAutoOffEnabled && gScreenOffActive) {
           gScreenOffActive = false;
           applyDisplayBrightness();
         }
         break;
-      case 7:
+      case 8:
         gDeviceSettings.screensaverClockOnWake = !gDeviceSettings.screensaverClockOnWake;
         break;
       default:

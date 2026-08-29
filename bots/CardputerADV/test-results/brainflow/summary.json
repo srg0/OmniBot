@@ -1,6 +1,6 @@
 {
   "source_sha256": "3fca132d5d1fccb0dfd2e94140f84318eb5a0ec07e0b4f0fdc7f10342c109b15",
-  "cutoff": "2026-08-28T19:31:06.677Z",
+  "cutoff": "2026-08-29T12:02:40.203Z",
   "reduced_executions": 1762560,
   "states": 3160,
   "transitions": 9478,
@@ -18,9 +18,9 @@
   "mutants": 12,
   "navigation_checks": 65,
   "navigation_game_slots": 8,
-  "launcher_checks": 30,
+  "launcher_checks": 41,
   "audio_checks": 18,
-  "actual_executed_tests": 2762694,
+  "actual_executed_tests": 2762705,
   "raw_cartesian_space": 2523379185745920,
   "raw_equivalent_covered": 2523379185745920,
   "reduction": "All 2^32 absolute clock origins are translation-equivalent for unsigned subtraction; three representatives include wrap and the signed boundary. All other declared classes are fully enumerated.",
@@ -28,5 +28,5 @@
     "exploration": "exploration.json",
     "mutations": "mutations.json"
   },
-  "temporary_mutants": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-tHauRz"
+  "temporary_mutants": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-Dc51Uw"
 }

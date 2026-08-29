@@ -191,7 +191,9 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
     gInboxLastTopicKey = topicKey;
     logf("[INBOX] topic key=%s", topicKey.c_str());
   }
-  String url = hubBaseUrl() + "/api/cardputer/device-events/pending?limit=1&text_chars=1024";
+  // Drain a bounded batch so an already-seen or malformed event cannot remain
+  // at the head of the queue forever and hide a later OTA/device action.
+  String url = hubBaseUrl() + "/api/cardputer/device-events/pending?limit=10&text_chars=1024";
   if (assistantOnly) {
     url += "&sender_kind=assistant";
   }
@@ -232,12 +234,28 @@ bool fetchLatestInboxMessage(bool forcePlay, bool speak, bool quiet, bool assist
   String eventId = "";
   if (doc["items"].is<JsonArray>()) {
     JsonArray items = doc["items"].as<JsonArray>();
-    if (items.size() > 0) {
-      JsonObject event = items[0].as<JsonObject>();
-      eventId = String(event["event_id"] | "");
+    for (JsonObject event : items) {
+      String candidateEventId = String(event["event_id"] | "");
       JsonObject item = event["message"].as<JsonObject>();
-      if (handleInboxHistoryItem(item, true, assistantOnly)) {
+      uint32_t seq = item["seq"] | 0;
+      if (!candidateEventId.isEmpty() && seq != 0 && seq <= gInboxLastSeq) {
+        bool acked = ackDeviceEvent(candidateEventId);
+        logf("[INBOX] stale event id=%s seq=%u last_seq=%u ack=%d",
+             candidateEventId.c_str(), static_cast<unsigned>(seq),
+             static_cast<unsigned>(gInboxLastSeq), static_cast<int>(acked));
+        continue;
+      }
+      if (handleInboxHistoryItem(item, false, assistantOnly)) {
+        eventId = candidateEventId;
         found = true;
+        break;
+      }
+      // A queued event with a valid id but unusable payload cannot become valid
+      // later. Acknowledge it so the following OTA/action can make progress.
+      if (!candidateEventId.isEmpty()) {
+        bool acked = ackDeviceEvent(candidateEventId);
+        logf("[INBOX] rejected event id=%s seq=%u ack=%d",
+             candidateEventId.c_str(), static_cast<unsigned>(seq), static_cast<int>(acked));
       }
     }
   } else if (doc["item"].is<JsonObject>()) {
@@ -283,6 +301,7 @@ bool autoInboxPollAllowed() {
 }
 
 void serviceAutoInboxPoll() {
+  static uint32_t lastBlockedLogMs = 0;
   uint32_t now = millis();
   // Boot must stay immediately usable. In particular, do not let a pending
   // inbox TTS/download seize the main loop while the user is entering
@@ -295,8 +314,26 @@ void serviceAutoInboxPoll() {
     return;
   }
   if (!autoInboxPollAllowed()) {
+    if (lastBlockedLogMs == 0 || now - lastBlockedLogMs >= 15000U) {
+      lastBlockedLogMs = now;
+      logf("[INBOX] auto blocked ui=%d wifi=%d launcher=%d boot=%d transfer=%d "
+           "rec=%d submit=%d think=%d play=%d rt=%d task=%d pending=%u input=%u",
+           static_cast<int>(gUiMode), static_cast<int>(gWifiReady),
+           static_cast<int>(gLauncherVisible), static_cast<int>(gBootBackgroundActive),
+           static_cast<int>(gTransferUiActive), static_cast<int>(gRecording),
+           static_cast<int>(gSubmitting), static_cast<int>(gThinking),
+           static_cast<int>(gPlaybackActive),
+           static_cast<int>(gRealtimeActive || gRealtimeConnected || gRealtimeRecording ||
+                            gRealtimeAwaiting || gRealtimeSmokeActive ||
+                            gRealtimeSmokeAudioStreaming),
+           static_cast<int>(gTextTurnTaskHandle != nullptr || gCompletedTextTurn != nullptr ||
+                            !gActiveTextTurn.isEmpty()),
+           static_cast<unsigned>(gPendingTextTurns.size()),
+           static_cast<unsigned>(gInputBuffer.length()));
+    }
     return;
   }
+  lastBlockedLogMs = 0;
   gLastInboxAutoPollMs = now;
   // Background delivery updates the screen/history but never starts the
   // synchronous TTS path. Audio remains available through explicit inbox

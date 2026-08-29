@@ -275,6 +275,7 @@ void saveAlarmSettings();
 void loadPetState();
 void savePetState(bool force = false);
 void resetPet(bool fullReset);
+void resetUncannyEyesRenderer();
 void servicePet();
 bool handlePetKey(char key, const Keyboard_Class::KeysState& keys);
 bool applyPetCare(PetCareAction action);

@@ -88,9 +88,7 @@ void renderModeFooter(const String& left, const String& right = "") {
 }
 
 void renderFaceOnlyUi() {
-  auto& d = gCanvas;
-  d.fillScreen(0x0841);
-  renderFacePanel(true);
+  renderUncannyEyesUi();
   renderLauncherOverlay();
   renderDebugOverlay();
 }

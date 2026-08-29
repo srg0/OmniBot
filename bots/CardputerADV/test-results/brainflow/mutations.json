@@ -5,7 +5,7 @@
     "killed": true,
     "status": null,
     "signal": "SIGABRT",
-    "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-tHauRz/input-capacity/tests/../src/brainflow.h:356:5: runtime error: index 17 out of bounds for type 'char[17]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-tHauRz/input-capacity/tests/../src/brainflow.h:356:5 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
+    "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-Dc51Uw/input-capacity/tests/../src/brainflow.h:356:5: runtime error: index 17 out of bounds for type 'char[17]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-Dc51Uw/input-capacity/tests/../src/brainflow.h:356:5 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
   },
   {
     "name": "submit-playing-only",

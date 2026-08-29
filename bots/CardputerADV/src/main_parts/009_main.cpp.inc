@@ -239,9 +239,14 @@ void enterScreensaver() {
   gScreenOffActive = false;
   gScreensaverStartedMs = millis();
   gLauncherVisible = false;
-  setUiMode(UiMode::CMatrix);
-  gCMatrixInitialized = false;
-  setStatus("Screensaver", 700);
+  UiMode screensaverMode = gDeviceSettings.screensaverStyle == 1 ? UiMode::Face : UiMode::CMatrix;
+  if (screensaverMode == UiMode::CMatrix) {
+    gCMatrixInitialized = false;
+  } else {
+    resetUncannyEyesRenderer();
+  }
+  setUiMode(screensaverMode);
+  setStatus(gDeviceSettings.screensaverStyle == 1 ? "Screensaver: Big Eyes" : "Screensaver: C-Matrix", 700);
   applyDisplayBrightness();
 }
 

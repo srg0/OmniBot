@@ -355,9 +355,19 @@ void submitInput() {
 
 void handleLauncherKey(char key, const Keyboard_Class::KeysState& keys) {
   char lowerKey = static_cast<char>(tolower(static_cast<unsigned char>(key)));
+  char shortcutKey = key;
+  if (keys.ctrl) {
+    for (uint8_t hidCode : keys.hid_keys) {
+      char digit = launcher_shortcuts::digitFromHid(hidCode);
+      if (digit != '\0') {
+        shortcutKey = digit;
+        break;
+      }
+    }
+  }
   const uint8_t submenuCount = kLauncherGroups[gLauncherSelection].count;
   const auto shortcut = launcher_shortcuts::resolve(
-      key, keys.ctrl, kLauncherGroupCount, submenuCount);
+      shortcutKey, keys.ctrl, kLauncherGroupCount, submenuCount);
   if (shortcut.kind == launcher_shortcuts::Kind::Submenu) {
     gLauncherSubSelection = shortcut.index;
     gLauncherLastSub[gLauncherSelection] = shortcut.index;
@@ -371,9 +381,7 @@ void handleLauncherKey(char key, const Keyboard_Class::KeysState& keys) {
   if (shortcut.kind == launcher_shortcuts::Kind::Group) {
     gLauncherSelection = shortcut.index;
     uint8_t count = kLauncherGroups[gLauncherSelection].count;
-    if (gLauncherSubSelection >= count) {
-      gLauncherSubSelection = count - 1;
-    }
+    gLauncherSubSelection = clampValue<int>(gLauncherLastSub[gLauncherSelection], 0, count - 1);
     return;
   }
   if (keys.enter || key == '\n' || key == '\r') {
