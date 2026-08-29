@@ -139,6 +139,9 @@ bool stopRecordingAndSend() {
   logf("[VOICE] recording stopped elapsed=%.2f samples=%u mode=%s", elapsed,
        static_cast<unsigned>(gRecordedSamples),
        gRecordingToFile ? "file" : "ram");
+  appendRuntimeLog("VOICE", "record stop ms=" + String(static_cast<unsigned>(elapsed * 1000.0f)) +
+                            " bytes=" + String(static_cast<unsigned>(dataSize)) +
+                            " mode=" + String(gRecordingToFile ? "file" : "ram"), true);
 
   if (elapsed < kMinRecordSeconds || gRecordedSamples == 0) {
     setFaceMode(FaceMode::Idle);

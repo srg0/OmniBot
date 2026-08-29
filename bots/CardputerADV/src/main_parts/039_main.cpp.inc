@@ -8,6 +8,7 @@
   int statusCode = -1;
   String response;
   bool transportOk = false;
+  uint32_t voiceRoundtripStartedMs = millis();
   bool prevRenderPump = gBlockingRenderPumpEnabled;
   gBlockingRenderPumpEnabled = true;
   gLastBlockingRenderPumpMs = 0;
@@ -21,6 +22,10 @@
                                    turnId, statusCode, response);
   }
   gBlockingRenderPumpEnabled = prevRenderPump;
+  uint32_t voiceRoundtripMs = millis() - voiceRoundtripStartedMs;
+  appendRuntimeLog("VOICE", "roundtrip ms=" + String(static_cast<unsigned>(voiceRoundtripMs)) +
+                            " http=" + String(statusCode) +
+                            " response=" + String(static_cast<unsigned>(response.length())), true);
   finishVoiceTurn();
   if (gRecordingToFile) {
     fs::FS* fs = activeVoiceFs();

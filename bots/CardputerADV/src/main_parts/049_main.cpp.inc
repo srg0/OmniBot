@@ -121,7 +121,8 @@ void updateVoiceTrigger() {
                           gKeyboardState.del || gKeyboardState.fn ||
                           gKeyboardState.shift || gKeyboardState.alt ||
                           gKeyboardState.opt);
-  if (gRecording && millis() - gRecordStartMs >= currentRecordLimitMs()) {
+  if (release_stability::shouldStopOrdinaryRecording(
+          gRecording, millis(), gRecordStartMs, currentRecordLimitMs())) {
     logf("[VOICE] auto-stop at max duration");
     stopRecordingAndSend();
     return;

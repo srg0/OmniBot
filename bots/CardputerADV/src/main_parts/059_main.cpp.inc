@@ -243,6 +243,17 @@
     d.setCursor(168, 79);
     d.print(fitCurrentFontToWidth(gBootBackgroundLabel, 42));
   }
+  if (release_stability::otaUpdateAvailable(
+          gOtaManifest.parsed, kAppVersion, gOtaManifest.version.c_str())) {
+    const uint16_t badge = rgb565_local(255, 194, 74);
+    const uint16_t badgeText = rgb565_local(18, 12, 2);
+    d.fillRoundRect(207, 3, 27, 14, 6, badge);
+    d.drawRoundRect(207, 3, 27, 14, 6, TFT_WHITE);
+    d.setFont(&fonts::Font0);
+    d.setTextColor(badgeText, badge);
+    d.setCursor(214, 6);
+    d.print("UP");
+  }
   renderAssistantPulseChatHint();
   renderTopicOverlayIfVisible();
   renderLauncherOverlay();

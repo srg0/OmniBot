@@ -35,6 +35,7 @@
 
 #include "daikin280_encoder.h"
 #include "launcher_shortcuts.h"
+#include "release_stability_policy.h"
 #include "smartlamp_gl2_protocol.h"
 #include "tcl112ac_encoder.h"
 
@@ -59,7 +60,7 @@ namespace {
 constexpr const char* kDeviceType = "cardputer_adv";
 constexpr const char* kDefaultDisplayName = "ADV Cardputer";
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.141-dev"
+#define APP_VERSION "0.2.142-dev"
 #endif
 #ifndef BUILD_GIT_SHA
 #define BUILD_GIT_SHA "local"
@@ -161,7 +162,10 @@ constexpr size_t kMaxInputChars = 180;
 constexpr size_t kWrapColumns = 34;
 constexpr uint32_t kMicSampleRate = 8000;
 constexpr uint32_t kTtsDefaultSampleRate = 12000;
-constexpr float kMaxRecordSeconds = 600.0f;
+// Ordinary voice is a short push/toggle-to-talk interaction. A bounded cap
+// prevents a missed key/button release from uploading minutes of PCM and then
+// looking like a frozen Thinking screen. Realtime owns its own audio limits.
+constexpr float kMaxRecordSeconds = 30.0f;
 constexpr float kMaxTtsSeconds = 14.0f;
 constexpr float kMinRecordSeconds = 0.35f;
 constexpr uint32_t kImuSampleIntervalMs = 30;

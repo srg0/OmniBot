@@ -2,7 +2,7 @@
   "release": {
     "name": "BrainFlow 0.2.140-dev",
     "ref": "engine-sha256:3fca132d5d1fccb0dfd2e94140f84318eb5a0ec07e0b4f0fdc7f10342c109b15",
-    "evidence_cutoff": "2026-08-29T12:02:40.203Z",
+    "evidence_cutoff": "2026-08-29T12:25:52.694Z",
     "gate_scope": "canary_entry",
     "production_like_stateful": true,
     "applicability": {
@@ -339,7 +339,7 @@
       {
         "fence": "input-capacity",
         "executed": true,
-        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-Dc51Uw/input-capacity/tests/../src/brainflow.h:356:5: runtime error: index 17 out of bounds for type 'char[17]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-Dc51Uw/input-capacity/tests/../src/brainflow.h:356:5 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
+        "counterexample": "/var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-ohkhkl/input-capacity/tests/../src/brainflow.h:356:5: runtime error: index 17 out of bounds for type 'char[17]'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /var/folders/8f/24vpbtrd5c95n5z1b33278zw0000gn/T/brainflow-gate-ohkhkl/input-capacity/tests/../src/brainflow.h:356:5 in \nAssertion failed: (s.length<=kInputMax), function invariant, file gate.cpp, line 15."
       },
       {
         "fence": "submit-playing-only",

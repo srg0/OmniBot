@@ -579,8 +579,10 @@ void serviceDeferredBoot() {
         confirmOtaBootIfPending("bridge health");
       }
       if (gDeviceSettings.checkUpdatesOnBoot) {
-        appendRuntimeLog("OTA", "boot remote check deferred", true);
-        setStatus("Update check deferred", 900);
+        gPendingOtaCheckAction = true;
+        gPendingOtaActionAfterMs = millis() + 1500U;
+        appendRuntimeLog("OTA", "boot remote check queued", true);
+        setStatus("Update check queued", 900);
       }
       if (!gOtaPendingVerify) {
         maybeSyncPomodoroMeditationAssetsOnBoot();
